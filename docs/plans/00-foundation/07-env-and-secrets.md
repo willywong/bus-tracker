@@ -16,8 +16,9 @@ Define a clear separation: **server-only secrets in `apps/api`**; **public URLs 
    ```
    HERE_API_KEY=
    TOMTOM_API_KEY=
-   VERCEL_KV_REST_API_URL=
-   VERCEL_KV_REST_API_TOKEN=
+   KV_REST_API_URL=
+   KV_REST_API_TOKEN=
+   KV_URL=
    EXPO_ACCESS_TOKEN=
    ```
 2. Create `apps/mobile/.env.example`:
