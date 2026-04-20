@@ -8,7 +8,8 @@ import {
   Text,
 } from '@expo/ui/swift-ui';
 import {
-  font,
+  fixedSize,
+  foregroundStyle,
   glassEffect,
   padding,
 } from '@expo/ui/swift-ui/modifiers';
@@ -19,12 +20,6 @@ interface RouteSwitcherProps {
   onSelect: (code: RouteId) => void;
 }
 
-/**
- * Glass is applied to the HStack inside the Menu's label builder — not to
- * the Menu itself. When glass sits on the Menu, SwiftUI collapses the
- * built-in `Label(_:systemImage:)` trigger to icon-only and the route
- * code disappears. Composing a custom HStack label sidesteps that.
- */
 export function RouteSwitcher({
   selected,
   options,
@@ -37,6 +32,7 @@ export function RouteSwitcher({
           <HStack
             spacing={6}
             modifiers={[
+              fixedSize(),
               padding({ horizontal: 14, vertical: 8 }),
               glassEffect({
                 glass: { variant: 'regular', interactive: true },
@@ -45,7 +41,11 @@ export function RouteSwitcher({
             ]}
           >
             <Image systemName="bus.fill" size={14} />
-            <Text modifiers={[font({ size: 15, weight: 'semibold' })]}>
+            <Text
+              modifiers={[
+                foregroundStyle({ type: 'hierarchical', style: 'primary' }),
+              ]}
+            >
               {selected}
             </Text>
             <Image systemName="chevron.down" size={11} />
