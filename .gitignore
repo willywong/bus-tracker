@@ -1,10 +1,16 @@
 node_modules/
 .turbo/
 dist/
-.env
-.env.local
 .DS_Store
 ios/
 android/
 .expo/
 *.tsbuildinfo
+
+# Env files — never commit secrets
+.env
+.env.local
+apps/*/.env
+apps/*/.env.local
+packages/*/.env
+packages/*/.env.local
