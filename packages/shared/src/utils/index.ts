@@ -38,6 +38,10 @@ export {
   type QuietHoursRange,
 } from "./quiet-hours.js";
 export {
+  shouldNotify,
+  type ShouldNotifyArgs,
+} from "./leave-now.js";
+export {
   DEFAULT_DWELL_MINUTES_PER_STOP,
   computeEta,
   countIntermediateStops,

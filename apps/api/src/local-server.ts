@@ -1,7 +1,9 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
+import { createLeaveNowApp } from "../api/cron/leave-now.js";
 import { createRefreshGtfsApp } from "../api/cron/refresh-gtfs.js";
 import { createGtfsStaticApp } from "../api/gtfs-static.js";
+import { createPushRegisterApp } from "../api/push/register.js";
 import { createTrafficEtaApp } from "../api/traffic-eta.js";
 
 const app = new Hono();
@@ -13,6 +15,8 @@ app.get("/api/health", (c) =>
 app.route("/", createGtfsStaticApp());
 app.route("/", createRefreshGtfsApp());
 app.route("/", createTrafficEtaApp());
+app.route("/", createPushRegisterApp());
+app.route("/", createLeaveNowApp());
 
 const port = Number(process.env.PORT ?? 3001);
 
@@ -21,5 +25,7 @@ serve({ fetch: app.fetch, port, hostname: "0.0.0.0" }, (info) => {
   console.log(`  GET /api/health`);
   console.log(`  GET /api/gtfs-static`);
   console.log(`  GET /api/cron/refresh-gtfs`);
+  console.log(`  GET /api/cron/leave-now`);
   console.log(`  GET /api/traffic-eta`);
+  console.log(`  POST /api/push/register`);
 });

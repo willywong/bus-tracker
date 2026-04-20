@@ -29,6 +29,7 @@ import { openDb } from '@/db/database';
 import { getStops, type StopRow } from '@/db/queries';
 import { useBusPosition } from '@/hooks/useBusPosition';
 import { useEta, type ApproachingBus } from '@/hooks/useEta';
+import { usePushRegistrationState } from '@/hooks/PushRegistrationContext';
 import { useSettings } from '@/hooks/useSettings';
 import { useWalkTimer } from '@/hooks/useWalkTimer';
 
@@ -96,6 +97,7 @@ function formatWalkRemaining(seconds: number): string {
 
 export default function TrackerScreen() {
   const settings = useSettings();
+  const push = usePushRegistrationState();
   const { current, next, minutesToStop } = useEta({
     stopId: settings.preferredStopId,
     trafficProvider: settings.trafficProvider,
@@ -178,6 +180,26 @@ export default function TrackerScreen() {
           </Text>
         </VStack>
         <Form>
+          {push.permission === 'denied' && (
+            <Section>
+              <HStack spacing={8}>
+                <Image
+                  systemName="bell.slash.fill"
+                  size={18}
+                  color={PlatformColor('systemOrange')}
+                />
+                <Text
+                  modifiers={[
+                    font({ size: 13 }),
+                    foregroundStyle(PlatformColor('secondaryLabel')),
+                  ]}
+                >
+                  Notifications disabled — enable in Settings to get "Leave now"
+                  alerts.
+                </Text>
+              </HStack>
+            </Section>
+          )}
           <Section title="T816 buses">
             <HStack spacing={8}>
               <Image systemName="bus.fill" size={20} />
