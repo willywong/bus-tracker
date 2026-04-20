@@ -9,6 +9,7 @@
     "type-check": "turbo run type-check"
   },
   "devDependencies": {
+    "eas-cli": "^18.7.0",
     "turbo": "^2.1.0",
     "typescript": "^5.6.0"
   }
