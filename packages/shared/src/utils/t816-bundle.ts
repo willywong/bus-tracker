@@ -6,7 +6,13 @@ import type {
 } from "../types/gtfs.js";
 import type { ParsedGtfs } from "./gtfs-parser.js";
 
-export const T816_TARGET_CODES = ["T816", "T786", "PJ01", "PJ02"] as const;
+export const T816_TARGET_CODES = [
+  "T816",
+  "T815",
+  "T786",
+  "PJ01",
+  "PJ02",
+] as const;
 export type T816TargetCode = (typeof T816_TARGET_CODES)[number];
 
 function matchesCode(
