@@ -49,6 +49,24 @@ export async function getTripsForRoute(
   );
 }
 
+export async function getTripToRouteMap(
+  db: Db,
+  routeCodes: readonly string[],
+): Promise<Map<string, string>> {
+  if (routeCodes.length === 0) return new Map();
+  const placeholders = routeCodes.map(() => "?").join(",");
+  const rows = await db.getAllAsync<{ trip_id: string; code: string }>(
+    `SELECT t.trip_id AS trip_id, r.code AS code
+       FROM trips t
+       JOIN routes r ON r.route_id = t.route_id
+      WHERE r.code IN (${placeholders});`,
+    ...routeCodes,
+  );
+  const out = new Map<string, string>();
+  for (const row of rows) out.set(row.trip_id, row.code);
+  return out;
+}
+
 export async function getRoutePolyline(
   db: Db,
   routeId: string,

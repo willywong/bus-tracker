@@ -181,6 +181,9 @@ importers:
       fflate:
         specifier: ^0.8.2
         version: 0.8.2
+      protobufjs:
+        specifier: ^8.0.1
+        version: 8.0.1
     devDependencies:
       tsx:
         specifier: ^4.21.0
