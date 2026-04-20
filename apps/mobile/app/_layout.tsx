@@ -7,6 +7,7 @@ import 'react-native-reanimated';
 import '../global.css';
 
 import { bootstrapStaticGtfs } from '@/db/bootstrap';
+import { SettingsProvider } from '@/hooks/useSettings';
 import { tokens } from '@/theme/tokens';
 
 export {
@@ -43,23 +44,25 @@ export default function RootLayout() {
   }
 
   return (
-    <NativeTabs
-      tintColor={tokens.color.accent}
-      labelStyle={{ fontSize: 11 }}
-      minimizeBehavior="onScrollDown"
-    >
-      <NativeTabs.Trigger name="index">
-        <NativeTabs.Trigger.Icon sf="tram.fill" />
-        <NativeTabs.Trigger.Label>Tracker</NativeTabs.Trigger.Label>
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="map">
-        <NativeTabs.Trigger.Icon sf="map.fill" />
-        <NativeTabs.Trigger.Label>Map</NativeTabs.Trigger.Label>
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="settings">
-        <NativeTabs.Trigger.Icon sf="gear" />
-        <NativeTabs.Trigger.Label>Settings</NativeTabs.Trigger.Label>
-      </NativeTabs.Trigger>
-    </NativeTabs>
+    <SettingsProvider>
+      <NativeTabs
+        tintColor={tokens.color.accent}
+        labelStyle={{ fontSize: 11 }}
+        minimizeBehavior="onScrollDown"
+      >
+        <NativeTabs.Trigger name="index">
+          <NativeTabs.Trigger.Icon sf="tram.fill" />
+          <NativeTabs.Trigger.Label>Tracker</NativeTabs.Trigger.Label>
+        </NativeTabs.Trigger>
+        <NativeTabs.Trigger name="map">
+          <NativeTabs.Trigger.Icon sf="map.fill" />
+          <NativeTabs.Trigger.Label>Map</NativeTabs.Trigger.Label>
+        </NativeTabs.Trigger>
+        <NativeTabs.Trigger name="settings">
+          <NativeTabs.Trigger.Icon sf="gear" />
+          <NativeTabs.Trigger.Label>Settings</NativeTabs.Trigger.Label>
+        </NativeTabs.Trigger>
+      </NativeTabs>
+    </SettingsProvider>
   );
 }

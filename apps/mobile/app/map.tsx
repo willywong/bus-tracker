@@ -20,11 +20,11 @@ import {
 } from '@/db/queries';
 import { useBusPosition } from '@/hooks/useBusPosition';
 import { useEta } from '@/hooks/useEta';
+import { useSettings } from '@/hooks/useSettings';
 import { useStaticGtfs } from '@/hooks/useStaticGtfs';
 import { tokens, typeStyle } from '@/theme/tokens';
 
 const ROUTE_CODE = 'T816';
-const DEFAULT_STOP_ID = 'HOTEL_LISA_DE_INN';
 const POSITION_TWEEN_MS = 30_000;
 const BBOX_PAD_DEG = 0.008;
 
@@ -58,9 +58,13 @@ function computeRegion(points: PolylinePoint[]): Region | null {
 
 export default function MapScreen() {
   const gtfs = useStaticGtfs();
+  const settings = useSettings();
   const [staticData, setStaticData] = useState<StaticData | null>(null);
   const { positions } = useBusPosition();
-  const eta = useEta({ stopId: DEFAULT_STOP_ID });
+  const eta = useEta({
+    stopId: settings.preferredStopId,
+    trafficProvider: settings.trafficProvider,
+  });
 
   useEffect(() => {
     if (!gtfs.ready) return;
@@ -72,7 +76,7 @@ export default function MapScreen() {
         const route = routes.find((r) => r.code === ROUTE_CODE) ?? routes[0];
         if (!route) return;
         const stop =
-          stops.find((s) => s.stop_id === DEFAULT_STOP_ID) ?? stops[0];
+          stops.find((s) => s.stop_id === settings.preferredStopId) ?? stops[0];
         if (!stop) return;
         const polyPoints = await getRoutePolyline(db, route.route_id);
         const region = computeRegion(polyPoints);
@@ -92,7 +96,7 @@ export default function MapScreen() {
     return () => {
       cancelled = true;
     };
-  }, [gtfs.ready]);
+  }, [gtfs.ready, settings.preferredStopId]);
 
   const regionsRef = useRef(new Map<string, AnimatedRegion>());
   const [bearings, setBearings] = useState<Record<string, number>>({});

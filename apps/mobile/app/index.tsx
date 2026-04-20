@@ -25,12 +25,13 @@ import { useEffect, useState } from 'react';
 import { PlatformColor } from 'react-native';
 
 import { glassIfAvailable } from '@/components/GlassGuard';
+import { openDb } from '@/db/database';
+import { getStops, type StopRow } from '@/db/queries';
 import { useBusPosition } from '@/hooks/useBusPosition';
 import { useEta, type ApproachingBus } from '@/hooks/useEta';
+import { useSettings } from '@/hooks/useSettings';
 import { useWalkTimer } from '@/hooks/useWalkTimer';
 
-const WALK_MINUTES = 10;
-const DEFAULT_STOP_ID = 'HOTEL_LISA_DE_INN';
 const STALE_TICKER_MS = 90_000;
 /** Rough free-flow bus speed used to infer an "on-schedule" baseline for the delay gauge. */
 const BASELINE_METERS_PER_MINUTE = 25_000 / 60;
@@ -94,13 +95,40 @@ function formatWalkRemaining(seconds: number): string {
 }
 
 export default function TrackerScreen() {
-  const { current, next, minutesToStop } = useEta({ stopId: DEFAULT_STOP_ID });
+  const settings = useSettings();
+  const { current, next, minutesToStop } = useEta({
+    stopId: settings.preferredStopId,
+    trafficProvider: settings.trafficProvider,
+  });
   const { lastUpdated } = useBusPosition();
   const updatedTicker = useLastUpdatedLabel(lastUpdated);
-  const walk = useWalkTimer(WALK_MINUTES);
+  const walk = useWalkTimer(settings.walkMinutes);
+  const [stopName, setStopName] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const db = await openDb();
+        const stops = await getStops(db);
+        if (cancelled) return;
+        const match = stops.find(
+          (s: StopRow) => s.stop_id === settings.preferredStopId,
+        );
+        setStopName(match?.stop_name ?? null);
+      } catch (err) {
+        console.warn('[tracker] failed to load stop name', err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [settings.preferredStopId]);
 
   const leaveIn =
-    minutesToStop == null ? null : Math.max(0, minutesToStop - WALK_MINUTES);
+    minutesToStop == null
+      ? null
+      : Math.max(0, minutesToStop - settings.walkMinutes);
   const isLeaveNow = leaveIn != null && leaveIn <= 0;
   const headline = walk.isWalking
     ? `Walking — ${formatWalkRemaining(walk.remainingSeconds ?? 0)}`
@@ -146,7 +174,7 @@ export default function TrackerScreen() {
               foregroundStyle(PlatformColor('secondaryLabel')),
             ]}
           >
-            to Hotel Lisa De Inn
+            {stopName ? `to ${stopName}` : 'to your stop'}
           </Text>
         </VStack>
         <Form>

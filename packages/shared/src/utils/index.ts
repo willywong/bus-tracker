@@ -33,6 +33,11 @@ export {
   type RouteProjection,
 } from "./route.js";
 export {
+  isWithinQuietHours,
+  minuteOfDay,
+  type QuietHoursRange,
+} from "./quiet-hours.js";
+export {
   DEFAULT_DWELL_MINUTES_PER_STOP,
   computeEta,
   countIntermediateStops,

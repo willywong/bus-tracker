@@ -16,7 +16,7 @@ import {
   type StopRow,
 } from "@/db/queries";
 import { useBusPosition } from "@/hooks/useBusPosition";
-import { fetchTrafficEta } from "@/services/trafficEta";
+import { fetchTrafficEta, type TrafficProvider } from "@/services/trafficEta";
 
 const TRAFFIC_REFRESH_MS = 30_000;
 const STALE_AFTER_MS = 60_000;
@@ -35,6 +35,8 @@ export interface UseEtaResult {
   minutesToStop: number | null;
   isStale: boolean;
   source: EtaSource | null;
+  /** Traffic provider that produced the most recent traffic minutes, or null if ETA is schedule-based. */
+  trafficSource: TrafficProvider | null;
   vehicleId: string | null;
   lastComputedAt: number | null;
   error: Error | null;
@@ -50,12 +52,21 @@ interface StaticCtx {
   intermediateCandidates: LatLng[];
 }
 
-export function useEta({ stopId }: { stopId: string }): UseEtaResult {
+export function useEta({
+  stopId,
+  trafficProvider,
+}: {
+  stopId: string;
+  trafficProvider?: TrafficProvider;
+}): UseEtaResult {
   const { positions, error: rtError } = useBusPosition();
 
   const [staticCtx, setStaticCtx] = useState<StaticCtx | null>(null);
   const [staticError, setStaticError] = useState<Error | null>(null);
   const [trafficMinutes, setTrafficMinutes] = useState<number | null>(null);
+  const [trafficSource, setTrafficSource] = useState<TrafficProvider | null>(
+    null,
+  );
   const [trafficError, setTrafficError] = useState<Error | null>(null);
   const [lastComputedAt, setLastComputedAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -172,6 +183,7 @@ export function useEta({ stopId }: { stopId: string }): UseEtaResult {
       composition.vehicleId ?? "",
       busLat.toFixed(3),
       busLng.toFixed(3),
+      trafficProvider ?? "",
     ].join("|");
 
     const last = lastTrafficFetchRef.current;
@@ -188,10 +200,11 @@ export function useEta({ stopId }: { stopId: string }): UseEtaResult {
         const res = await fetchTrafficEta(
           { lat: busLat, lng: busLng },
           staticCtx.stop,
-          { signal: ctrl.signal },
+          { signal: ctrl.signal, provider: trafficProvider },
         );
         if (ctrl.signal.aborted) return;
         setTrafficMinutes(res.trafficMinutes);
+        setTrafficSource(res.source);
         setTrafficError(null);
         setLastComputedAt(Date.now());
       } catch (err) {
@@ -204,15 +217,24 @@ export function useEta({ stopId }: { stopId: string }): UseEtaResult {
     return () => {
       ctrl.abort();
     };
-  }, [composition?.vehicleId, composition?.busProjection?.projected.lat, composition?.busProjection?.projected.lng, composition, staticCtx, now]);
+  }, [composition?.vehicleId, composition?.busProjection?.projected.lat, composition?.busProjection?.projected.lng, composition, staticCtx, now, trafficProvider]);
 
   // 6. When no approaching vehicle, clear stale traffic so we don't keep showing old minutes.
   useEffect(() => {
     if (composition && composition.vehicleId == null) {
       setTrafficMinutes(null);
+      setTrafficSource(null);
       lastTrafficFetchRef.current = null;
     }
   }, [composition?.vehicleId, composition]);
+
+  // 6b. Clear cached traffic minutes when the provider changes so the next render
+  //     falls back to schedule-based ETA until the new provider replies.
+  useEffect(() => {
+    setTrafficMinutes(null);
+    setTrafficSource(null);
+    lastTrafficFetchRef.current = null;
+  }, [trafficProvider]);
 
   const error = staticError ?? trafficError ?? rtError;
   const isStale =
@@ -232,6 +254,7 @@ export function useEta({ stopId }: { stopId: string }): UseEtaResult {
     minutesToStop: composition?.minutesToStop ?? null,
     isStale,
     source: composition?.source ?? null,
+    trafficSource: composition?.source === "traffic" ? trafficSource : null,
     vehicleId: composition?.vehicleId ?? null,
     lastComputedAt,
     error,

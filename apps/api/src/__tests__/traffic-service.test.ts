@@ -3,9 +3,11 @@ import test from "node:test";
 import { createTrafficEtaApp } from "../../api/traffic-eta.js";
 import {
   MissingHereKeyError,
+  MissingProviderKeyError,
   TrafficEtaService,
   UpstreamError,
   parseLatLngPair,
+  parseTrafficProvider,
 } from "../traffic-service.js";
 
 interface HereFake {
@@ -177,4 +179,110 @@ test("traffic-eta endpoint: 500 when HERE_API_KEY missing", async () => {
     ),
   );
   assert.equal(res.status, 500);
+});
+
+test("parseTrafficProvider: defaults to here and validates values", () => {
+  assert.equal(parseTrafficProvider(undefined), "here");
+  assert.equal(parseTrafficProvider(""), "here");
+  assert.equal(parseTrafficProvider("here"), "here");
+  assert.equal(parseTrafficProvider("HERE"), "here");
+  assert.equal(parseTrafficProvider("tomtom"), "tomtom");
+  assert.equal(parseTrafficProvider("google"), null);
+});
+
+test("TrafficEtaService: tomtom provider parses travelTimeInSeconds", async () => {
+  const fetchMock: typeof fetch = async () =>
+    new Response(
+      JSON.stringify({
+        routes: [{ summary: { travelTimeInSeconds: 600 } }],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  const svc = new TrafficEtaService({ tomtom: "TT" }, fetchMock, () => 1_000);
+  const res = await svc.getEta({
+    originLat: 3.1,
+    originLng: 101.6,
+    destLat: 3.12,
+    destLng: 101.62,
+    provider: "tomtom",
+  });
+  assert.equal(res.result.source, "tomtom");
+  assert.equal(res.result.trafficMinutes, 10);
+});
+
+test("TrafficEtaService: missing tomtom key throws MissingProviderKeyError", async () => {
+  const svc = new TrafficEtaService({ here: "H" });
+  await assert.rejects(
+    svc.getEta({
+      originLat: 3.1,
+      originLng: 101.6,
+      destLat: 3.12,
+      destLng: 101.62,
+      provider: "tomtom",
+    }),
+    (err: unknown) =>
+      err instanceof MissingProviderKeyError && err.provider === "tomtom",
+  );
+});
+
+test("TrafficEtaService: cache separates providers", async () => {
+  let calls = 0;
+  const fetchMock: typeof fetch = async (input) => {
+    calls++;
+    const url = typeof input === "string" ? input : (input as Request).url;
+    if (url.includes("hereapi.com")) return fakeResponse(300);
+    return new Response(
+      JSON.stringify({ routes: [{ summary: { travelTimeInSeconds: 600 } }] }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  };
+  const svc = new TrafficEtaService(
+    { here: "H", tomtom: "T" },
+    fetchMock,
+    () => 1_000,
+  );
+  const q = {
+    originLat: 3.1,
+    originLng: 101.6,
+    destLat: 3.12,
+    destLng: 101.62,
+  };
+  const here = await svc.getEta({ ...q, provider: "here" });
+  const tomtom = await svc.getEta({ ...q, provider: "tomtom" });
+  assert.equal(here.result.source, "here");
+  assert.equal(tomtom.result.source, "tomtom");
+  assert.equal(calls, 2);
+});
+
+test("traffic-eta endpoint: honours provider=tomtom query param", async () => {
+  const fetchMock: typeof fetch = async (input) => {
+    const url = typeof input === "string" ? input : (input as Request).url;
+    assert.ok(url.startsWith("https://api.tomtom.com/routing/"));
+    return new Response(
+      JSON.stringify({ routes: [{ summary: { travelTimeInSeconds: 480 } }] }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  };
+  const svc = new TrafficEtaService({ tomtom: "TT" }, fetchMock, () => 1_000);
+  const app = createTrafficEtaApp(svc);
+  const res = await app.fetch(
+    new Request(
+      "https://local/api/traffic-eta?origin=3.1,101.6&destination=3.12,101.62&provider=tomtom",
+    ),
+  );
+  assert.equal(res.status, 200);
+  const body = (await res.json()) as { trafficMinutes: number; source: string };
+  assert.equal(body.source, "tomtom");
+  assert.equal(body.trafficMinutes, 8);
+});
+
+test("traffic-eta endpoint: rejects unknown provider", async () => {
+  const svc = new TrafficEtaService({ here: "H" });
+  const app = createTrafficEtaApp(svc);
+  const res = await app.fetch(
+    new Request(
+      "https://local/api/traffic-eta?origin=3.1,101.6&destination=3.12,101.62&provider=google",
+    ),
+  );
+  assert.equal(res.status, 400);
 });
