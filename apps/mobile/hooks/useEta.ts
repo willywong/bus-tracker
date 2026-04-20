@@ -1,5 +1,6 @@
 import {
   computeEta,
+  pickApproachingVehicle,
   type ComputeEtaResult,
   type EtaSource,
   type LatLng,
@@ -20,6 +21,15 @@ import { fetchTrafficEta } from "@/services/trafficEta";
 const TRAFFIC_REFRESH_MS = 30_000;
 const STALE_AFTER_MS = 60_000;
 const ROUTE_CODE = "T816";
+/** Rough bus speed used to project a "next vehicle" ETA when we don't hit /traffic-eta for the second bus. */
+const FALLBACK_BUS_METERS_PER_MINUTE = 20_000 / 60;
+
+export interface ApproachingBus {
+  minutesToStop: number | null;
+  vehicleId: string;
+  forwardMeters: number;
+  source: EtaSource | null;
+}
 
 export interface UseEtaResult {
   minutesToStop: number | null;
@@ -28,6 +38,10 @@ export interface UseEtaResult {
   vehicleId: string | null;
   lastComputedAt: number | null;
   error: Error | null;
+  /** The closest approaching bus with its traffic-adjusted ETA (same as top-level fields). */
+  current: ApproachingBus | null;
+  /** The second-closest approaching bus, with a rough distance-based ETA (no traffic call). */
+  next: ApproachingBus | null;
 }
 
 interface StaticCtx {
@@ -125,6 +139,30 @@ export function useEta({ stopId }: { stopId: string }): UseEtaResult {
     });
   }, [staticCtx, positions, trafficMinutes]);
 
+  // 4b. Pick the second-closest approaching vehicle for the "Next" row.
+  const nextBus: ApproachingBus | null = useMemo(() => {
+    if (!staticCtx || !composition?.vehicleId) return null;
+    const picked = pickApproachingVehicle({
+      vehicles: (positions as VehiclePosition[]).filter(
+        (v) => v.vehicleId !== composition.vehicleId,
+      ),
+      previousByVehicleId: previousByVehicleRef.current,
+      stop: staticCtx.stop,
+      polyline: staticCtx.polyline,
+      loop: true,
+    });
+    if (!picked) return null;
+    const minutes = Math.round(
+      picked.evaluation.forwardMeters / FALLBACK_BUS_METERS_PER_MINUTE,
+    );
+    return {
+      minutesToStop: Math.max(0, minutes),
+      vehicleId: picked.vehicle.vehicleId,
+      forwardMeters: picked.evaluation.forwardMeters,
+      source: null,
+    };
+  }, [staticCtx, positions, composition?.vehicleId]);
+
   // 5. Fetch traffic ETA when the picked vehicle changes or ≥ 30s has passed.
   useEffect(() => {
     if (!composition || !composition.busProjection || !staticCtx) return;
@@ -180,6 +218,16 @@ export function useEta({ stopId }: { stopId: string }): UseEtaResult {
   const isStale =
     lastComputedAt == null ? true : now - lastComputedAt > STALE_AFTER_MS;
 
+  const current: ApproachingBus | null =
+    composition?.vehicleId != null && composition.forwardMeters != null
+      ? {
+          minutesToStop: composition.minutesToStop,
+          vehicleId: composition.vehicleId,
+          forwardMeters: composition.forwardMeters,
+          source: composition.source,
+        }
+      : null;
+
   return {
     minutesToStop: composition?.minutesToStop ?? null,
     isStale,
@@ -187,5 +235,7 @@ export function useEta({ stopId }: { stopId: string }): UseEtaResult {
     vehicleId: composition?.vehicleId ?? null,
     lastComputedAt,
     error,
+    current,
+    next: nextBus,
   };
 }
