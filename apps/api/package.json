@@ -8,6 +8,7 @@
     "deploy": "vercel deploy --prod"
   },
   "dependencies": {
+    "@bus-tracker/shared": "workspace:*",
     "hono": "^4.6.0"
   },
   "devDependencies": {

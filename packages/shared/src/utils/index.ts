@@ -1,0 +1,1 @@
+export const SHARED_PKG_VERSION = "0.1.0" as const;
