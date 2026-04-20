@@ -8,6 +8,7 @@ import 'react-native-reanimated';
 import '../global.css';
 
 import { useColorScheme } from '@/components/useColorScheme';
+import { bootstrapStaticGtfs } from '@/db/bootstrap';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -38,6 +39,12 @@ export default function RootLayout() {
       SplashScreen.hideAsync();
     }
   }, [loaded]);
+
+  useEffect(() => {
+    bootstrapStaticGtfs().catch((err) => {
+      console.warn('[gtfs] bootstrap failed', err);
+    });
+  }, []);
 
   if (!loaded) {
     return null;

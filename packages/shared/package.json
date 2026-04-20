@@ -11,9 +11,14 @@
     "./utils": "./src/utils/index.ts"
   },
   "scripts": {
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "test": "tsx --test \"src/**/__tests__/*.test.ts\""
   },
   "devDependencies": {
+    "tsx": "^4.21.0",
     "typescript": "^5.6"
+  },
+  "dependencies": {
+    "fflate": "^0.8.2"
   }
 }

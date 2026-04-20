@@ -1,4 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "functions": { "api/*.ts": { "runtime": "edge" } }
+  "functions": { "api/**/*.ts": { "runtime": "edge" } },
+  "crons": [
+    { "path": "/api/cron/refresh-gtfs", "schedule": "0 20 * * *" }
+  ]
 }

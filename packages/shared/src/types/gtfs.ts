@@ -35,3 +35,38 @@ export interface GtfsShapePoint {
   shape_pt_lon: number;
   shape_pt_sequence: number;
 }
+
+export interface GtfsCalendar {
+  service_id: string;
+  monday: boolean;
+  tuesday: boolean;
+  wednesday: boolean;
+  thursday: boolean;
+  friday: boolean;
+  saturday: boolean;
+  sunday: boolean;
+  start_date: string;
+  end_date: string;
+}
+
+export interface PolylinePoint {
+  lat: number;
+  lng: number;
+  seq: number;
+}
+
+export interface BundledRoute {
+  route_id: string;
+  code: string;
+  long_name?: string;
+}
+
+export interface T816Bundle {
+  generatedAt: number;
+  routes: BundledRoute[];
+  stops: GtfsStop[];
+  trips: GtfsTrip[];
+  stopTimes: GtfsStopTime[];
+  shapes: Record<string, PolylinePoint[]>;
+  calendar: GtfsCalendar[];
+}

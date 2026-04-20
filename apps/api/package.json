@@ -4,15 +4,21 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vercel dev --listen 3001",
-    "deploy": "vercel deploy --prod"
+    "dev": "tsx watch src/local-server.ts",
+    "dev:vercel": "vercel dev --listen 3001",
+    "deploy": "vercel deploy --prod",
+    "type-check": "tsc --noEmit",
+    "test": "tsx --test \"src/**/__tests__/*.test.ts\""
   },
   "dependencies": {
     "@bus-tracker/shared": "workspace:*",
+    "@hono/node-server": "^1.19.14",
     "hono": "^4.6.0"
   },
   "devDependencies": {
     "@types/node": "^20",
+    "fflate": "^0.8.2",
+    "tsx": "^4.21.0",
     "typescript": "^5.6",
     "vercel": "^37"
   }
