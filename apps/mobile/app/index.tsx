@@ -1,7 +1,13 @@
+import { SymbolView } from 'expo-symbols';
 import { PlatformColor, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { useEffect, useMemo, useState } from 'react';
 
+import {
+  bearingToCardinal,
+  formatArrivalClock,
+  formatStopName,
+} from '@/components/map/format';
 import { HeroCountdown } from '@/components/tracker/HeroCountdown';
 import { InfoGroup } from '@/components/tracker/InfoGroup';
 import { InfoRow } from '@/components/tracker/InfoRow';
@@ -23,19 +29,20 @@ import { getStops, type StopRow } from '@/db/queries';
 import { useBusPosition } from '@/hooks/useBusPosition';
 import { useEta } from '@/hooks/useEta';
 import { usePushRegistrationState } from '@/hooks/PushRegistrationContext';
-import { useSettings } from '@/hooks/useSettings';
+import { AVAILABLE_ROUTE_CODES, useSettings } from '@/hooks/useSettings';
 import { useWalkTimer } from '@/hooks/useWalkTimer';
-
-const ROUTE_CODE = 'T816';
 
 export default function TrackerScreen() {
   const settings = useSettings();
   const push = usePushRegistrationState();
   const { current, next, minutesToStop } = useEta({
     stopId: settings.preferredStopId,
+    routeCode: settings.preferredRouteCode,
     trafficProvider: settings.trafficProvider,
   });
-  const { lastUpdated } = useBusPosition();
+  const { lastUpdated, positions } = useBusPosition({
+    routeCode: settings.preferredRouteCode,
+  });
   const updated = useLastUpdatedLabel(lastUpdated);
   const walk = useWalkTimer(settings.walkMinutes);
   const [stopName, setStopName] = useState<string | null>(null);
@@ -99,19 +106,21 @@ export default function TrackerScreen() {
     };
   }, [walk.isWalking, walk.remainingSeconds, leaveIn, isLeaveNow]);
 
-  const subtitle = stopName ? `to ${stopName}` : 'to your stop';
+  const subtitle = stopName ? `to ${formatStopName(stopName)}` : 'to your stop';
   const delay = computeDelay(current);
 
   return (
     <TrackerCanvas>
       <HeroCountdown
         state={heroState}
-        routeCode={ROUTE_CODE}
+        selectedRoute={settings.preferredRouteCode}
+        routeOptions={AVAILABLE_ROUTE_CODES}
+        onSelectRoute={settings.setPreferredRouteCode}
         eyebrow={hero.eyebrow}
         value={hero.value}
         unit={hero.unit}
         subtitle={subtitle}
-        meta={updated.label}
+        meta={updated.shortLabel}
         isStale={updated.isStale}
       />
 
@@ -126,21 +135,38 @@ export default function TrackerScreen() {
 
       <SectionLabel>Buses</SectionLabel>
       <InfoGroup>
-        <InfoRow label="Current" value={`${formatMinutes(current)} min`} />
-        <InfoRow
-          label="Next"
-          value={`${formatMinutes(next)} min`}
-          valueColor={PlatformColor('secondaryLabel')}
-        />
-        {delay ? (
-          <InfoRow
-            label={statusLabel[delay.status]}
-            caption="vs. free-flow baseline"
-            value={delay.deltaMin <= 0 ? 'on time' : `+${Math.round(delay.deltaMin)}m`}
-            valueColor={delayStatusColor[delay.status]}
-            trailing={<StatusDot color={delayStatusColor[delay.status]} />}
-          />
-        ) : null}
+        {current == null && next == null ? (
+          <EmptyBusesRow />
+        ) : (
+          <>
+            <InfoRow
+              label="Current"
+              value={`${formatMinutes(current)} min`}
+              caption={formatBusCaption(
+                current?.minutesToStop,
+                positions.find((p) => p.vehicleId === current?.vehicleId),
+              )}
+            />
+            <InfoRow
+              label="Next"
+              value={`${formatMinutes(next)} min`}
+              caption={formatBusCaption(
+                next?.minutesToStop,
+                positions.find((p) => p.vehicleId === next?.vehicleId),
+              )}
+              valueColor={PlatformColor('secondaryLabel')}
+            />
+            {delay ? (
+              <InfoRow
+                label={statusLabel[delay.status]}
+                caption="vs. free-flow baseline"
+                value={delay.deltaMin <= 0 ? 'on time' : `+${Math.round(delay.deltaMin)}m`}
+                valueColor={delayStatusColor[delay.status]}
+                trailing={<StatusDot color={delayStatusColor[delay.status]} />}
+              />
+            ) : null}
+          </>
+        )}
       </InfoGroup>
 
       <View style={{ height: trackerSpacing.sectionGap }} />
@@ -159,11 +185,54 @@ export default function TrackerScreen() {
   );
 }
 
+function formatBusCaption(
+  minutes: number | null | undefined,
+  position:
+    | { speed?: number | null; bearing?: number | null }
+    | undefined,
+): string | undefined {
+  const parts: string[] = [];
+  if (minutes != null) {
+    if (minutes <= 0) {
+      parts.push('Arriving now');
+    } else {
+      const clock = formatArrivalClock(minutes);
+      if (clock) parts.push(`Arrives ${clock}`);
+    }
+  }
+  if (position?.speed != null && Number.isFinite(position.speed)) {
+    parts.push(`${Math.round(position.speed * 3.6)} km/h`);
+  }
+  const heading = bearingToCardinal(position?.bearing);
+  if (heading) parts.push(heading);
+  return parts.length > 0 ? parts.join(' · ') : undefined;
+}
+
 function SectionLabel({ children }: { children: string }) {
   return (
     <Text style={labelStyles.text} selectable>
       {children}
     </Text>
+  );
+}
+
+function EmptyBusesRow() {
+  return (
+    <View style={emptyStyles.row}>
+      <SymbolView
+        name="bus"
+        size={22}
+        tintColor="#8E8E93"
+      />
+      <View style={emptyStyles.textCol}>
+        <Text style={emptyStyles.title} selectable>
+          No buses in service
+        </Text>
+        <Text style={emptyStyles.caption} selectable>
+          The next run hasn't started yet — check back shortly.
+        </Text>
+      </View>
+    </View>
   );
 }
 
@@ -176,5 +245,30 @@ const labelStyles = StyleSheet.create({
     letterSpacing: 0.8,
     marginBottom: 8,
     marginLeft: 4,
+  },
+});
+
+const emptyStyles = StyleSheet.create({
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: trackerSpacing.rowH,
+    paddingVertical: trackerSpacing.rowV + 2,
+    minHeight: 60,
+    gap: 14,
+  },
+  textCol: {
+    flex: 1,
+    gap: 2,
+  },
+  title: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: PlatformColor('label'),
+  },
+  caption: {
+    fontSize: 12,
+    fontWeight: '400',
+    color: PlatformColor('secondaryLabel'),
   },
 });

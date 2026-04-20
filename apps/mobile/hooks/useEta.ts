@@ -4,6 +4,7 @@ import {
   type ComputeEtaResult,
   type EtaSource,
   type LatLng,
+  type RouteId,
   type VehiclePosition,
 } from "@bus-tracker/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -20,7 +21,6 @@ import { fetchTrafficEta, type TrafficProvider } from "@/services/trafficEta";
 
 const TRAFFIC_REFRESH_MS = 30_000;
 const STALE_AFTER_MS = 60_000;
-const ROUTE_CODE = "T816";
 /** Rough bus speed used to project a "next vehicle" ETA when we don't hit /traffic-eta for the second bus. */
 const FALLBACK_BUS_METERS_PER_MINUTE = 20_000 / 60;
 
@@ -39,7 +39,10 @@ export interface UseEtaResult {
   trafficSource: TrafficProvider | null;
   vehicleId: string | null;
   lastComputedAt: number | null;
+  /** Combined error (static load, traffic fetch, or realtime feed). */
   error: Error | null;
+  /** Just the traffic-API error, separated so callers can distinguish a degraded ETA from a fatal load. */
+  trafficError: Error | null;
   /** The closest approaching bus with its traffic-adjusted ETA (same as top-level fields). */
   current: ApproachingBus | null;
   /** The second-closest approaching bus, with a rough distance-based ETA (no traffic call). */
@@ -54,12 +57,14 @@ interface StaticCtx {
 
 export function useEta({
   stopId,
+  routeCode,
   trafficProvider,
 }: {
   stopId: string;
+  routeCode: RouteId;
   trafficProvider?: TrafficProvider;
 }): UseEtaResult {
-  const { positions, error: rtError } = useBusPosition();
+  const { positions, error: rtError } = useBusPosition({ routeCode });
 
   const [staticCtx, setStaticCtx] = useState<StaticCtx | null>(null);
   const [staticError, setStaticError] = useState<Error | null>(null);
@@ -77,7 +82,7 @@ export function useEta({
   const lastTrafficFetchRef = useRef<{ at: number; key: string } | null>(null);
   const trafficInflightRef = useRef<AbortController | null>(null);
 
-  // 1. Load static data once per stopId.
+  // 1. Load static data once per (stopId, routeCode).
   useEffect(() => {
     let cancelled = false;
     setStaticError(null);
@@ -87,8 +92,8 @@ export function useEta({
         const db = await openDb();
         const [routes, stops] = await Promise.all([getRoutes(db), getStops(db)]);
         const route =
-          routes.find((r) => r.code === ROUTE_CODE) ?? routes[0] ?? null;
-        if (!route) throw new Error(`no route ${ROUTE_CODE} in cache`);
+          routes.find((r) => r.code === routeCode) ?? routes[0] ?? null;
+        if (!route) throw new Error(`no route ${routeCode} in cache`);
 
         const stop = stops.find((s: StopRow) => s.stop_id === stopId);
         if (!stop) throw new Error(`stop ${stopId} not found in cache`);
@@ -120,7 +125,7 @@ export function useEta({
     return () => {
       cancelled = true;
     };
-  }, [stopId]);
+  }, [stopId, routeCode]);
 
   // 2. Drive `now` forward every 15s so `isStale` stays current.
   useEffect(() => {
@@ -240,10 +245,15 @@ export function useEta({
   const isStale =
     lastComputedAt == null ? true : now - lastComputedAt > STALE_AFTER_MS;
 
+  const roundedMinutes =
+    composition?.minutesToStop != null
+      ? Math.round(composition.minutesToStop)
+      : null;
+
   const current: ApproachingBus | null =
     composition?.vehicleId != null && composition.forwardMeters != null
       ? {
-          minutesToStop: composition.minutesToStop,
+          minutesToStop: roundedMinutes,
           vehicleId: composition.vehicleId,
           forwardMeters: composition.forwardMeters,
           source: composition.source,
@@ -251,13 +261,14 @@ export function useEta({
       : null;
 
   return {
-    minutesToStop: composition?.minutesToStop ?? null,
+    minutesToStop: roundedMinutes,
     isStale,
     source: composition?.source ?? null,
     trafficSource: composition?.source === "traffic" ? trafficSource : null,
     vehicleId: composition?.vehicleId ?? null,
     lastComputedAt,
     error,
+    trafficError,
     current,
     next: nextBus,
   };

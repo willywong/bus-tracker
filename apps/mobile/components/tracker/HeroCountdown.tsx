@@ -1,8 +1,16 @@
+import type { RouteId } from '@bus-tracker/shared';
 import { PlatformColor, StyleSheet, Text, View } from 'react-native';
-import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
+import Animated, {
+  Easing,
+  SlideInDown,
+  SlideOutUp,
+} from 'react-native-reanimated';
+
+import { PulsingDots } from '@/components/map/PulsingDots';
 
 import { LiveDot } from './LiveDot';
 import type { HeroState } from './logic';
+import { RouteSwitcher } from './RouteSwitcher';
 import { heroStateColor, trackerSpacing } from './tokens';
 
 interface HeroCountdownProps {
@@ -19,9 +27,15 @@ interface HeroCountdownProps {
   meta: string;
   /** Is the live feed stale? Shifts dot color to amber. */
   isStale: boolean;
-  /** Route code shown in the top status line. */
-  routeCode: string;
+  /** Currently selected route. */
+  selectedRoute: RouteId;
+  /** Routes available in the switcher. */
+  routeOptions: readonly RouteId[];
+  /** Called when the user picks a different route. */
+  onSelectRoute: (code: RouteId) => void;
 }
+
+const NUMBER_HEIGHT = 130;
 
 export function HeroCountdown({
   state,
@@ -31,34 +45,79 @@ export function HeroCountdown({
   subtitle,
   meta,
   isStale,
-  routeCode,
+  selectedRoute,
+  routeOptions,
+  onSelectRoute,
 }: HeroCountdownProps) {
   const dotColor = isStale ? heroStateColor.waiting : heroStateColor[state];
   const statusText = isStale ? 'Stale' : 'Live';
+  const isEmpty = value === '—';
+  // Walking timer ticks every second — a slide on every tick feels chaotic, so
+  // skip the layout animation in that state and let the text update in place.
+  const isTicking = state === 'walking';
 
   return (
     <View style={styles.container}>
+      <View style={styles.switcherRow}>
+        <RouteSwitcher
+          selected={selectedRoute}
+          options={routeOptions}
+          onSelect={onSelectRoute}
+        />
+      </View>
+
       <View style={styles.statusRow}>
         <LiveDot color={dotColor} size={7} />
         <Text style={styles.statusText} selectable>
-          {statusText} · {routeCode}
+          {statusText}
         </Text>
+        {meta ? (
+          <>
+            <Text style={styles.statusDot}>·</Text>
+            <Text style={styles.statusMeta} selectable numberOfLines={1}>
+              {meta}
+            </Text>
+          </>
+        ) : null}
       </View>
 
       <Text style={styles.eyebrow} selectable>
         {eyebrow}
       </Text>
 
-      <Animated.View
-        key={`${eyebrow}-${value}`}
-        entering={FadeIn.duration(200)}
-        exiting={FadeOut.duration(140)}
-        style={styles.numberWrap}
-      >
-        <Text style={styles.number} selectable allowFontScaling={false}>
-          {value}
-        </Text>
-      </Animated.View>
+      {isEmpty ? (
+        <View style={styles.emptyBlock}>
+          <PulsingDots
+            color={PlatformColor('secondaryLabel')}
+            size={12}
+            gap={10}
+          />
+          <Text style={styles.emptyHint} selectable>
+            Looking for the next one
+          </Text>
+        </View>
+      ) : isTicking ? (
+        <View style={styles.numberClip}>
+          <Text style={styles.number} selectable allowFontScaling={false}>
+            {value}
+          </Text>
+        </View>
+      ) : (
+        <View style={styles.numberClip}>
+          <Animated.View
+            key={value}
+            entering={SlideInDown.duration(300).easing(
+              Easing.out(Easing.cubic),
+            )}
+            exiting={SlideOutUp.duration(240).easing(Easing.in(Easing.cubic))}
+            style={styles.numberSlide}
+          >
+            <Text style={styles.number} selectable allowFontScaling={false}>
+              {value}
+            </Text>
+          </Animated.View>
+        </View>
+      )}
 
       {unit ? (
         <Text style={styles.unit} selectable>
@@ -66,15 +125,9 @@ export function HeroCountdown({
         </Text>
       ) : null}
 
-      <View style={styles.metaRow}>
-        <Text style={styles.subtitle} selectable numberOfLines={1}>
-          {subtitle}
-        </Text>
-        <Text style={styles.dot}>·</Text>
-        <Text style={styles.meta} selectable numberOfLines={1}>
-          {meta}
-        </Text>
-      </View>
+      <Text style={styles.subtitle} selectable numberOfLines={1}>
+        {subtitle}
+      </Text>
     </View>
   );
 }
@@ -84,6 +137,10 @@ const styles = StyleSheet.create({
     paddingTop: trackerSpacing.heroTopPad,
     paddingBottom: trackerSpacing.heroBottomPad,
     alignItems: 'center',
+  },
+  switcherRow: {
+    alignItems: 'center',
+    marginBottom: 12,
   },
   statusRow: {
     flexDirection: 'row',
@@ -98,6 +155,19 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     color: PlatformColor('secondaryLabel'),
   },
+  statusDot: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: PlatformColor('tertiaryLabel'),
+  },
+  statusMeta: {
+    fontSize: 12,
+    fontWeight: '500',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    color: PlatformColor('tertiaryLabel'),
+    flexShrink: 1,
+  },
   eyebrow: {
     fontSize: 13,
     fontWeight: '500',
@@ -105,17 +175,38 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
     marginBottom: 6,
   },
-  numberWrap: {
+  numberClip: {
+    height: NUMBER_HEIGHT,
+    alignSelf: 'stretch',
+    overflow: 'hidden',
+  },
+  numberSlide: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
     alignItems: 'center',
   },
   number: {
     fontSize: 120,
-    lineHeight: 130,
+    lineHeight: NUMBER_HEIGHT,
     fontWeight: '200',
     color: PlatformColor('label'),
     fontVariant: ['tabular-nums'],
     letterSpacing: -4,
     textAlign: 'center',
+  },
+  emptyBlock: {
+    height: NUMBER_HEIGHT,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 14,
+  },
+  emptyHint: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: PlatformColor('secondaryLabel'),
+    letterSpacing: 0.1,
   },
   unit: {
     fontSize: 17,
@@ -123,27 +214,13 @@ const styles = StyleSheet.create({
     color: PlatformColor('secondaryLabel'),
     marginTop: 2,
   },
-  metaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 18,
-    gap: 6,
-    maxWidth: '100%',
-    paddingHorizontal: 8,
-  },
   subtitle: {
+    marginTop: 18,
     fontSize: 14,
     fontWeight: '500',
     color: PlatformColor('label'),
-    flexShrink: 1,
-  },
-  dot: {
-    fontSize: 14,
-    color: PlatformColor('tertiaryLabel'),
-  },
-  meta: {
-    fontSize: 14,
-    color: PlatformColor('secondaryLabel'),
-    flexShrink: 1,
+    textAlign: 'center',
+    maxWidth: '100%',
+    paddingHorizontal: 8,
   },
 });

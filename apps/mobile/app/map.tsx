@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { StyleSheet, Text, View, type ColorValue } from 'react-native';
+import { SymbolView } from 'expo-symbols';
+import { useEffect, useRef, useState } from 'react';
+import { StyleSheet, View, type ColorValue } from 'react-native';
 import MapView, {
   AnimatedRegion,
   Marker,
@@ -9,7 +10,10 @@ import MapView, {
   type Region,
 } from 'react-native-maps';
 
-import { GlassGuard } from '@/components/GlassGuard';
+import { BusCallout } from '@/components/map/BusCallout';
+import { MapStatusCard } from '@/components/map/MapStatusCard';
+import { MapStatusCardSkeleton } from '@/components/map/MapStatusCardSkeleton';
+import { StopCallout } from '@/components/map/StopCallout';
 import { openDb } from '@/db/database';
 import {
   getRoutePolyline,
@@ -22,9 +26,8 @@ import { useBusPosition } from '@/hooks/useBusPosition';
 import { useEta } from '@/hooks/useEta';
 import { useSettings } from '@/hooks/useSettings';
 import { useStaticGtfs } from '@/hooks/useStaticGtfs';
-import { tokens, typeStyle } from '@/theme/tokens';
+import { tokens } from '@/theme/tokens';
 
-const ROUTE_CODE = 'T816';
 const POSITION_TWEEN_MS = 30_000;
 const BBOX_PAD_DEG = 0.008;
 
@@ -60,9 +63,12 @@ export default function MapScreen() {
   const gtfs = useStaticGtfs();
   const settings = useSettings();
   const [staticData, setStaticData] = useState<StaticData | null>(null);
-  const { positions } = useBusPosition();
+  const { positions, lastUpdated } = useBusPosition({
+    routeCode: settings.preferredRouteCode,
+  });
   const eta = useEta({
     stopId: settings.preferredStopId,
+    routeCode: settings.preferredRouteCode,
     trafficProvider: settings.trafficProvider,
   });
 
@@ -73,7 +79,9 @@ export default function MapScreen() {
       try {
         const db = await openDb();
         const [routes, stops] = await Promise.all([getRoutes(db), getStops(db)]);
-        const route = routes.find((r) => r.code === ROUTE_CODE) ?? routes[0];
+        const route =
+          routes.find((r) => r.code === settings.preferredRouteCode) ??
+          routes[0];
         if (!route) return;
         const stop =
           stops.find((s) => s.stop_id === settings.preferredStopId) ?? stops[0];
@@ -96,19 +104,16 @@ export default function MapScreen() {
     return () => {
       cancelled = true;
     };
-  }, [gtfs.ready, settings.preferredStopId]);
+  }, [gtfs.ready, settings.preferredStopId, settings.preferredRouteCode]);
 
   const regionsRef = useRef(new Map<string, AnimatedRegion>());
-  const [bearings, setBearings] = useState<Record<string, number>>({});
 
   useEffect(() => {
     if (positions.length === 0) return;
     const regions = regionsRef.current;
     const seen = new Set<string>();
-    const nextBearings: Record<string, number> = {};
     for (const p of positions) {
       seen.add(p.vehicleId);
-      nextBearings[p.vehicleId] = p.bearing ?? 0;
       const existing = regions.get(p.vehicleId);
       if (!existing) {
         regions.set(
@@ -138,16 +143,17 @@ export default function MapScreen() {
     for (const id of Array.from(regions.keys())) {
       if (!seen.has(id)) regions.delete(id);
     }
-    setBearings(nextBearings);
   }, [positions]);
 
-  const overlayLabel = useMemo(() => {
-    if (eta.minutesToStop == null) return 'Waiting for bus…';
-    return `Bus in ${eta.minutesToStop} min`;
-  }, [eta.minutesToStop]);
-
   if (!staticData) {
-    return <View style={styles.loading} />;
+    return (
+      <View style={styles.root}>
+        <View style={styles.map} />
+        <View style={styles.overlay} pointerEvents="box-none">
+          <MapStatusCardSkeleton />
+        </View>
+      </View>
+    );
   }
 
   return (
@@ -158,6 +164,7 @@ export default function MapScreen() {
         initialRegion={staticData.region}
         showsUserLocation
         showsMyLocationButton={false}
+        showsTraffic
       >
         {staticData.polyline.length >= 2 && (
           <Polyline
@@ -171,14 +178,11 @@ export default function MapScreen() {
             latitude: staticData.stop.stop_lat,
             longitude: staticData.stop.stop_lon,
           }}
-          title={staticData.stop.stop_name}
-          description={
-            eta.minutesToStop != null
-              ? `Live ETA: ${eta.minutesToStop} min${eta.isStale ? ' (stale)' : ''}`
-              : 'Waiting for live ETA…'
-          }
           pinColor="green"
-        />
+          calloutAnchor={{ x: 0.5, y: 0 }}
+        >
+          <StopCallout stopName={staticData.stop.stop_name} eta={eta} />
+        </Marker>
         {positions.map((p) => {
           const region = regionsRef.current.get(p.vehicleId);
           if (!region) return null;
@@ -190,73 +194,57 @@ export default function MapScreen() {
                   typeof MarkerAnimated
                 >['coordinate']
               }
-              rotation={bearings[p.vehicleId] ?? 0}
               flat
               anchor={{ x: 0.5, y: 0.5 }}
+              calloutAnchor={{ x: 0.5, y: 0 }}
               tracksViewChanges={false}
             >
               <View style={styles.busMarker}>
-                <View style={styles.busInner} />
+                <SymbolView
+                  name="bus.fill"
+                  size={18}
+                  tintColor="#FFFFFF"
+                  resizeMode="scaleAspectFit"
+                />
               </View>
+              <BusCallout position={p} />
             </MarkerAnimated>
           );
         })}
       </MapView>
-      <GlassGuard style={styles.overlay} glassEffectStyle="clear">
-        <Text style={styles.overlayTitle}>{overlayLabel}</Text>
-        <Text style={styles.overlaySubtitle}>
-          to {staticData.stop.stop_name}
-          {eta.isStale ? ' · stale' : ''}
-        </Text>
-      </GlassGuard>
+      <View style={styles.overlay} pointerEvents="box-none">
+        <MapStatusCard
+          routeCode={settings.preferredRouteCode}
+          eta={eta}
+          stopName={staticData.stop.stop_name}
+          lastUpdated={lastUpdated}
+        />
+      </View>
     </View>
   );
 }
 
 const busColor = tokens.color.accent as ColorValue;
 const bgColor = tokens.color.bg as ColorValue;
-const fgColor = tokens.color.fg as ColorValue;
-const mutedColor = tokens.color.muted as ColorValue;
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: bgColor },
-  loading: { flex: 1, backgroundColor: bgColor },
   map: { flex: 1 },
   overlay: {
     position: 'absolute',
     left: 16,
     right: 16,
-    bottom: 100,
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderRadius: 24,
-    overflow: 'hidden',
-  },
-  overlayTitle: {
-    ...typeStyle.title,
-    fontSize: 22,
-    lineHeight: 26,
-    color: fgColor,
-  },
-  overlaySubtitle: {
-    ...typeStyle.caption,
-    marginTop: 4,
-    color: mutedColor,
+    bottom: 110,
   },
   busMarker: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     borderWidth: 2,
     borderColor: '#FFFFFF',
     backgroundColor: busColor,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  busInner: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#FFFFFF',
+    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.25)',
   },
 });

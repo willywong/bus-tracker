@@ -12,7 +12,7 @@ import { getTripToRouteMap } from "@/db/queries";
 const ENDPOINT =
   "https://api.data.gov.my/gtfs-realtime/vehicle-position/prasarana?category=rapid-bus-mrtfeeder";
 const POLL_INTERVAL_MS = 30_000;
-const ROUTE_CODES = ["T816"] as const;
+const ROUTE_CODES = ["T816", "T815"] as const;
 
 export interface RealtimeSnapshot {
   positions: VehiclePosition[];

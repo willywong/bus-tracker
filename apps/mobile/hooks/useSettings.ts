@@ -1,3 +1,4 @@
+import type { RouteId } from '@bus-tracker/shared';
 import * as SecureStore from 'expo-secure-store';
 import {
   createContext,
@@ -19,12 +20,17 @@ export const TRAFFIC_PROVIDERS: readonly TrafficProvider[] = [
 
 export const NOTIF_BUFFER_CHOICES_MIN: readonly number[] = [0, 1, 2, 3, 5];
 
+/** Routes exposed in the in-app switcher. Order = user-facing order. */
+export const AVAILABLE_ROUTE_CODES: readonly RouteId[] = ['T816', 'T815'];
+
 const DEFAULT_PREFERRED_STOP_ID = 'HOTEL_LISA_DE_INN';
+const DEFAULT_PREFERRED_ROUTE_CODE: RouteId = 'T816';
 
 export interface Settings {
   walkMinutes: number;
   notifBufferMin: number;
   preferredStopId: string;
+  preferredRouteCode: RouteId;
   trafficProvider: TrafficProvider;
   /** Quiet hours start, minute-of-day (0–1439). */
   quietStartMin: number;
@@ -36,6 +42,7 @@ export const DEFAULT_SETTINGS: Settings = {
   walkMinutes: 10,
   notifBufferMin: 1,
   preferredStopId: DEFAULT_PREFERRED_STOP_ID,
+  preferredRouteCode: DEFAULT_PREFERRED_ROUTE_CODE,
   trafficProvider: 'here',
   quietStartMin: 22 * 60,
   quietEndMin: 6 * 60,
@@ -46,6 +53,7 @@ export interface SettingsApi extends Settings {
   setWalkMinutes: (v: number) => void;
   setNotifBufferMin: (v: number) => void;
   setPreferredStopId: (v: string) => void;
+  setPreferredRouteCode: (v: RouteId) => void;
   setTrafficProvider: (v: TrafficProvider) => void;
   setQuietStartMin: (v: number) => void;
   setQuietEndMin: (v: number) => void;
@@ -55,6 +63,7 @@ const STORAGE_KEYS = {
   walkMinutes: 'bt.walkMinutes',
   notifBufferMin: 'bt.notifBufferMin',
   preferredStopId: 'bt.preferredStopId',
+  preferredRouteCode: 'bt.preferredRouteCode',
   trafficProvider: 'bt.trafficProvider',
   quietStartMin: 'bt.quietStartMin',
   quietEndMin: 'bt.quietEndMin',
@@ -77,11 +86,18 @@ function parseProviderOr(
     : fallback;
 }
 
+function parseRouteOr(value: string | null, fallback: RouteId): RouteId {
+  return value && AVAILABLE_ROUTE_CODES.includes(value as RouteId)
+    ? (value as RouteId)
+    : fallback;
+}
+
 async function loadFromStore(): Promise<Settings> {
   const [
     walk,
     buffer,
     stop,
+    route,
     provider,
     quietStart,
     quietEnd,
@@ -89,6 +105,7 @@ async function loadFromStore(): Promise<Settings> {
     SecureStore.getItemAsync(STORAGE_KEYS.walkMinutes),
     SecureStore.getItemAsync(STORAGE_KEYS.notifBufferMin),
     SecureStore.getItemAsync(STORAGE_KEYS.preferredStopId),
+    SecureStore.getItemAsync(STORAGE_KEYS.preferredRouteCode),
     SecureStore.getItemAsync(STORAGE_KEYS.trafficProvider),
     SecureStore.getItemAsync(STORAGE_KEYS.quietStartMin),
     SecureStore.getItemAsync(STORAGE_KEYS.quietEndMin),
@@ -97,6 +114,10 @@ async function loadFromStore(): Promise<Settings> {
     walkMinutes: parseIntOr(walk, DEFAULT_SETTINGS.walkMinutes),
     notifBufferMin: parseIntOr(buffer, DEFAULT_SETTINGS.notifBufferMin),
     preferredStopId: stop ?? DEFAULT_SETTINGS.preferredStopId,
+    preferredRouteCode: parseRouteOr(
+      route,
+      DEFAULT_SETTINGS.preferredRouteCode,
+    ),
     trafficProvider: parseProviderOr(
       provider,
       DEFAULT_SETTINGS.trafficProvider,
@@ -166,6 +187,14 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const setPreferredRouteCode = useCallback((v: RouteId) => {
+    setState((prev) => {
+      if (prev.preferredRouteCode === v) return prev;
+      writeValue(STORAGE_KEYS.preferredRouteCode, v);
+      return { ...prev, preferredRouteCode: v };
+    });
+  }, []);
+
   const setTrafficProvider = useCallback((v: TrafficProvider) => {
     setState((prev) => {
       if (prev.trafficProvider === v) return prev;
@@ -196,6 +225,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     setWalkMinutes,
     setNotifBufferMin,
     setPreferredStopId,
+    setPreferredRouteCode,
     setTrafficProvider,
     setQuietStartMin,
     setQuietEndMin,

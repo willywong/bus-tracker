@@ -3,16 +3,22 @@ import {
   Form,
   Host,
   HStack,
+  Image,
   Picker,
   Section,
   Slider,
-  Spacer,
   Text,
 } from '@expo/ui/swift-ui';
-import { font, foregroundStyle, tag } from '@expo/ui/swift-ui/modifiers';
+import {
+  font,
+  foregroundStyle,
+  padding,
+  tag,
+} from '@expo/ui/swift-ui/modifiers';
 import { useEffect, useState } from 'react';
-import { PlatformColor } from 'react-native';
+import { View } from 'react-native';
 
+import { formatStopName } from '@/components/map/format';
 import { openDb } from '@/db/database';
 import { getStops, type StopRow } from '@/db/queries';
 import {
@@ -65,6 +71,10 @@ export default function SettingsScreen() {
     };
   }, []);
 
+  if (!settings.ready || stops.length === 0) {
+    return <View style={{ flex: 1 }} />;
+  }
+
   const notifBufferIndex = NOTIF_BUFFER_CHOICES_MIN.indexOf(
     settings.notifBufferMin,
   );
@@ -77,29 +87,43 @@ export default function SettingsScreen() {
   return (
     <Host style={{ flex: 1 }} useViewportSizeMeasurement>
       <Form>
-        <Section header={<Text>Walk</Text>}>
-          <HStack spacing={8}>
-            <Text>Walk time</Text>
-            <Spacer />
+        <Section
+          header={<Text>Walk</Text>}
+          footer={
+            <Text>
+              Minutes to walk from your starting point to the bus stop.
+            </Text>
+          }
+        >
+          <HStack spacing={12} modifiers={[padding({ vertical: 6 })]}>
+            <Image systemName="figure.walk" size={18} color="#8E8E93" />
+            <Slider
+              value={settings.walkMinutes}
+              min={5}
+              max={20}
+              step={1}
+              onValueChange={(v) => settings.setWalkMinutes(Math.round(v))}
+            />
             <Text
               modifiers={[
                 font({ weight: 'semibold' }),
-                foregroundStyle(PlatformColor('secondaryLabel')),
+                foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
               ]}
             >
               {`${settings.walkMinutes} min`}
             </Text>
           </HStack>
-          <Slider
-            value={settings.walkMinutes}
-            min={5}
-            max={20}
-            step={1}
-            onValueChange={(v) => settings.setWalkMinutes(Math.round(v))}
-          />
         </Section>
 
-        <Section header={<Text>Notifications</Text>}>
+        <Section
+          header={<Text>Notifications</Text>}
+          footer={
+            <Text>
+              Alert this many minutes before you need to leave. 0 is exactly
+              on time.
+            </Text>
+          }
+        >
           <Picker
             label="Lead time"
             selection={notifBufferIndex < 0 ? 0 : notifBufferIndex}
@@ -117,33 +141,31 @@ export default function SettingsScreen() {
           </Picker>
         </Section>
 
-        <Section header={<Text>Preferred stop</Text>}>
-          {stops.length === 0 ? (
-            <Text
-              modifiers={[foregroundStyle(PlatformColor('secondaryLabel'))]}
-            >
-              Loading stops…
-            </Text>
-          ) : (
-            <Picker
-              label="Stop"
-              selection={preferredStopIndex}
-              onSelectionChange={(i) => {
-                const idx = typeof i === 'number' ? i : Number(i);
-                const stop = stops[idx];
-                if (stop) settings.setPreferredStopId(stop.stop_id);
-              }}
-            >
-              {stops.map((s, i) => (
-                <Text key={s.stop_id} modifiers={[tag(i)]}>
-                  {s.stop_name}
-                </Text>
-              ))}
-            </Picker>
-          )}
+        <Section
+          header={<Text>Preferred stop</Text>}
+          footer={<Text>Alighting stop used for ETA and directions.</Text>}
+        >
+          <Picker
+            label="Stop"
+            selection={preferredStopIndex}
+            onSelectionChange={(i) => {
+              const idx = typeof i === 'number' ? i : Number(i);
+              const stop = stops[idx];
+              if (stop) settings.setPreferredStopId(stop.stop_id);
+            }}
+          >
+            {stops.map((s, i) => (
+              <Text key={s.stop_id} modifiers={[tag(i)]}>
+                {formatStopName(s.stop_name)}
+              </Text>
+            ))}
+          </Picker>
         </Section>
 
-        <Section header={<Text>Traffic</Text>}>
+        <Section
+          header={<Text>Traffic</Text>}
+          footer={<Text>Live travel-time source for ETA adjustments.</Text>}
+        >
           <Picker
             label="Provider"
             selection={providerIndex < 0 ? 0 : providerIndex}

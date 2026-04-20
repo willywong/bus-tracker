@@ -1,4 +1,3 @@
-import { formatDistanceToNowStrict } from 'date-fns';
 import { useEffect, useState } from 'react';
 
 import type { ApproachingBus } from '@/hooks/useEta';
@@ -42,21 +41,43 @@ export function formatWalkRemaining(seconds: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
+export function formatLastUpdated(ageMs: number): string {
+  const minutes = Math.floor(ageMs / 60_000);
+  if (minutes < 1) return 'Updated a few seconds ago';
+  if (minutes < 2) return 'Updated a minute ago';
+  return `Updated ${minutes} minutes ago`;
+}
+
+export function formatLastUpdatedShort(ageMs: number): string {
+  const minutes = Math.floor(ageMs / 60_000);
+  if (minutes < 1) return 'Just now';
+  if (minutes < 2) return '1 min ago';
+  return `${minutes} min ago`;
+}
+
 export function useLastUpdatedLabel(lastUpdated: number | null): {
   label: string;
+  shortLabel: string;
   isStale: boolean;
 } {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 1000);
+    const t = setInterval(() => setNow(Date.now()), 10_000);
     return () => clearInterval(t);
   }, []);
   if (lastUpdated == null) {
-    return { label: 'Waiting for feed…', isStale: true };
+    return {
+      label: 'Waiting for feed…',
+      shortLabel: 'Waiting',
+      isStale: true,
+    };
   }
   const age = now - lastUpdated;
-  const label = `Updated ${formatDistanceToNowStrict(lastUpdated, { addSuffix: true })}`;
-  return { label, isStale: age >= STALE_TICKER_MS };
+  return {
+    label: formatLastUpdated(age),
+    shortLabel: formatLastUpdatedShort(age),
+    isStale: age >= STALE_TICKER_MS,
+  };
 }
 
 export type HeroState = 'waiting' | 'relaxed' | 'leaveNow' | 'walking';
