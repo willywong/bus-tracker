@@ -1,0 +1,105 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { haversineMeters } from "../outlier.js";
+import {
+  distanceAlongRoute,
+  polylineLength,
+  projectOntoRoute,
+  type LatLng,
+} from "../route.js";
+
+/** Three-point polyline roughly tracing 3.10,101.60 → 3.10,101.61 → 3.11,101.61. */
+const POLY: LatLng[] = [
+  { lat: 3.1, lng: 101.6 },
+  { lat: 3.1, lng: 101.61 },
+  { lat: 3.11, lng: 101.61 },
+];
+
+test("projectOntoRoute: point halfway along first segment", () => {
+  const proj = projectOntoRoute({ lat: 3.1, lng: 101.605 }, POLY);
+  assert.equal(proj.segmentIndex, 0);
+  assert.ok(Math.abs(proj.progress - 0.5) < 0.01, `progress=${proj.progress}`);
+  assert.ok(proj.offRouteMeters < 1, `off=${proj.offRouteMeters}`);
+});
+
+test("projectOntoRoute: picks nearest segment, not earliest", () => {
+  const proj = projectOntoRoute({ lat: 3.105, lng: 101.61 }, POLY);
+  assert.equal(proj.segmentIndex, 1);
+  assert.ok(Math.abs(proj.progress - 0.5) < 0.01);
+  assert.ok(proj.offRouteMeters < 1);
+});
+
+test("projectOntoRoute: clamps to segment endpoints when point is beyond them", () => {
+  const before = projectOntoRoute({ lat: 3.1, lng: 101.59 }, POLY);
+  assert.equal(before.segmentIndex, 0);
+  assert.equal(before.progress, 0);
+
+  const after = projectOntoRoute({ lat: 3.12, lng: 101.611 }, POLY);
+  assert.equal(after.segmentIndex, 1);
+  assert.equal(after.progress, 1);
+});
+
+test("projectOntoRoute: remainingMeters equals full polyline length at start", () => {
+  const proj = projectOntoRoute({ lat: 3.1, lng: 101.6 }, POLY);
+  const total = polylineLength(POLY);
+  assert.ok(Math.abs(proj.remainingMeters - total) < 1);
+});
+
+test("projectOntoRoute: remainingMeters is 0 at end", () => {
+  const proj = projectOntoRoute({ lat: 3.11, lng: 101.61 }, POLY);
+  assert.equal(proj.segmentIndex, 1);
+  assert.equal(proj.progress, 1);
+  assert.ok(proj.remainingMeters < 1);
+});
+
+test("projectOntoRoute: remainingMeters decreases as we advance along the route", () => {
+  const a = projectOntoRoute({ lat: 3.1, lng: 101.602 }, POLY);
+  const b = projectOntoRoute({ lat: 3.1, lng: 101.608 }, POLY);
+  assert.ok(a.remainingMeters > b.remainingMeters);
+});
+
+test("projectOntoRoute: rejects polylines with < 2 points", () => {
+  assert.throws(
+    () => projectOntoRoute({ lat: 0, lng: 0 }, [{ lat: 0, lng: 0 }]),
+    /at least 2 points/,
+  );
+});
+
+test("polylineLength: sums haversine segment lengths", () => {
+  const m = polylineLength(POLY);
+  const expected =
+    haversineMeters(POLY[0], POLY[1]) + haversineMeters(POLY[1], POLY[2]);
+  assert.ok(Math.abs(m - expected) < 0.01);
+});
+
+test("distanceAlongRoute: from behind bus to forward stop is positive and equal to gap", () => {
+  const bus = projectOntoRoute({ lat: 3.1, lng: 101.602 }, POLY);
+  const stop = projectOntoRoute({ lat: 3.1, lng: 101.608 }, POLY);
+  const d = distanceAlongRoute(bus, stop, POLY);
+  assert.ok(d > 0);
+  assert.ok(Math.abs(d - (bus.remainingMeters - stop.remainingMeters)) < 0.01);
+});
+
+test("distanceAlongRoute: spanning multiple segments accumulates correctly", () => {
+  const bus = projectOntoRoute({ lat: 3.1, lng: 101.603 }, POLY);
+  const stop = projectOntoRoute({ lat: 3.108, lng: 101.61 }, POLY);
+  const d = distanceAlongRoute(bus, stop, POLY);
+  assert.ok(d > 0);
+  assert.ok(Math.abs(d - (bus.remainingMeters - stop.remainingMeters)) < 1);
+});
+
+test("distanceAlongRoute: bus past stop returns negative on non-loop", () => {
+  const bus = projectOntoRoute({ lat: 3.1, lng: 101.608 }, POLY);
+  const stop = projectOntoRoute({ lat: 3.1, lng: 101.602 }, POLY);
+  const d = distanceAlongRoute(bus, stop, POLY);
+  assert.ok(d < 0);
+});
+
+test("distanceAlongRoute: bus past stop wraps when loop=true", () => {
+  const bus = projectOntoRoute({ lat: 3.1, lng: 101.608 }, POLY);
+  const stop = projectOntoRoute({ lat: 3.1, lng: 101.602 }, POLY);
+  const d = distanceAlongRoute(bus, stop, POLY, { loop: true });
+  const total = polylineLength(POLY);
+  assert.ok(d > 0);
+  assert.ok(d < total);
+});

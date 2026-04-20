@@ -25,3 +25,28 @@ export {
   type OutlierFilter,
   type OutlierFilterOptions,
 } from "./outlier.js";
+export {
+  distanceAlongRoute,
+  polylineLength,
+  projectOntoRoute,
+  type LatLng,
+  type RouteProjection,
+} from "./route.js";
+export {
+  DEFAULT_DWELL_MINUTES_PER_STOP,
+  computeEta,
+  countIntermediateStops,
+  dwellMinutes,
+  evaluateApproach,
+  pickApproachingVehicle,
+  type ApproachEvaluation,
+  type ApproachVerdict,
+  type ComputeEtaArgs,
+  type ComputeEtaResult,
+  type CountIntermediateStopsArgs,
+  type DwellMinutesArgs,
+  type EtaSource,
+  type EvaluateApproachArgs,
+  type PickApproachingVehicleArgs,
+  type PickedVehicle,
+} from "./eta.js";
