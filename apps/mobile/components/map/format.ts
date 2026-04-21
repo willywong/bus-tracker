@@ -1,3 +1,5 @@
+import { getClockUse24h } from '@/components/tracker/logic';
+
 const SMALL_WORDS = new Set(['la', 'el', 'da', 'do', 'di', 'du']);
 
 /**
@@ -96,8 +98,10 @@ export function formatArrivalClock(
 ): string | null {
   if (minutesFromNow == null || !Number.isFinite(minutesFromNow)) return null;
   const arrival = new Date(now + Math.max(0, minutesFromNow) * 60_000);
-  return arrival.toLocaleTimeString(undefined, {
-    hour: 'numeric',
+  const use24h = getClockUse24h();
+  return arrival.toLocaleTimeString(use24h ? 'en-GB' : 'en-US', {
+    hour: use24h ? '2-digit' : 'numeric',
     minute: '2-digit',
+    hour12: !use24h,
   });
 }

@@ -116,11 +116,34 @@ export function formatCountdownShort(minutesFromNow: number): string {
   return '—';
 }
 
+/**
+ * Module-level 12h/24h preference — kept here so pure formatters can read it
+ * without accepting an extra argument at every call site. `SettingsProvider`
+ * pushes the current user preference in via `setClockUse24h` whenever it
+ * changes. Defaults to 24h to match the pre-toggle behaviour of the app.
+ */
+let use24hClock = true;
+export function setClockUse24h(v: boolean): void {
+  use24hClock = v;
+}
+export function getClockUse24h(): boolean {
+  return use24hClock;
+}
+
 export function formatClockHHMM(epochMs: number): string {
-  return new Date(epochMs).toLocaleTimeString('en-GB', {
-    hour: '2-digit',
+  const date = new Date(epochMs);
+  if (use24hClock) {
+    return date.toLocaleTimeString('en-GB', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone: 'Asia/Kuala_Lumpur',
+    });
+  }
+  return date.toLocaleTimeString('en-US', {
+    hour: 'numeric',
     minute: '2-digit',
-    hour12: false,
+    hour12: true,
     timeZone: 'Asia/Kuala_Lumpur',
   });
 }
@@ -131,6 +154,57 @@ export function formatDeltaMin(delay: ScheduleDelay | null): string | null {
   if (delay.onTimeWindow === 'on-time') return 'on time';
   if (m > 0) return `+${m} min`;
   return `${Math.abs(m)} min early`;
+}
+
+export type DelayTone = 'on-time' | 'late' | 'early';
+
+/**
+ * Self-labelled delay text ("On schedule" / "3 min late" / "2 min early") for
+ * the compare row's pill. Returns null when the delay isn't known.
+ */
+export function formatDelayLabel(
+  delay: ScheduleDelay | null,
+): { text: string; tone: DelayTone } | null {
+  if (!delay) return null;
+  const m = Math.abs(Math.round(delay.delayMinutes));
+  if (delay.onTimeWindow === 'on-time') {
+    return { text: 'On schedule', tone: 'on-time' };
+  }
+  if (delay.onTimeWindow === 'late') {
+    return { text: `${m} min late`, tone: 'late' };
+  }
+  return { text: `${m} min early`, tone: 'early' };
+}
+
+/**
+ * Human distance — "650 m" under 1 km, "2.1 km" otherwise. Returns null when
+ * the meters value isn't finite. Caller supplies any surrounding label ("away",
+ * "to stop", etc.).
+ */
+export function formatDistanceToStop(meters: number | null | undefined): string | null {
+  if (meters == null || !Number.isFinite(meters) || meters < 0) return null;
+  if (meters < 1_000) return `${Math.round(meters / 10) * 10} m`;
+  return `${(meters / 1_000).toFixed(1)} km`;
+}
+
+/**
+ * Compact age for a vehicle's own `observedAt` timestamp. Mirrors
+ * formatLastUpdatedShort but keeps seconds resolution for the freshest pings.
+ */
+export function formatVehicleObservedAge(
+  observedAtMs: number | null | undefined,
+  now: number,
+): string | null {
+  if (observedAtMs == null || !Number.isFinite(observedAtMs)) return null;
+  const age = now - observedAtMs;
+  if (age < 0) return 'just now';
+  if (age < 60_000) {
+    const s = Math.max(1, Math.floor(age / 1_000));
+    return `${s} s ago`;
+  }
+  const m = Math.floor(age / 60_000);
+  if (m < 2) return '1 min ago';
+  return `${m} min ago`;
 }
 
 export const STALE_TICKER_MS = 90_000;
@@ -209,6 +283,27 @@ export function useLastUpdatedLabel(lastUpdated: number | null): {
     shortLabel: formatLastUpdatedShort(age),
     isStale: age >= STALE_TICKER_MS,
   };
+}
+
+/**
+ * Seconds remaining until the next realtime poll. Ticks once per second while
+ * `nextRefreshAt` is set. Returns null when the store isn't polling (no
+ * subscriber or app backgrounded).
+ */
+export function useRefreshCountdownSeconds(
+  nextRefreshAt: number | null,
+): number | null {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (nextRefreshAt == null) return;
+    const t = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(t);
+  }, [nextRefreshAt]);
+  if (nextRefreshAt == null) return null;
+  const secs = Math.ceil((nextRefreshAt - now) / 1_000);
+  // Clamp to [0, 60] — we never poll slower than once a minute, and a
+  // negative value just means the tick is imminent.
+  return Math.max(0, Math.min(60, secs));
 }
 
 export type HeroState =

@@ -11,12 +11,18 @@ import {
   type ReactNode,
 } from 'react';
 
+import { setClockUse24h } from '@/components/tracker/logic';
+
 export type TrafficProvider = 'here' | 'tomtom';
 
 export const TRAFFIC_PROVIDERS: readonly TrafficProvider[] = [
   'here',
   'tomtom',
 ];
+
+export type ClockFormat = '12h' | '24h';
+
+export const CLOCK_FORMATS: readonly ClockFormat[] = ['24h', '12h'];
 
 export const NOTIF_BUFFER_CHOICES_MIN: readonly number[] = [0, 1, 2, 3, 5];
 
@@ -47,6 +53,8 @@ export interface Settings {
   quietStartMin: number;
   /** Quiet hours end, minute-of-day (0–1439). */
   quietEndMin: number;
+  /** 12-hour (AM/PM) vs 24-hour clock for ETA / arrival time displays. */
+  clockFormat: ClockFormat;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -57,6 +65,7 @@ export const DEFAULT_SETTINGS: Settings = {
   trafficProvider: 'here',
   quietStartMin: 22 * 60,
   quietEndMin: 6 * 60,
+  clockFormat: '24h',
 };
 
 export interface SettingsApi extends Settings {
@@ -76,6 +85,7 @@ export interface SettingsApi extends Settings {
   setTrafficProvider: (v: TrafficProvider) => void;
   setQuietStartMin: (v: number) => void;
   setQuietEndMin: (v: number) => void;
+  setClockFormat: (v: ClockFormat) => void;
 }
 
 const STORAGE_KEYS = {
@@ -88,6 +98,7 @@ const STORAGE_KEYS = {
   trafficProvider: 'bt.trafficProvider',
   quietStartMin: 'bt.quietStartMin',
   quietEndMin: 'bt.quietEndMin',
+  clockFormat: 'bt.clockFormat',
 } as const;
 
 const SettingsContext = createContext<SettingsApi | null>(null);
@@ -110,6 +121,15 @@ function parseProviderOr(
 function parseRouteOr(value: string | null, fallback: RouteId): RouteId {
   return value && AVAILABLE_ROUTE_CODES.includes(value as RouteId)
     ? (value as RouteId)
+    : fallback;
+}
+
+function parseClockFormatOr(
+  value: string | null,
+  fallback: ClockFormat,
+): ClockFormat {
+  return value && CLOCK_FORMATS.includes(value as ClockFormat)
+    ? (value as ClockFormat)
     : fallback;
 }
 
@@ -161,6 +181,7 @@ async function loadFromStore(): Promise<Settings> {
     provider,
     quietStart,
     quietEnd,
+    clockFormat,
   ] = await Promise.all([
     SecureStore.getItemAsync(STORAGE_KEYS.walkMinutes),
     SecureStore.getItemAsync(STORAGE_KEYS.notifBufferMin),
@@ -170,6 +191,7 @@ async function loadFromStore(): Promise<Settings> {
     SecureStore.getItemAsync(STORAGE_KEYS.trafficProvider),
     SecureStore.getItemAsync(STORAGE_KEYS.quietStartMin),
     SecureStore.getItemAsync(STORAGE_KEYS.quietEndMin),
+    SecureStore.getItemAsync(STORAGE_KEYS.clockFormat),
   ]);
 
   const preferredRouteCode = parseRouteOr(
@@ -199,6 +221,7 @@ async function loadFromStore(): Promise<Settings> {
     ),
     quietStartMin: parseIntOr(quietStart, DEFAULT_SETTINGS.quietStartMin),
     quietEndMin: parseIntOr(quietEnd, DEFAULT_SETTINGS.quietEndMin),
+    clockFormat: parseClockFormatOr(clockFormat, DEFAULT_SETTINGS.clockFormat),
   };
 }
 
@@ -319,6 +342,21 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const setClockFormat = useCallback((v: ClockFormat) => {
+    setState((prev) => {
+      if (prev.clockFormat === v) return prev;
+      writeValue(STORAGE_KEYS.clockFormat, v);
+      return { ...prev, clockFormat: v };
+    });
+  }, []);
+
+  // Sync the module-level clock preference used by pure formatters
+  // (`formatClockHHMM`, `formatArrivalClock`) whenever the stored setting
+  // changes. Runs on initial load and on any user toggle.
+  useEffect(() => {
+    setClockUse24h(state.clockFormat === '24h');
+  }, [state.clockFormat]);
+
   const api: SettingsApi = {
     ...state,
     ready,
@@ -338,6 +376,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     setTrafficProvider,
     setQuietStartMin,
     setQuietEndMin,
+    setClockFormat,
   };
 
   return createElement(SettingsContext.Provider, { value: api }, children);

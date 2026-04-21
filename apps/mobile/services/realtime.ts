@@ -18,6 +18,10 @@ export interface RealtimeSnapshot {
   positions: VehiclePosition[];
   lastUpdated: number | null;
   lastError: Error | null;
+  /** Epoch ms when the next scheduled tick will fire. Null when polling is stopped. */
+  nextRefreshAt: number | null;
+  /** True while a fetch is in flight. */
+  isRefreshing: boolean;
 }
 
 export type PositionFilter = (incoming: VehiclePosition[]) => VehiclePosition[];
@@ -95,6 +99,8 @@ export function createRealtimeStore(
     positions: [],
     lastUpdated: null,
     lastError: null,
+    nextRefreshAt: null,
+    isRefreshing: false,
   };
   const listeners = new Set<Listener>();
   let refCount = 0;
@@ -115,7 +121,23 @@ export function createRealtimeStore(
       positions: patch.positions ?? snapshot.positions,
       lastUpdated: touched ? cfg.now() : snapshot.lastUpdated,
       lastError: patch.lastError ?? null,
+      // Preserve the current next-refresh estimate across tick results;
+      // scheduleNext() rewrites it when the follow-up timer is armed.
+      nextRefreshAt: snapshot.nextRefreshAt,
+      isRefreshing: snapshot.isRefreshing,
     };
+    notify();
+  }
+
+  function setRefreshing(flag: boolean) {
+    if (snapshot.isRefreshing === flag) return;
+    snapshot = { ...snapshot, isRefreshing: flag };
+    notify();
+  }
+
+  function setNextRefreshAt(value: number | null) {
+    if (snapshot.nextRefreshAt === value) return;
+    snapshot = { ...snapshot, nextRefreshAt: value };
     notify();
   }
 
@@ -136,6 +158,7 @@ export function createRealtimeStore(
     cancelInflight();
     const ctrl = new AbortController();
     inflight = ctrl;
+    setRefreshing(true);
 
     try {
       if (!tripMap) tripMap = await cfg.loadTripMap();
@@ -158,14 +181,18 @@ export function createRealtimeStore(
       commit({ lastError: e }, false);
     } finally {
       if (inflight === ctrl) inflight = null;
+      setRefreshing(false);
       if (refCount > 0 && cfg.appState.currentState === "active") {
         scheduleNext();
+      } else {
+        setNextRefreshAt(null);
       }
     }
   }
 
   function scheduleNext() {
     clearTimer();
+    setNextRefreshAt(cfg.now() + cfg.pollIntervalMs);
     cancelTimer = cfg.scheduleTick(() => {
       void tick();
     }, cfg.pollIntervalMs);
@@ -178,6 +205,8 @@ export function createRealtimeStore(
     } else {
       clearTimer();
       cancelInflight();
+      setRefreshing(false);
+      setNextRefreshAt(null);
     }
   }
 
@@ -197,6 +226,8 @@ export function createRealtimeStore(
     outlier.reset();
     appStateSub?.remove();
     appStateSub = null;
+    setRefreshing(false);
+    setNextRefreshAt(null);
   }
 
   return {
@@ -229,7 +260,13 @@ export function createRealtimeStore(
         stopPolling();
         refCount = 0;
         listeners.clear();
-        snapshot = { positions: [], lastUpdated: null, lastError: null };
+        snapshot = {
+          positions: [],
+          lastUpdated: null,
+          lastError: null,
+          nextRefreshAt: null,
+          isRefreshing: false,
+        };
         positionFilter = (p) => p;
       },
       refCount() {

@@ -6,10 +6,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { formatStopName } from '@/components/map/format';
 import { CurrentBusCard } from '@/components/tracker/CurrentBusCard';
 import { HeroCountdown } from '@/components/tracker/HeroCountdown';
-import { NextBusRow } from '@/components/tracker/NextBusRow';
 import { NotifDeniedChip } from '@/components/tracker/NotifDeniedChip';
 import { ServiceEdgeRow } from '@/components/tracker/ServiceEdgeRow';
 import { TimetableStrip } from '@/components/tracker/TimetableStrip';
+import { TrackButton } from '@/components/tracker/TrackButton';
 import { TrackerCanvas } from '@/components/tracker/TrackerCanvas';
 import { WalkCta } from '@/components/tracker/WalkCta';
 import {
@@ -26,6 +26,7 @@ import {
   type StopRow,
   type TrafficSignalRow,
 } from '@/db/queries';
+import { useBusLiveActivity } from '@/hooks/useBusLiveActivity';
 import { useBusPosition } from '@/hooks/useBusPosition';
 import { useEta } from '@/hooks/useEta';
 import { usePushRegistrationState } from '@/hooks/PushRegistrationContext';
@@ -54,15 +55,31 @@ export default function TrackerScreen() {
     lastBusToday,
     polylineMeters,
   } = eta;
-  const { lastUpdated, positions } = useBusPosition({
-    routeCode: settings.preferredRouteCode,
-  });
+  const { lastUpdated, positions, nextRefreshAt, isRefreshing } =
+    useBusPosition({
+      routeCode: settings.preferredRouteCode,
+    });
   const updated = useLastUpdatedLabel(lastUpdated);
   const walk = useWalkTimer(settings.walkMinutes);
   const [stopName, setStopName] = useState<string | null>(null);
   const [trafficSignals, setTrafficSignals] = useState<TrafficSignalRow[]>([]);
   const [now, setNow] = useState(() => Date.now());
   const [refreshing, setRefreshing] = useState(false);
+  const [isTracking, setIsTracking] = useState(false);
+
+  // Reset tracking when the user changes route/stop — the current activity no
+  // longer describes the thing they're watching.
+  useEffect(() => {
+    setIsTracking(false);
+  }, [settings.preferredRouteCode, settings.preferredStopId]);
+
+  useBusLiveActivity({
+    routeCode: settings.preferredRouteCode,
+    stopName,
+    primaryArrival,
+    resolved,
+    enabled: isTracking,
+  });
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 15_000);
@@ -295,29 +312,34 @@ export default function TrackerScreen() {
       ) : primaryArrival == null ? (
         <EmptyBusesRow />
       ) : (
-        <View style={{ gap: 8 }}>
+        <>
           <CurrentBusCard
             entry={primaryArrival}
             livePosition={positions.find(
               (p) => p.vehicleId === primaryArrival.live?.vehicleId,
             )}
-            delay={
-              primaryArrival.kind === 'live' ? resolved.delay : null
-            }
+            delay={primaryArrival.kind === 'live' ? resolved.delay : null}
             isStale={updated.isStale}
             lastUpdated={lastUpdated}
+            nextRefreshAt={nextRefreshAt}
+            isRefreshing={isRefreshing}
             polylineMeters={polylineMeters}
             trafficSignals={trafficSignals}
+            nextEntry={secondaryArrival}
+            nextLivePosition={
+              secondaryArrival?.live?.vehicleId
+                ? positions.find(
+                    (p) => p.vehicleId === secondaryArrival.live?.vehicleId,
+                  )
+                : undefined
+            }
           />
-          {secondaryArrival ? (
-            <NextBusRow
-              entry={secondaryArrival}
-              livePosition={positions.find(
-                (p) => p.vehicleId === secondaryArrival.live?.vehicleId,
-              )}
-            />
-          ) : null}
-        </View>
+          <View style={{ height: 12 }} />
+          <TrackButton
+            isTracking={isTracking}
+            onToggle={setIsTracking}
+          />
+        </>
       )}
 
       {scheduledUpcoming.length > 0 && !serviceEnded ? (

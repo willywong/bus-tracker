@@ -1,31 +1,25 @@
+import type { VehiclePosition } from '@bus-tracker/shared';
 import { SymbolView } from 'expo-symbols';
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import {
   DynamicColorIOS,
   PlatformColor,
-  Pressable,
   StyleSheet,
   Text,
   View,
   type ColorValue,
 } from 'react-native';
-import Animated, {
-  Easing,
-  FadeIn,
-  FadeOut,
-  cancelAnimation,
-  useAnimatedStyle,
-  useSharedValue,
-  withRepeat,
-  withTiming,
-} from 'react-native-reanimated';
+import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 
 import { GlassGuard } from '@/components/GlassGuard';
 import { LiveDot } from '@/components/tracker/LiveDot';
 import {
   formatClockHHMM,
-  formatDeltaMin,
+  formatDelayLabel,
+  formatDistanceToStop,
   useLastUpdatedLabel,
+  useRefreshCountdownSeconds,
+  type DelayTone,
 } from '@/components/tracker/logic';
 import { heroStateColor, surfaceColor } from '@/components/tracker/tokens';
 import type { UseEtaResult } from '@/hooks/useEta';
@@ -33,18 +27,30 @@ import { tokens } from '@/theme/tokens';
 
 import { PulsingDots } from './PulsingDots';
 import { ScheduleFallbackBody } from './ScheduleFallbackBody';
-import { formatArrivalClock, formatDistance, formatStopName } from './format';
+import { bearingToCardinal, formatArrivalClock, formatStopName } from './format';
 
-type CardState = 'live' | 'stale' | 'waiting' | 'schedule';
+type CardState =
+  | 'live'
+  | 'stale'
+  | 'waiting'
+  | 'schedule'
+  | 'service-ended'
+  | 'before-service';
 
 interface MapStatusCardProps {
   routeCode: string;
   eta: UseEtaResult;
   stopName: string;
   lastUpdated: number | null;
-  /** Tap on the refresh icon. Omit to hide the icon. */
-  onRefresh?: () => void;
-  refreshing?: boolean;
+  /** Raw telemetry for the primary live bus (populated from the realtime feed). */
+  livePosition?: Pick<
+    VehiclePosition,
+    'speed' | 'bearing' | 'vehicleId' | 'observedAt'
+  >;
+  /** Epoch ms when the realtime store will next poll. Drives the "refresh in Xs" countdown. */
+  nextRefreshAt?: number | null;
+  /** True while a realtime poll is in flight. */
+  isRefreshing?: boolean;
 }
 
 export function MapStatusCard({
@@ -52,10 +58,22 @@ export function MapStatusCard({
   eta,
   stopName,
   lastUpdated,
-  onRefresh,
-  refreshing = false,
+  livePosition,
+  nextRefreshAt = null,
+  isRefreshing = false,
 }: MapStatusCardProps) {
   const updated = useLastUpdatedLabel(lastUpdated);
+  const countdown = useRefreshCountdownSeconds(nextRefreshAt);
+  // Treat "countdown at 0" as refreshing too — the scheduled tick has fired
+  // but the store hasn't yet flipped isRefreshing, and "refresh in 0s" reads
+  // stale for the ~200 ms in between.
+  const effectivelyRefreshing =
+    isRefreshing || (countdown != null && countdown === 0);
+  const feedStatusLabel = effectivelyRefreshing
+    ? 'Refreshing…'
+    : countdown != null && countdown > 0
+      ? `refresh in ${countdown}s`
+      : updated.label;
 
   const nextScheduled = eta.scheduledUpcoming[0] ?? null;
   const scheduleMinutes =
@@ -68,14 +86,20 @@ export function MapStatusCard({
       ? eta.isStale
         ? 'stale'
         : 'live'
-      : nextScheduled != null && !eta.serviceEnded
-        ? 'schedule'
-        : 'waiting';
+      : eta.serviceEnded
+        ? 'service-ended'
+        : eta.beforeServiceStart
+          ? 'before-service'
+          : nextScheduled != null
+            ? 'schedule'
+            : 'waiting';
 
   const dotColor =
     state === 'live'
       ? heroStateColor.relaxed
-      : heroStateColor.waiting;
+      : state === 'service-ended' || state === 'before-service'
+        ? (PlatformColor('tertiaryLabel') as unknown as string)
+        : heroStateColor.waiting;
   const statusLabel =
     state === 'live'
       ? 'Live'
@@ -83,17 +107,20 @@ export function MapStatusCard({
         ? 'Stale'
         : state === 'schedule'
           ? 'Scheduled'
-          : 'Waiting';
-  const scheduleSubline =
+          : state === 'service-ended'
+            ? 'Off duty'
+            : state === 'before-service'
+              ? 'Pre-service'
+              : 'Waiting';
+  const scheduleClock =
     state === 'live' && eta.currentScheduled
-      ? (() => {
-          const clock = formatClockHHMM(
-            eta.currentScheduled.departureEpochMs,
-          );
-          const delta = formatDeltaMin(eta.resolved.delay);
-          return delta ? `Scheduled ${clock} · ${delta}` : `Scheduled ${clock}`;
-        })()
+      ? formatClockHHMM(eta.currentScheduled.departureEpochMs)
       : null;
+  const delayLabel =
+    state === 'live' ? formatDelayLabel(eta.resolved.delay) : null;
+
+  const showTelemetry = state === 'live' || state === 'stale';
+  const showMetaRow = state !== 'service-ended' && state !== 'before-service';
 
   const niceStop = useMemo(() => formatStopName(stopName), [stopName]);
 
@@ -112,9 +139,6 @@ export function MapStatusCard({
           </Text>
           <View style={styles.statusSpacer} />
           {eta.trafficError ? <TrafficErrorBadge /> : null}
-          {onRefresh ? (
-            <RefreshButton onPress={onRefresh} refreshing={refreshing} />
-          ) : null}
         </View>
 
         <Animated.View
@@ -125,46 +149,229 @@ export function MapStatusCard({
         >
           {state === 'waiting' ? (
             <WaitingBody />
+          ) : state === 'service-ended' ? (
+            <ServiceEdgeBody
+              variant="after-last"
+              lastEpochMs={eta.lastBusToday}
+            />
+          ) : state === 'before-service' ? (
+            <ServiceEdgeBody
+              variant="before-first"
+              firstEpochMs={eta.firstBusToday}
+            />
           ) : state === 'schedule' && nextScheduled != null && scheduleMinutes != null ? (
             <ScheduleFallbackBody
               minutes={scheduleMinutes}
               nextAt={nextScheduled.departureEpochMs}
             />
           ) : (
-            <EtaBody
-              minutes={eta.minutesToStop ?? 0}
-              forwardMeters={eta.current?.forwardMeters ?? null}
-              dimmed={state === 'stale'}
-            />
+            <>
+              <EtaBody
+                minutes={eta.minutesToStop ?? 0}
+                dimmed={state === 'stale'}
+              />
+              {scheduleClock ? (
+                <ScheduleStack
+                  schedClock={scheduleClock}
+                  delayLabel={delayLabel}
+                />
+              ) : null}
+            </>
           )}
         </Animated.View>
 
-        <View style={styles.metaRow}>
-          <Text style={styles.metaPrimary} numberOfLines={1} selectable>
-            to {niceStop || 'your stop'}
-          </Text>
-          <Text style={styles.metaDot}>·</Text>
-          <Text style={styles.metaSecondary} numberOfLines={1} selectable>
-            {updated.label}
-          </Text>
-        </View>
-        {scheduleSubline ? (
-          <Text style={styles.scheduleSubline} selectable numberOfLines={1}>
-            {scheduleSubline}
-          </Text>
+        {showTelemetry ? (
+          <TelemetryRow
+            forwardMeters={eta.current?.forwardMeters ?? null}
+            speed={livePosition?.speed}
+            bearing={livePosition?.bearing}
+            vehicleId={livePosition?.vehicleId ?? eta.current?.vehicleId ?? null}
+          />
+        ) : null}
+
+        {showMetaRow ? (
+          <View style={styles.metaRow}>
+            <Text style={styles.metaPrimary} numberOfLines={1} selectable>
+              to {niceStop || 'your stop'}
+            </Text>
+            <Text style={styles.metaDot}>·</Text>
+            <Text style={styles.metaSecondary} numberOfLines={1} selectable>
+              {feedStatusLabel}
+            </Text>
+          </View>
         ) : null}
       </View>
     </GlassGuard>
   );
 }
 
+function ServiceEdgeBody({
+  variant,
+  firstEpochMs,
+  lastEpochMs,
+}: {
+  variant: 'before-first' | 'after-last';
+  firstEpochMs?: number | null;
+  lastEpochMs?: number | null;
+}) {
+  const { title, caption } = useMemo(() => {
+    if (variant === 'before-first') {
+      return {
+        title:
+          firstEpochMs != null
+            ? `First bus at ${formatClockHHMM(firstEpochMs)}`
+            : 'Service has not started',
+        caption: 'Timetable service hasn’t started for the day.',
+      };
+    }
+    const last = lastEpochMs != null ? formatClockHHMM(lastEpochMs) : null;
+    return {
+      title: last ? `Service ended · Last bus ${last}` : 'Service ended',
+      caption: 'Check back tomorrow morning.',
+    };
+  }, [variant, firstEpochMs, lastEpochMs]);
+
+  return (
+    <View style={styles.serviceEdgeRow}>
+      <SymbolView
+        name="clock.fill"
+        size={22}
+        tintColor={PlatformColor('secondaryLabel') as unknown as string}
+      />
+      <View style={styles.serviceEdgeTextCol}>
+        <Text style={styles.serviceEdgeTitle} selectable numberOfLines={1}>
+          {title}
+        </Text>
+        <Text style={styles.serviceEdgeCaption} selectable numberOfLines={2}>
+          {caption}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+function ScheduleStack({
+  schedClock,
+  delayLabel,
+}: {
+  schedClock: string;
+  delayLabel: { text: string; tone: DelayTone } | null;
+}) {
+  const toneColor = delayLabel ? DELAY_TONE_COLOR[delayLabel.tone] : null;
+  return (
+    <View style={styles.schedStack}>
+      <Text style={styles.schedLabel} selectable>
+        Scheduled
+      </Text>
+      <Text
+        style={styles.schedClock}
+        selectable
+        allowFontScaling={false}
+      >
+        {schedClock}
+      </Text>
+      {delayLabel && toneColor ? (
+        <Text
+          style={[styles.schedDelay, { color: toneColor }]}
+          selectable
+          allowFontScaling={false}
+        >
+          {delayLabel.text}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+const DELAY_TONE_COLOR: Record<DelayTone, string> = {
+  'on-time': '#30D158',
+  late: '#FF9F0A',
+  early: '#64D2FF',
+};
+
+function TelemetryRow({
+  forwardMeters,
+  speed,
+  bearing,
+  vehicleId,
+}: {
+  forwardMeters: number | null;
+  speed?: number;
+  bearing?: number;
+  vehicleId: string | null;
+}) {
+  const parts = useMemo(() => {
+    const out: {
+      key: string;
+      icon?: string;
+      text: string;
+      rotation?: number;
+    }[] = [];
+    const distance = formatDistanceToStop(forwardMeters);
+    if (distance) out.push({ key: 'dist', icon: 'ruler', text: distance });
+    if (speed != null && Number.isFinite(speed)) {
+      out.push({
+        key: 'speed',
+        icon: 'speedometer',
+        text: `${Math.round(speed)} km/h`,
+      });
+    }
+    const heading = bearingToCardinal(bearing);
+    if (heading) {
+      out.push({
+        key: 'head',
+        icon: 'location.north.line.fill',
+        text: heading,
+        rotation:
+          typeof bearing === 'number' && Number.isFinite(bearing)
+            ? bearing
+            : undefined,
+      });
+    }
+    if (vehicleId) {
+      out.push({ key: 'vid', text: `Bus ${vehicleId}` });
+    }
+    return out;
+  }, [forwardMeters, speed, bearing, vehicleId]);
+
+  if (parts.length === 0) return null;
+
+  return (
+    <View style={styles.telemetryRow}>
+      {parts.map((p, i) => (
+        <View key={p.key} style={styles.telemetryPart}>
+          {i > 0 ? (
+            <Text style={styles.telemetrySep} selectable>
+              ·
+            </Text>
+          ) : null}
+          {p.icon ? (
+            <SymbolView
+              name={p.icon as Parameters<typeof SymbolView>[0]['name']}
+              size={11}
+              tintColor={PlatformColor('secondaryLabel') as unknown as string}
+              weight="semibold"
+              style={
+                p.rotation != null
+                  ? { transform: [{ rotate: `${p.rotation}deg` }] }
+                  : undefined
+              }
+            />
+          ) : null}
+          <Text style={styles.telemetryText} selectable allowFontScaling={false}>
+            {p.text}
+          </Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 function EtaBody({
   minutes,
-  forwardMeters,
   dimmed,
 }: {
   minutes: number;
-  forwardMeters: number | null;
   dimmed: boolean;
 }) {
   const numberColor: ColorValue = dimmed
@@ -182,87 +389,23 @@ function EtaBody({
         : 'Arriving in';
 
   return (
-    <>
-      <View style={styles.heroCol}>
-        <Text style={styles.eyebrow} selectable numberOfLines={1}>
-          {eyebrow}
+    <View style={styles.heroCol}>
+      <Text style={styles.eyebrow} selectable numberOfLines={1}>
+        {eyebrow}
+      </Text>
+      <View style={styles.numberRow}>
+        <Text
+          style={[styles.number, { color: numberColor }]}
+          selectable
+          allowFontScaling={false}
+        >
+          {minutes}
         </Text>
-        <View style={styles.numberRow}>
-          <Text
-            style={[styles.number, { color: numberColor }]}
-            selectable
-            allowFontScaling={false}
-          >
-            {minutes}
-          </Text>
-          <Text style={styles.unit} selectable>
-            min away
-          </Text>
-        </View>
+        <Text style={styles.unit} selectable>
+          min away
+        </Text>
       </View>
-      {forwardMeters != null ? (
-        <View style={styles.distancePill}>
-          <Text
-            style={styles.distanceValue}
-            selectable
-            allowFontScaling={false}
-          >
-            {formatDistance(forwardMeters)}
-          </Text>
-          <Text style={styles.distanceCaption} selectable>
-            away
-          </Text>
-        </View>
-      ) : null}
-    </>
-  );
-}
-
-function RefreshButton({
-  onPress,
-  refreshing,
-}: {
-  onPress: () => void;
-  refreshing: boolean;
-}) {
-  const angle = useSharedValue(0);
-  useEffect(() => {
-    if (refreshing) {
-      angle.value = 0;
-      angle.value = withRepeat(
-        withTiming(360, { duration: 900, easing: Easing.linear }),
-        -1,
-      );
-    } else {
-      cancelAnimation(angle);
-      angle.value = 0;
-    }
-  }, [refreshing, angle]);
-
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ rotate: `${angle.value}deg` }],
-  }));
-
-  return (
-    <Pressable
-      onPress={onPress}
-      hitSlop={10}
-      accessibilityRole="button"
-      accessibilityLabel="Refresh"
-      style={({ pressed }) => [
-        styles.refreshButton,
-        pressed ? styles.refreshButtonPressed : null,
-      ]}
-    >
-      <Animated.View style={animatedStyle}>
-        <SymbolView
-          name="arrow.clockwise"
-          size={14}
-          tintColor={PlatformColor('secondaryLabel') as unknown as string}
-          resizeMode="scaleAspectFit"
-        />
-      </Animated.View>
-    </Pressable>
+    </View>
   );
 }
 
@@ -390,28 +533,52 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: PlatformColor('secondaryLabel'),
   },
-  distancePill: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 14,
-    borderCurve: 'continuous',
-    backgroundColor: surfaceColor.blueTint,
+  telemetryRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    minWidth: 78,
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: -2,
   },
-  distanceValue: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: PlatformColor('label'),
+  telemetryPart: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  telemetrySep: {
+    fontSize: 12,
+    color: PlatformColor('tertiaryLabel'),
+    marginRight: 2,
+  },
+  telemetryText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: PlatformColor('secondaryLabel'),
     fontVariant: ['tabular-nums'],
   },
-  distanceCaption: {
-    marginTop: 1,
-    fontSize: 11,
-    fontWeight: '500',
-    letterSpacing: 0.4,
+  schedStack: {
+    alignItems: 'flex-end',
+    gap: 2,
+    flexShrink: 1,
+  },
+  schedLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: PlatformColor('tertiaryLabel'),
+    letterSpacing: 0.8,
     textTransform: 'uppercase',
+  },
+  schedClock: {
+    fontSize: 14,
+    fontWeight: '500',
     color: PlatformColor('secondaryLabel'),
+    fontVariant: ['tabular-nums'],
+  },
+  schedDelay: {
+    fontSize: 13,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+    letterSpacing: 0.1,
   },
   waitingRow: {
     flexDirection: 'row',
@@ -445,6 +612,29 @@ const styles = StyleSheet.create({
     color: PlatformColor('secondaryLabel'),
     flexShrink: 1,
   },
+  serviceEdgeRow: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  serviceEdgeTextCol: {
+    flex: 1,
+    gap: 2,
+  },
+  serviceEdgeTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: PlatformColor('label'),
+    fontVariant: ['tabular-nums'],
+    letterSpacing: -0.1,
+  },
+  serviceEdgeCaption: {
+    fontSize: 12,
+    fontWeight: '400',
+    color: PlatformColor('secondaryLabel'),
+    letterSpacing: 0.1,
+  },
   scheduleSubline: {
     fontSize: 12,
     fontWeight: '500',
@@ -452,16 +642,5 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
     letterSpacing: 0.1,
     marginTop: -2,
-  },
-  refreshButton: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 6,
-  },
-  refreshButtonPressed: {
-    opacity: 0.5,
   },
 });

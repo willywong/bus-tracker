@@ -1,6 +1,8 @@
 import { StyleSheet, Text, View } from 'react-native';
 import { Callout } from 'react-native-maps';
 
+import { formatClockHHMM } from '@/components/tracker/logic';
+
 interface ScheduledBusCalloutProps {
   routeCode: string;
   /** Absolute epoch ms of the scheduled departure at the user's stop. */
@@ -13,7 +15,7 @@ export function ScheduledBusCallout({
   scheduledEpochMs,
   now = Date.now(),
 }: ScheduledBusCalloutProps) {
-  const clock = formatClock(scheduledEpochMs);
+  const clock = formatClockHHMM(scheduledEpochMs);
   const minutesAway = Math.max(0, Math.round((scheduledEpochMs - now) / 60_000));
 
   return (
@@ -38,13 +40,6 @@ export function ScheduledBusCallout({
       </View>
     </Callout>
   );
-}
-
-function formatClock(ms: number): string {
-  return new Date(ms).toLocaleTimeString(undefined, {
-    hour: 'numeric',
-    minute: '2-digit',
-  });
 }
 
 const CARD_BG = '#FFFFFF';

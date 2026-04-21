@@ -17,6 +17,8 @@ export interface UseBusPositionResult {
   positions: RealtimeSnapshot["positions"];
   lastUpdated: number | null;
   error: Error | null;
+  nextRefreshAt: number | null;
+  isRefreshing: boolean;
 }
 
 export interface UseBusPositionOptions {
@@ -71,5 +73,7 @@ export function useBusPosition(
     positions,
     lastUpdated: snapshot.lastUpdated,
     error: snapshot.lastError,
+    nextRefreshAt: snapshot.nextRefreshAt,
+    isRefreshing: snapshot.isRefreshing,
   };
 }

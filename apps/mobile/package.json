@@ -39,6 +39,7 @@
     "expo-task-manager": "~55.0.14",
     "expo-updates": "~55.0.20",
     "expo-web-browser": "~55.0.14",
+    "expo-widgets": "~55.0.14",
     "nativewind": "^4.2.3",
     "protobufjs": "^8.0.1",
     "react": "19.2.0",

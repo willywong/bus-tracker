@@ -26,9 +26,11 @@ import { getStopsForRoute, type StopRow } from '@/db/queries';
 import { useStaticGtfs } from '@/hooks/useStaticGtfs';
 import {
   AVAILABLE_ROUTE_CODES,
+  CLOCK_FORMATS,
   NOTIF_BUFFER_CHOICES_MIN,
   TRAFFIC_PROVIDERS,
   useSettings,
+  type ClockFormat,
   type TrafficProvider,
 } from '@/hooks/useSettings';
 
@@ -53,6 +55,11 @@ function formatMinuteOfDay(minuteOfDay: number): string {
 const providerLabel: Record<TrafficProvider, string> = {
   here: 'HERE',
   tomtom: 'TomTom',
+};
+
+const clockFormatLabel: Record<ClockFormat, string> = {
+  '24h': '24-hour (14:30)',
+  '12h': '12-hour (2:30 PM)',
 };
 
 export default function SettingsScreen() {
@@ -96,6 +103,7 @@ export default function SettingsScreen() {
     settings.notifBufferMin,
   );
   const providerIndex = TRAFFIC_PROVIDERS.indexOf(settings.trafficProvider);
+  const clockFormatIndex = CLOCK_FORMATS.indexOf(settings.clockFormat);
 
   return (
     <Host style={{ flex: 1 }} useViewportSizeMeasurement>
@@ -129,6 +137,33 @@ export default function SettingsScreen() {
         </Section>
 
         <Section
+          header={<Text>Time format</Text>}
+          footer={
+            <Text>
+              Used for arrival and ETA times on the Tracker and Map pages.
+            </Text>
+          }
+        >
+          <Picker
+            label="Clock"
+            selection={clockFormatIndex < 0 ? 0 : clockFormatIndex}
+            onSelectionChange={(i) => {
+              const idx = typeof i === 'number' ? i : Number(i);
+              const choice = CLOCK_FORMATS[idx];
+              if (choice) settings.setClockFormat(choice);
+            }}
+          >
+            {CLOCK_FORMATS.map((cf, i) => (
+              <Text key={cf} modifiers={[tag(i)]}>
+                {clockFormatLabel[cf]}
+              </Text>
+            ))}
+          </Picker>
+        </Section>
+
+        {/* Notifications lead time — temporarily hidden; notifications are
+            not wired up yet. Restore this Section when the push pipeline ships.
+        <Section
           header={<Text>Notifications</Text>}
           footer={
             <Text>
@@ -153,6 +188,7 @@ export default function SettingsScreen() {
             ))}
           </Picker>
         </Section>
+        */}
 
         <Section
           header={<Text>Preferred stops</Text>}
@@ -214,6 +250,10 @@ export default function SettingsScreen() {
           })}
         </Section>
 
+        {/* Traffic provider — temporarily hidden; HERE is the only provider
+            in use. TomTom remains wired through `useSettings` / `useEta` so
+            this Section can be restored without a data migration once we're
+            ready to offer the choice again.
         <Section
           header={<Text>Traffic</Text>}
           footer={<Text>Live travel-time source for ETA adjustments.</Text>}
@@ -234,7 +274,11 @@ export default function SettingsScreen() {
             ))}
           </Picker>
         </Section>
+        */}
 
+        {/* Quiet hours — temporarily hidden; notifications aren't wired up
+            yet so silencing them has no effect. Restore this Section when the
+            push pipeline ships.
         <Section
           header={<Text>Quiet hours</Text>}
           footer={
@@ -256,6 +300,7 @@ export default function SettingsScreen() {
             onDateChange={(d) => settings.setQuietEndMin(minutesFromDate(d))}
           />
         </Section>
+        */}
 
         <Section
           header={<Text>About</Text>}

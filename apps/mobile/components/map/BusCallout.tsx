@@ -2,7 +2,12 @@ import type { ScheduleDelay, VehiclePosition } from '@bus-tracker/shared';
 import { StyleSheet, Text, View } from 'react-native';
 import { Callout } from 'react-native-maps';
 
-import { formatClockHHMM, formatDeltaMin } from '@/components/tracker/logic';
+import {
+  formatClockHHMM,
+  formatDelayLabel,
+  formatVehicleObservedAge,
+  type DelayTone,
+} from '@/components/tracker/logic';
 
 import { bearingToCardinal } from './format';
 
@@ -24,24 +29,27 @@ export function BusCallout({ position, scheduledArrival }: BusCalloutProps) {
       : null;
   const heading = bearingToCardinal(position.bearing);
   const hasTelemetry = speedKmh != null || heading != null;
-  const updated = formatClock(position.observedAt);
-  const scheduleLine = (() => {
-    if (!scheduledArrival) return null;
-    const clock = formatClockHHMM(scheduledArrival.at);
-    const delta = formatDeltaMin(scheduledArrival.delay);
-    return delta ? `Scheduled ${clock} · ${delta}` : `Scheduled ${clock}`;
-  })();
+
+  const ageLabel = formatVehicleObservedAge(position.observedAt, Date.now());
+  const schedClock = scheduledArrival
+    ? formatClockHHMM(scheduledArrival.at)
+    : null;
+  const delayLabel = scheduledArrival
+    ? formatDelayLabel(scheduledArrival.delay)
+    : null;
 
   return (
     <Callout tooltip>
       <View style={styles.wrap}>
         <View style={styles.card}>
           <View style={styles.header}>
-            <Text style={styles.route} numberOfLines={1}>
-              {position.routeId}
-            </Text>
-            <Text style={styles.vehicle} numberOfLines={1}>
-              Vehicle {position.vehicleId}
+            <View style={styles.routePill}>
+              <Text style={styles.routeText} numberOfLines={1}>
+                {position.routeId}
+              </Text>
+            </View>
+            <Text style={styles.vehicleId} numberOfLines={1}>
+              {position.vehicleId}
             </Text>
           </View>
 
@@ -63,12 +71,32 @@ export function BusCallout({ position, scheduledArrival }: BusCalloutProps) {
             </View>
           )}
 
-          {scheduleLine ? (
-            <Text style={styles.scheduleLine} numberOfLines={1} selectable>
-              {scheduleLine}
+          {schedClock ? (
+            <View style={styles.scheduleBlock}>
+              <Text style={styles.scheduleLine} selectable numberOfLines={1}>
+                <Text style={styles.scheduleLabel}>Scheduled </Text>
+                <Text style={styles.scheduleClock}>{schedClock}</Text>
+              </Text>
+              {delayLabel ? (
+                <Text
+                  style={[
+                    styles.delayText,
+                    { color: DELAY_COLORS[delayLabel.tone] },
+                  ]}
+                  selectable
+                  numberOfLines={1}
+                >
+                  {delayLabel.text}
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
+
+          {ageLabel ? (
+            <Text style={styles.footer} numberOfLines={1}>
+              Reported {ageLabel}
             </Text>
           ) : null}
-          <Text style={styles.footer}>Updated {updated}</Text>
         </View>
         <View style={styles.tail} />
       </View>
@@ -98,15 +126,17 @@ function Stat({
   );
 }
 
-function formatClock(ms: number): string {
-  return new Date(ms).toLocaleTimeString(undefined, {
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-}
-
 const CARD_BG = '#FFFFFF';
 const HAIRLINE = '#E5E5EA';
+const ROUTE_PILL_FG = '#1D8A3F';
+const ROUTE_PILL_BG = 'rgba(48, 209, 88, 0.14)';
+
+// Callout is hardcoded light; use solid delay tones that read well on white.
+const DELAY_COLORS: Record<DelayTone, string> = {
+  'on-time': '#1D8A3F',
+  late: '#B76C0A',
+  early: '#0A5FB3',
+};
 
 const styles = StyleSheet.create({
   wrap: {
@@ -124,20 +154,29 @@ const styles = StyleSheet.create({
     boxShadow: '0 8px 24px rgba(0, 0, 0, 0.22)',
   },
   header: {
-    gap: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
     marginBottom: 12,
   },
-  route: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: '#000000',
-    letterSpacing: -0.2,
+  routePill: {
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 999,
+    backgroundColor: ROUTE_PILL_BG,
   },
-  vehicle: {
-    fontSize: 12,
+  routeText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: ROUTE_PILL_FG,
+    letterSpacing: 0.3,
+  },
+  vehicleId: {
+    fontSize: 13,
     fontWeight: '500',
     color: '#8E8E93',
     fontVariant: ['tabular-nums'],
+    flexShrink: 1,
   },
   stats: {
     flexDirection: 'row',
@@ -147,7 +186,7 @@ const styles = StyleSheet.create({
     borderCurve: 'continuous',
     paddingVertical: 10,
     paddingHorizontal: 4,
-    marginBottom: 10,
+    marginBottom: 12,
   },
   stat: {
     flex: 1,
@@ -191,21 +230,37 @@ const styles = StyleSheet.create({
     borderCurve: 'continuous',
     paddingVertical: 14,
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 12,
   },
   emptyText: {
     fontSize: 13,
     fontWeight: '500',
     color: '#8E8E93',
   },
+  scheduleBlock: {
+    gap: 2,
+    marginBottom: 8,
+  },
   scheduleLine: {
-    marginTop: 4,
-    marginBottom: 4,
-    fontSize: 12,
+    fontSize: 13,
+  },
+  scheduleLabel: {
+    fontSize: 13,
     fontWeight: '500',
-    color: '#3A3A3C',
-    fontVariant: ['tabular-nums'],
+    color: '#8E8E93',
     letterSpacing: 0.1,
+  },
+  scheduleClock: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1C1C1E',
+    fontVariant: ['tabular-nums'],
+  },
+  delayText: {
+    fontSize: 13,
+    fontWeight: '600',
+    letterSpacing: 0.1,
+    fontVariant: ['tabular-nums'],
   },
   footer: {
     fontSize: 11,

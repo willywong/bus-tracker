@@ -75,6 +75,8 @@ export function createMockRealtimeStore(): RealtimeStore {
     positions: [],
     lastUpdated: null,
     lastError: null,
+    nextRefreshAt: null,
+    isRefreshing: false,
   };
   const listeners = new Set<() => void>();
   let refCount = 0;
@@ -156,6 +158,8 @@ export function createMockRealtimeStore(): RealtimeStore {
       positions: [position],
       lastUpdated: Date.now(),
       lastError: null,
+      nextRefreshAt: Date.now() + TICK_MS,
+      isRefreshing: false,
     };
     notify();
     cursor += ADVANCE_METERS_PER_TICK;
@@ -203,7 +207,13 @@ export function createMockRealtimeStore(): RealtimeStore {
         listeners.clear();
         refCount = 0;
         lastPoint = null;
-        snapshot = { positions: [], lastUpdated: null, lastError: null };
+        snapshot = {
+          positions: [],
+          lastUpdated: null,
+          lastError: null,
+          nextRefreshAt: null,
+          isRefreshing: false,
+        };
       },
       refCount: () => refCount,
       tick: async () => emit(),

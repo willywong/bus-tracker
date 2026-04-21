@@ -5,12 +5,11 @@ import {
   type VehiclePosition,
 } from '@bus-tracker/shared';
 import { SymbolView } from 'expo-symbols';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { PlatformColor, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   Easing,
   FadeIn,
-  FadeInRight,
   LinearTransition,
   SlideInDown,
   SlideOutUp,
@@ -19,12 +18,16 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
-import { bearingToCardinal, formatArrivalClock } from '@/components/map/format';
+import { bearingToCardinal } from '@/components/map/format';
 import { LiveDot } from '@/components/tracker/LiveDot';
 import {
   formatClockHHMM,
-  formatDeltaMin,
+  formatDelayLabel,
+  formatDistanceToStop,
+  formatVehicleObservedAge,
   useLastUpdatedLabel,
+  useRefreshCountdownSeconds,
+  type DelayTone,
 } from '@/components/tracker/logic';
 import {
   sourceColor,
@@ -37,16 +40,27 @@ import type { ArrivalEntry } from '@/hooks/useEta';
 interface CurrentBusCardProps {
   entry: ArrivalEntry;
   livePosition:
-    | Pick<VehiclePosition, 'speed' | 'bearing' | 'lat' | 'lng'>
+    | Pick<
+        VehiclePosition,
+        'speed' | 'bearing' | 'lat' | 'lng' | 'observedAt' | 'vehicleId'
+      >
     | undefined;
   /** Live-vs-schedule delay for the primary bus. Only rendered when both the live and schedule ties are known and within ±15 min. */
   delay: ScheduleDelay | null;
   isStale: boolean;
   lastUpdated: number | null;
+  /** Epoch ms when the realtime store will next poll. Drives the "refresh in Xs" countdown. */
+  nextRefreshAt: number | null;
+  /** True while a realtime poll is in flight. */
+  isRefreshing: boolean;
   /** Total polyline length (meters) for the active route. Drives the approach rail's denominator; null hides the rail. */
   polylineMeters: number | null;
   /** Traffic signals on the active route; used to interpret a stationary bus as "at a red light". */
   trafficSignals: readonly TrafficSignalRow[];
+  /** The bus immediately after `entry`. Rendered as a small footer section when present. */
+  nextEntry?: ArrivalEntry | null;
+  /** Live telemetry for the next-bus entry (used for the "live · 55 km/h" tag). */
+  nextLivePosition?: Pick<VehiclePosition, 'speed'> | undefined;
 }
 
 export function CurrentBusCard({
@@ -55,8 +69,12 @@ export function CurrentBusCard({
   delay,
   isStale,
   lastUpdated,
+  nextRefreshAt,
+  isRefreshing,
   polylineMeters,
   trafficSignals,
+  nextEntry,
+  nextLivePosition,
 }: CurrentBusCardProps) {
   const live = entry.live;
   const sched = entry.sched;
@@ -67,11 +85,19 @@ export function CurrentBusCard({
       ? live.minutesToStop
       : Math.max(0, Math.round((entry.epochMs - Date.now()) / 60_000));
 
-  const headline = isLive
-    ? live?.minutesToStop != null && live.minutesToStop <= 0
-      ? 'Arriving now'
-      : `Arrives ${formatArrivalClock(minutes) ?? formatClockHHMM(entry.epochMs)}`
-    : `Scheduled ${formatClockHHMM(entry.epochMs)}`;
+  const eyebrow =
+    isLive && minutes <= 0 ? 'ARRIVING NOW' : 'ARRIVING IN';
+
+  const projectedClock = formatClockHHMM(entry.epochMs);
+  // Inline headline shown next to the big minutes value — only when the
+  // schedule compare row isn't already displaying the same clock time. Hides
+  // on "arriving now" where the eyebrow already says everything.
+  const inlineClockLabel =
+    minutes <= 0
+      ? null
+      : isLive
+        ? `Arrives ${projectedClock}`
+        : `at ${projectedClock}`;
 
   const motion = useMemo(() => {
     if (!isLive) return null;
@@ -89,8 +115,6 @@ export function CurrentBusCard({
     });
   }, [isLive, livePosition?.speed, livePosition?.lat, livePosition?.lng, trafficSignals]);
 
-  const chips = buildChips({ isLive, sched, livePosition, delay, isStale, motion });
-
   // Progress = 1 − (distance-to-stop / route length). T816 is a loop, so right
   // after the bus passes the stop forwardMeters ≈ polylineMeters (full loop to
   // come back around), and near arrival forwardMeters ≈ 0. Clamp to [0, 1] —
@@ -103,61 +127,478 @@ export function CurrentBusCard({
     return Math.max(0, Math.min(1, 1 - m / polylineMeters));
   }, [isLive, live?.forwardMeters, polylineMeters]);
 
+  const delayLabel = formatDelayLabel(delay);
+  const schedClock = sched ? formatClockHHMM(sched.departureEpochMs) : null;
+  const liveProjectedClock = isLive && sched ? projectedClock : null;
+
+  // Only show the compare row when we have a live-vs-schedule comparison worth
+  // making. For schedule-only entries the clock is already implied by the
+  // inline "at HH:MM" headline — no need to repeat it.
+  const hasCompareRow = isLive && sched != null;
+  // And when the compare row is rendering the live clock, suppress the inline
+  // "Arrives HH:MM" next to the big minutes to avoid showing the same time
+  // twice.
+  const showInlineClock =
+    inlineClockLabel != null && !(hasCompareRow && liveProjectedClock != null);
+
+  // Telemetry grid cells — each is a labelled value that helps a casual user
+  // understand what they're looking at. Skip speed when the motion pill
+  // already carries it (moving / slow) to avoid duplicating "55 km/h".
+  const vehicleAge = useVehicleAge(livePosition?.observedAt ?? null);
+  const infoCells = useMemo(() => {
+    if (!isLive) return [];
+    const cells: InfoCellData[] = [];
+    const distance = formatDistanceToStop(live?.forwardMeters);
+    if (distance) {
+      cells.push({ key: 'distance', label: 'Distance', value: distance });
+    }
+    const motionCarriesSpeed =
+      motion != null && (motion.kind === 'moving' || motion.kind === 'slow');
+    if (
+      !motionCarriesSpeed &&
+      livePosition?.speed != null &&
+      Number.isFinite(livePosition.speed)
+    ) {
+      cells.push({
+        key: 'speed',
+        label: 'Speed',
+        value: `${Math.round(livePosition.speed)} km/h`,
+      });
+    }
+    const heading = bearingToCardinal(livePosition?.bearing);
+    if (heading) {
+      const rotation =
+        typeof livePosition?.bearing === 'number' &&
+        Number.isFinite(livePosition.bearing)
+          ? livePosition.bearing
+          : undefined;
+      cells.push({
+        key: 'heading',
+        label: 'Heading',
+        value: heading,
+        icon: 'location.north.line.fill',
+        iconRotation: rotation,
+      });
+    }
+    if (livePosition?.vehicleId != null) {
+      cells.push({
+        key: 'vehicle',
+        label: 'Vehicle',
+        value: livePosition.vehicleId,
+      });
+    }
+    if (vehicleAge) {
+      cells.push({ key: 'age', label: 'Last ping', value: vehicleAge });
+    }
+    return cells;
+  }, [
+    isLive,
+    live?.forwardMeters,
+    motion,
+    livePosition?.speed,
+    livePosition?.bearing,
+    livePosition?.vehicleId,
+    vehicleAge,
+  ]);
+
+  const showTray = isLive && infoCells.length > 0;
+
   return (
     <Animated.View style={styles.card} layout={LinearTransition.duration(220)}>
-      {isLive ? <StatusRow isStale={isStale} lastUpdated={lastUpdated} /> : null}
+      <View style={styles.sectionPad}>
+        <StatusRow
+          isLive={isLive}
+          isStale={isStale}
+          lastUpdated={lastUpdated}
+          nextRefreshAt={nextRefreshAt}
+          isRefreshing={isRefreshing}
+        />
+      </View>
 
-      <View style={styles.headerRow}>
-        <Text style={styles.label} selectable>
-          Current
-        </Text>
-        <View style={styles.valueBlock}>
-          <Animated.Text
-            key={`${minutes}-${entry.kind}`}
-            entering={SlideInDown.duration(260).easing(
-              Easing.out(Easing.cubic),
-            )}
-            exiting={SlideOutUp.duration(180).easing(Easing.in(Easing.cubic))}
-            style={styles.value}
-            selectable
-            allowFontScaling={false}
-          >
-            {minutes}
-          </Animated.Text>
-          <Text style={styles.unit} selectable>
-            min
+      <Divider />
+
+      <View style={styles.sectionPad}>
+        <View style={styles.eyebrowRow}>
+          <Text style={styles.eyebrow} selectable>
+            {eyebrow}
           </Text>
+          {hasCompareRow && schedClock ? (
+            <ScheduleTimes
+              schedClock={schedClock}
+              liveClock={liveProjectedClock}
+              // Hide the "→ live" half when the bus is on-time; the two
+              // clocks would be identical. `DelayText` below still signals it.
+              showArrow={
+                delayLabel != null && delayLabel.tone !== 'on-time'
+              }
+            />
+          ) : null}
+        </View>
+        <View style={styles.arrivalRow}>
+          <View style={styles.valueBlock}>
+            <Animated.Text
+              key={`${minutes}-${entry.kind}`}
+              entering={SlideInDown.duration(260).easing(
+                Easing.out(Easing.cubic),
+              )}
+              exiting={SlideOutUp.duration(180).easing(Easing.in(Easing.cubic))}
+              style={styles.value}
+              selectable
+              allowFontScaling={false}
+            >
+              {minutes}
+            </Animated.Text>
+            <Text style={styles.unit} selectable>
+              min
+            </Text>
+          </View>
+
+          {hasCompareRow && delayLabel ? (
+            <DelayText label={delayLabel} />
+          ) : showInlineClock ? (
+            <Text
+              style={styles.inlineClock}
+              selectable
+              numberOfLines={1}
+              allowFontScaling={false}
+            >
+              {inlineClockLabel}
+            </Text>
+          ) : null}
         </View>
       </View>
 
-      <Text style={styles.headline} selectable numberOfLines={1}>
-        {headline}
-      </Text>
-
-      {motion ? <MotionLine motion={motion} /> : null}
-
       {progress != null ? (
-        <ApproachRail progress={progress} isStale={isStale} />
+        <>
+          <Divider />
+          <View style={styles.sectionPad}>
+            <View style={styles.railGroup}>
+              <ApproachRail progress={progress} isStale={isStale} />
+              {motion ? (
+                <MotionIndicator motion={motion} isStale={isStale} />
+              ) : null}
+            </View>
+          </View>
+        </>
+      ) : motion ? (
+        <>
+          <Divider />
+          <View style={styles.sectionPad}>
+            <MotionIndicator motion={motion} isStale={isStale} />
+          </View>
+        </>
       ) : null}
 
-      {chips.length > 0 ? (
-        <Animated.View
-          entering={FadeIn.duration(220)}
-          style={styles.chipStrip}
-          layout={LinearTransition.duration(220)}
-        >
-          {chips.map(({ key, ...chipProps }, i) => (
-            <Animated.View
-              key={key}
-              entering={FadeInRight.duration(180).delay(i * 40)}
-              layout={LinearTransition.duration(220)}
-            >
-              <Chip {...chipProps} />
-            </Animated.View>
-          ))}
-        </Animated.View>
+      {showTray ? <InfoTray cells={infoCells} /> : null}
+
+      {nextEntry ? (
+        <NextBusSection entry={nextEntry} livePosition={nextLivePosition} />
       ) : null}
     </Animated.View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Divider
+// ---------------------------------------------------------------------------
+
+function Divider() {
+  return <View style={styles.divider} />;
+}
+
+// ---------------------------------------------------------------------------
+// Schedule times — inline "SCHEDULED 23:11 → 23:17" row. Sits on the same
+// line as the "ARRIVING IN" eyebrow, right-aligned.
+// ---------------------------------------------------------------------------
+
+function ScheduleTimes({
+  schedClock,
+  liveClock,
+  showArrow,
+}: {
+  schedClock: string;
+  liveClock: string | null;
+  showArrow: boolean;
+}) {
+  return (
+    <Animated.View
+      entering={FadeIn.duration(220)}
+      style={styles.schedTimes}
+      layout={LinearTransition.duration(220)}
+    >
+      <Text style={styles.schedLabel} selectable>
+        Scheduled
+      </Text>
+      <Text style={styles.schedClock} selectable allowFontScaling={false}>
+        {schedClock}
+      </Text>
+      {showArrow && liveClock != null ? (
+        <>
+          <SymbolView
+            name="arrow.right"
+            size={11}
+            tintColor={PlatformColor('tertiaryLabel') as unknown as string}
+            weight="semibold"
+          />
+          <Text
+            style={styles.schedLiveClock}
+            selectable
+            allowFontScaling={false}
+          >
+            {liveClock}
+          </Text>
+        </>
+      ) : null}
+    </Animated.View>
+  );
+}
+
+function DelayText({ label }: { label: { text: string; tone: DelayTone } }) {
+  const { text, tone } = label;
+  const { fg, icon } = DELAY_TONE[tone];
+  return (
+    <View style={styles.delayRow}>
+      <SymbolView
+        name={icon as Parameters<typeof SymbolView>[0]['name']}
+        size={12}
+        tintColor={fg}
+        weight="semibold"
+      />
+      <Text
+        style={[styles.delayText, { color: fg }]}
+        selectable
+        allowFontScaling={false}
+      >
+        {text}
+      </Text>
+    </View>
+  );
+}
+
+const DELAY_TONE: Record<DelayTone, { fg: string; icon: string }> = {
+  'on-time': {
+    fg: '#30D158',
+    icon: 'checkmark.circle.fill',
+  },
+  late: {
+    fg: '#FF9F0A',
+    icon: 'clock.badge.exclamationmark.fill',
+  },
+  early: {
+    fg: '#64D2FF',
+    icon: 'clock.arrow.circlepath',
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Info tray — recessed sub-surface at the bottom of the card. Flush with the
+// card's bottom edge (square top, rounded bottom) so it reads as "connected".
+// Holds the motion pill plus a 2-column label/value grid.
+// ---------------------------------------------------------------------------
+
+interface InfoCellData {
+  key: string;
+  label: string;
+  value: string;
+  /** Optional SF Symbol placed inline before the value. */
+  icon?: string;
+  /** Bearing in degrees, used to rotate the heading icon. */
+  iconRotation?: number;
+}
+
+function InfoTray({ cells }: { cells: InfoCellData[] }) {
+  // Chunk cells into rows of 2. Each row renders equal-width cells.
+  const rows = useMemo(() => {
+    const out: InfoCellData[][] = [];
+    for (let i = 0; i < cells.length; i += 2) {
+      out.push(cells.slice(i, i + 2));
+    }
+    return out;
+  }, [cells]);
+
+  if (rows.length === 0) return null;
+  return (
+    <View style={styles.tray}>
+      <View style={styles.infoGrid}>
+        {rows.map((row, rowIdx) => (
+          <View key={`row-${rowIdx}`} style={styles.infoRow}>
+            {row.map((cell) => (
+              <InfoCell key={cell.key} cell={cell} />
+            ))}
+            {row.length === 1 ? <View style={styles.infoCell} /> : null}
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function InfoCell({ cell }: { cell: InfoCellData }) {
+  return (
+    <View style={styles.infoCell}>
+      <Text style={styles.infoLabel} selectable allowFontScaling={false}>
+        {cell.label}
+      </Text>
+      <View style={styles.infoValueRow}>
+        {cell.icon ? (
+          <SymbolView
+            name={cell.icon as Parameters<typeof SymbolView>[0]['name']}
+            size={13}
+            tintColor={PlatformColor('label') as unknown as string}
+            weight="semibold"
+            style={
+              cell.iconRotation != null
+                ? { transform: [{ rotate: `${cell.iconRotation}deg` }] }
+                : undefined
+            }
+          />
+        ) : null}
+        <Text style={styles.infoValue} selectable allowFontScaling={false}>
+          {cell.value}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Motion indicator — a subtle, tinted banner under the approach rail showing
+// whether the bus is moving, stopped, or held at a signal.
+// ---------------------------------------------------------------------------
+
+function MotionIndicator({
+  motion,
+  isStale,
+}: {
+  motion: NonNullable<ReturnType<typeof getMotionStatus>>;
+  isStale: boolean;
+}) {
+  const tone = MOTION_TONE[motion.kind];
+  return (
+    <Animated.View
+      key={motion.kind}
+      entering={FadeIn.duration(220)}
+      style={[styles.motionRow, isStale ? styles.motionStale : null]}
+    >
+      <SymbolView
+        name={tone.icon as Parameters<typeof SymbolView>[0]['name']}
+        size={13}
+        tintColor={tone.fg}
+        weight="semibold"
+      />
+      <Text
+        style={[styles.motionText, { color: tone.fg }]}
+        selectable
+        numberOfLines={1}
+        allowFontScaling={false}
+      >
+        {motion.label}
+      </Text>
+    </Animated.View>
+  );
+}
+
+const MOTION_TONE: Record<MotionStatus, { fg: string; icon: string }> = {
+  'at-signal': { fg: '#FF453A', icon: 'hand.raised.fill' },
+  stopped: { fg: '#8E8E93', icon: 'pause.fill' },
+  slow: { fg: '#FF9F0A', icon: 'tortoise.fill' },
+  moving: { fg: '#30D158', icon: 'speedometer' },
+};
+
+function useVehicleAge(observedAtMs: number | null): string | null {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (observedAtMs == null) return;
+    const t = setInterval(() => setNow(Date.now()), 5_000);
+    return () => clearInterval(t);
+  }, [observedAtMs]);
+  return formatVehicleObservedAge(observedAtMs, now);
+}
+
+// ---------------------------------------------------------------------------
+// Next bus — compact footer section. "Next" means the bus AFTER the primary
+// one in the card; helps the user plan if they miss this bus.
+// ---------------------------------------------------------------------------
+
+function NextBusSection({
+  entry,
+  livePosition,
+}: {
+  entry: ArrivalEntry;
+  livePosition?: Pick<VehiclePosition, 'speed'> | undefined;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 15_000);
+    return () => clearInterval(t);
+  }, []);
+
+  const isLive = entry.kind === 'live' && entry.live != null;
+  const minutesFromNow = Math.max(
+    0,
+    Math.round((entry.epochMs - now) / 60_000),
+  );
+  const whenText =
+    minutesFromNow <= 0
+      ? 'arriving now'
+      : minutesFromNow < 60
+        ? `in ${minutesFromNow} min`
+        : (() => {
+            const h = Math.floor(minutesFromNow / 60);
+            const m = minutesFromNow % 60;
+            return m === 0 ? `in ${h}h` : `in ${h}h ${m}m`;
+          })();
+
+  const clock = formatClockHHMM(entry.epochMs);
+  const speedText =
+    isLive &&
+    livePosition?.speed != null &&
+    Number.isFinite(livePosition.speed)
+      ? `${Math.round(livePosition.speed)} km/h`
+      : null;
+
+  // Only tag the next bus when it's live — the common "scheduled" case is the
+  // user's default expectation and a "SCHEDULED" tag just adds noise.
+  const tagText = isLive ? (speedText ? `Live · ${speedText}` : 'Live') : null;
+
+  return (
+    <>
+      <Divider />
+      <View style={styles.nextSection}>
+        <View style={styles.nextHeader}>
+          <Text style={styles.eyebrow} selectable>
+            NEXT BUS
+          </Text>
+          {tagText ? <NextTag text={tagText} /> : null}
+        </View>
+        <Text
+          style={styles.nextLine}
+          selectable
+          numberOfLines={1}
+          allowFontScaling={false}
+        >
+          <Text style={styles.nextWhen}>{whenText}</Text>
+          <Text style={styles.nextSep}>{'  ·  '}</Text>
+          <Text style={styles.nextClock}>at {clock}</Text>
+        </Text>
+      </View>
+    </>
+  );
+}
+
+function NextTag({ text }: { text: string }) {
+  const fg = sourceColor.live;
+  return (
+    <View style={styles.nextTag}>
+      <View style={[styles.nextTagDot, { backgroundColor: fg }]} />
+      <Text
+        style={[styles.nextTagText, { color: fg }]}
+        selectable
+        allowFontScaling={false}
+      >
+        {text}
+      </Text>
+    </View>
   );
 }
 
@@ -217,250 +658,88 @@ function ApproachRail({
 }
 
 // ---------------------------------------------------------------------------
-// Motion status line — "Stopped at a traffic light" / "On the move · 53 km/h"
-// ---------------------------------------------------------------------------
-
-function MotionLine({
-  motion,
-}: {
-  motion: NonNullable<ReturnType<typeof getMotionStatus>>;
-}) {
-  const { icon, kind } = MOTION_CHIP[motion.kind];
-  const { fg } = chipColors(kind);
-  return (
-    <Animated.View
-      key={motion.kind}
-      entering={FadeIn.duration(220)}
-      style={styles.motionRow}
-    >
-      <SymbolView
-        name={icon as Parameters<typeof SymbolView>[0]['name']}
-        size={13}
-        tintColor={fg}
-        weight="semibold"
-      />
-      <Text
-        style={[styles.motionText, { color: fg }]}
-        selectable
-        numberOfLines={1}
-        allowFontScaling={false}
-      >
-        {motion.label}
-      </Text>
-    </Animated.View>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Status row
 // ---------------------------------------------------------------------------
 
 function StatusRow({
+  isLive,
   isStale,
   lastUpdated,
+  nextRefreshAt,
+  isRefreshing,
 }: {
+  isLive: boolean;
   isStale: boolean;
   lastUpdated: number | null;
+  nextRefreshAt: number | null;
+  isRefreshing: boolean;
 }) {
   const updated = useLastUpdatedLabel(lastUpdated);
+  const countdown = useRefreshCountdownSeconds(nextRefreshAt);
+
+  // Effective "refreshing" — if the scheduled tick has fired (countdown at 0)
+  // but the store hasn't yet flipped isRefreshing, treat as refreshing anyway
+  // so the label doesn't briefly read "refresh in 0s".
+  const effectivelyRefreshing =
+    isRefreshing || (countdown != null && countdown === 0);
+
+  const refreshLabel =
+    countdown != null && countdown > 0 ? `refresh in ${countdown}s` : null;
+
+  const tone: 'live' | 'stale' | 'neutral' = effectivelyRefreshing
+    ? 'live'
+    : isLive
+      ? isStale
+        ? 'stale'
+        : 'live'
+      : 'neutral';
+
+  const dotColor =
+    tone === 'live'
+      ? sourceColor.live
+      : tone === 'stale'
+        ? sourceColor.stale
+        : (PlatformColor('tertiaryLabel') as unknown as string);
+  const dotStatic = tone !== 'live';
+  const labelColor =
+    tone === 'live'
+      ? sourceColor.live
+      : tone === 'stale'
+        ? sourceColor.stale
+        : (PlatformColor('secondaryLabel') as unknown as string);
+
+  const primary = effectivelyRefreshing
+    ? 'Refreshing…'
+    : isLive
+      ? isStale
+        ? 'Stale'
+        : 'Live'
+      : lastUpdated == null
+        ? 'Waiting for live data'
+        : 'Timetable';
+
+  const secondary = effectivelyRefreshing
+    ? null
+    : isLive && !isStale
+      ? updated.shortLabel
+      : refreshLabel;
+
   return (
     <View style={styles.statusRow}>
-      <LiveDot
-        color={isStale ? sourceColor.stale : sourceColor.live}
-        size={7}
-        static={isStale}
-      />
-      <Text style={[styles.statusText, { color: isStale ? sourceColor.stale : sourceColor.live }]} selectable>
-        {isStale ? 'Stale' : 'Live'}
+      <LiveDot color={dotColor} size={7} static={dotStatic} />
+      <Text style={[styles.statusText, { color: labelColor }]} selectable>
+        {primary}
       </Text>
-      {updated.shortLabel ? (
+      {secondary ? (
         <>
           <Text style={styles.statusDot}>·</Text>
           <Text style={styles.statusMeta} selectable numberOfLines={1}>
-            {updated.shortLabel}
+            {secondary}
           </Text>
         </>
       ) : null}
     </View>
   );
-}
-
-// ---------------------------------------------------------------------------
-// Chips
-// ---------------------------------------------------------------------------
-
-type ChipKind =
-  | 'scheduled'
-  | 'delay-on-time'
-  | 'delay-late'
-  | 'delay-early'
-  | 'motion-at-signal'
-  | 'motion-stopped'
-  | 'motion-slow'
-  | 'motion-moving'
-  | 'heading'
-  | 'stale';
-
-interface ChipProps {
-  key: string;
-  icon: string;
-  text: string;
-  kind: ChipKind;
-  /** Bearing in degrees for heading chips; used to rotate the SF Symbol. */
-  rotation?: number;
-}
-
-function Chip({ icon, text, kind, rotation }: Omit<ChipProps, 'key'>) {
-  const { bg, fg, border } = chipColors(kind);
-  return (
-    <View style={[styles.chip, { backgroundColor: bg, borderColor: border }]}>
-      <SymbolView
-        name={icon as Parameters<typeof SymbolView>[0]['name']}
-        size={11}
-        tintColor={fg}
-        weight="semibold"
-        style={
-          rotation != null ? { transform: [{ rotate: `${rotation}deg` }] } : undefined
-        }
-      />
-      <Text style={[styles.chipText, { color: fg }]} selectable allowFontScaling={false}>
-        {text}
-      </Text>
-    </View>
-  );
-}
-
-function chipColors(kind: ChipKind): { bg: string; fg: string; border: string } {
-  switch (kind) {
-    case 'delay-on-time':
-      return { bg: 'rgba(48,209,88,0.14)', fg: '#30D158', border: 'rgba(48,209,88,0.35)' };
-    case 'delay-late':
-      return { bg: surfaceColor.amberTint, fg: '#FF9F0A', border: 'rgba(255,159,10,0.35)' };
-    case 'delay-early':
-      return { bg: 'rgba(100,210,255,0.14)', fg: '#64D2FF', border: 'rgba(100,210,255,0.35)' };
-    case 'motion-at-signal':
-      return { bg: 'rgba(208,2,27,0.14)', fg: '#FF453A', border: 'rgba(255,69,58,0.35)' };
-    case 'motion-stopped':
-      return { bg: 'rgba(142,142,147,0.14)', fg: '#8E8E93', border: 'rgba(142,142,147,0.35)' };
-    case 'motion-slow':
-      return { bg: surfaceColor.amberTint, fg: '#FF9F0A', border: 'rgba(255,159,10,0.35)' };
-    case 'motion-moving':
-      return { bg: 'rgba(48,209,88,0.14)', fg: '#30D158', border: 'rgba(48,209,88,0.35)' };
-    case 'stale':
-      return { bg: surfaceColor.amberTint, fg: '#FF9F0A', border: 'rgba(255,159,10,0.35)' };
-    default:
-      return {
-        bg: 'transparent',
-        // Runtime color – PlatformColor returns a ColorValue, but chipText accepts string | ColorValue.
-        fg: '#8E8E93',
-        border: surfaceColor.hairline as unknown as string,
-      };
-  }
-}
-
-const MOTION_CHIP: Record<
-  MotionStatus,
-  { icon: string; kind: ChipKind }
-> = {
-  // hand.raised.fill reads as a "stop" gesture — matches the red traffic-light treatment.
-  'at-signal': { icon: 'hand.raised.fill', kind: 'motion-at-signal' },
-  stopped: { icon: 'pause.fill', kind: 'motion-stopped' },
-  slow: { icon: 'tortoise.fill', kind: 'motion-slow' },
-  moving: { icon: 'speedometer', kind: 'motion-moving' },
-};
-
-function buildChips({
-  isLive,
-  sched,
-  livePosition,
-  delay,
-  isStale,
-  motion,
-}: {
-  isLive: boolean;
-  sched: { departureEpochMs: number } | null;
-  livePosition:
-    | Pick<VehiclePosition, 'speed' | 'bearing' | 'lat' | 'lng'>
-    | undefined;
-  delay: ScheduleDelay | null;
-  isStale: boolean;
-  motion: ReturnType<typeof getMotionStatus>;
-}): ChipProps[] {
-  const chips: ChipProps[] = [];
-
-  // Scheduled chip — only on the live variant (schedule-only already shows the
-  // clock time in the headline).
-  if (isLive && sched) {
-    chips.push({
-      key: 'sched',
-      icon: 'clock.fill',
-      text: formatClockHHMM(sched.departureEpochMs),
-      kind: 'scheduled',
-    });
-  }
-
-  if (isLive && delay) {
-    const text = formatDeltaMin(delay) ?? '';
-    if (text) {
-      const kind: ChipKind =
-        delay.onTimeWindow === 'on-time'
-          ? 'delay-on-time'
-          : delay.onTimeWindow === 'late'
-            ? 'delay-late'
-            : 'delay-early';
-      const icon =
-        delay.onTimeWindow === 'on-time'
-          ? 'checkmark.circle.fill'
-          : delay.onTimeWindow === 'late'
-            ? 'clock.badge.exclamationmark.fill'
-            : 'clock.arrow.circlepath';
-      chips.push({ key: 'delay', icon, text, kind });
-    }
-  }
-
-  // Motion status has its own subtitle line (see MotionLine). When we have
-  // speed but couldn't compute a motion status (no position fix yet), keep the
-  // old raw km/h chip so the strip still shows something useful.
-  if (
-    isLive &&
-    !motion &&
-    livePosition?.speed != null &&
-    Number.isFinite(livePosition.speed)
-  ) {
-    chips.push({
-      key: 'speed-raw',
-      icon: 'speedometer',
-      text: `${Math.round(livePosition.speed)} km/h`,
-      kind: 'motion-moving',
-    });
-  }
-
-  if (isLive) {
-    const heading = bearingToCardinal(livePosition?.bearing);
-    if (heading) {
-      chips.push({
-        key: 'heading',
-        icon: 'location.north.line.fill',
-        text: heading,
-        kind: 'heading',
-        rotation:
-          typeof livePosition?.bearing === 'number' && Number.isFinite(livePosition.bearing)
-            ? livePosition.bearing
-            : undefined,
-      });
-    }
-  }
-
-  if (isLive && isStale) {
-    chips.push({
-      key: 'stale',
-      icon: 'exclamationmark.circle.fill',
-      text: 'Stale',
-      kind: 'stale',
-    });
-  }
-
-  return chips;
 }
 
 // ---------------------------------------------------------------------------
@@ -475,9 +754,16 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: surfaceColor.hairline,
     paddingHorizontal: 18,
-    paddingTop: 14,
-    paddingBottom: 16,
-    gap: 10,
+    overflow: 'hidden',
+  },
+  sectionPad: {
+    paddingVertical: trackerSpacing.cardSectionV,
+    gap: 6,
+  },
+  divider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: surfaceColor.hairline as unknown as string,
+    marginHorizontal: -18,
   },
   statusRow: {
     flexDirection: 'row',
@@ -502,16 +788,18 @@ const styles = StyleSheet.create({
     color: PlatformColor('tertiaryLabel'),
     flexShrink: 1,
   },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
+  eyebrow: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.9,
+    textTransform: 'uppercase',
+    color: PlatformColor('secondaryLabel'),
   },
-  label: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: PlatformColor('label'),
-    letterSpacing: -0.1,
+  arrivalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
   },
   valueBlock: {
     flexDirection: 'row',
@@ -531,18 +819,66 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: PlatformColor('secondaryLabel'),
   },
-  headline: {
-    fontSize: 17,
+  inlineClock: {
+    fontSize: 15,
     fontWeight: '500',
-    color: PlatformColor('label'),
+    color: PlatformColor('secondaryLabel'),
     fontVariant: ['tabular-nums'],
     letterSpacing: -0.1,
+    flexShrink: 1,
+  },
+  eyebrowRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  schedTimes: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    flexShrink: 1,
+  },
+  schedLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: PlatformColor('tertiaryLabel'),
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  schedClock: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: PlatformColor('secondaryLabel'),
+    fontVariant: ['tabular-nums'],
+  },
+  schedLiveClock: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: PlatformColor('label'),
+    fontVariant: ['tabular-nums'],
+  },
+  delayRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  delayText: {
+    fontSize: 13,
+    fontWeight: '600',
+    letterSpacing: 0.1,
+    fontVariant: ['tabular-nums'],
+  },
+  railGroup: {
+    gap: 2,
   },
   motionRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginTop: -4,
+  },
+  motionStale: {
+    opacity: 0.6,
   },
   motionText: {
     fontSize: 13,
@@ -551,18 +887,103 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
     flexShrink: 1,
   },
-  chipStrip: {
+  tray: {
+    backgroundColor: surfaceColor.inset,
+    marginHorizontal: -18,
+    paddingHorizontal: 18,
+    paddingTop: 14,
+    paddingBottom: 16,
+    // The card's overflow:hidden + borderRadius clips this flush with the
+    // card's bottom corners when the tray is the last section. When NextBus
+    // follows, the tray sits square-bottomed and NextBus takes the rounded
+    // corners via the same overflow clip.
+  },
+  infoGrid: {
+    gap: 14,
+  },
+  infoRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
+    gap: 16,
+  },
+  infoCell: {
+    flex: 1,
+    minWidth: 0,
+    gap: 3,
+  },
+  infoLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    color: PlatformColor('tertiaryLabel'),
+  },
+  infoValueRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  infoValue: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: PlatformColor('label'),
+    fontVariant: ['tabular-nums'],
+    letterSpacing: -0.1,
+    flexShrink: 1,
+  },
+  nextSection: {
+    paddingVertical: trackerSpacing.cardSectionV,
+    gap: 4,
+  },
+  nextHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     gap: 8,
-    marginTop: 4,
+  },
+  nextLine: {
+    fontSize: 15,
+    color: PlatformColor('label'),
+    fontVariant: ['tabular-nums'],
+    letterSpacing: -0.1,
+  },
+  nextWhen: {
+    fontWeight: '600',
+  },
+  nextSep: {
+    color: PlatformColor('tertiaryLabel'),
+  },
+  nextClock: {
+    fontWeight: '500',
+    color: PlatformColor('secondaryLabel'),
+  },
+  nextTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    backgroundColor: 'rgba(48,209,88,0.14)',
+    borderColor: 'rgba(48,209,88,0.35)',
+  },
+  nextTagDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  nextTagText: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    fontVariant: ['tabular-nums'],
   },
   railRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    height: BUS_MARKER_SIZE + 4,
-    marginTop: 2,
+    height: BUS_MARKER_SIZE,
   },
   railRowStale: {
     opacity: 0.55,
@@ -605,22 +1026,4 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     boxShadow: '0 2px 6px rgba(0, 0, 0, 0.25)',
   },
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 999,
-    borderWidth: StyleSheet.hairlineWidth,
-  },
-  chipText: {
-    fontSize: 11,
-    fontWeight: '600',
-    letterSpacing: 0.3,
-    fontVariant: ['tabular-nums'],
-  },
 });
-
-// prevent lint noise on unused token in this module
-void trackerSpacing;

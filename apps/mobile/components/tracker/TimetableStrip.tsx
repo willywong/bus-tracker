@@ -30,12 +30,15 @@ export function TimetableStrip({
       >
         {departures.map((d, i) => {
           const clock = formatClockHHMM(d.departureEpochMs);
-          const minutesFromNow = Math.max(
-            0,
-            Math.round((d.departureEpochMs - now) / 60_000),
-          );
-          const countdown = formatCountdownShort(minutesFromNow);
           const isAnchor = d.tripId === anchorTripId;
+          // Anchor's countdown is hidden — the CurrentBusCard carries the
+          // authoritative live ETA, and the scheduled countdown would read
+          // stale against it whenever the bus is off-schedule.
+          const minutesFromNow = isAnchor
+            ? null
+            : Math.max(0, Math.round((d.departureEpochMs - now) / 60_000));
+          const countdown =
+            minutesFromNow != null ? formatCountdownShort(minutesFromNow) : '';
           return (
             <Animated.View
               key={`${d.tripId}-${d.stopSequence}-${d.departureEpochMs}`}
@@ -45,7 +48,11 @@ export function TimetableStrip({
                 clock={clock}
                 countdown={countdown}
                 anchor={isAnchor}
-                a11yLabel={`Scheduled departure at ${clock}, ${countdown}${isAnchor ? ', your current bus' : ''}`}
+                a11yLabel={
+                  isAnchor
+                    ? `Your current bus, scheduled departure at ${clock}`
+                    : `Scheduled departure at ${clock}, ${countdown}`
+                }
               />
             </Animated.View>
           );

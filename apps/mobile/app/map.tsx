@@ -6,6 +6,7 @@ import {
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View, type ColorValue } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, {
   AnimatedRegion,
   Marker,
@@ -16,8 +17,10 @@ import MapView, {
 } from 'react-native-maps';
 
 import { BusCallout } from '@/components/map/BusCallout';
+import { MapLegendButton } from '@/components/map/MapLegendButton';
 import { MapStatusCard } from '@/components/map/MapStatusCard';
 import { MapStatusCardSkeleton } from '@/components/map/MapStatusCardSkeleton';
+import { RecenterStopButton } from '@/components/map/RecenterStopButton';
 import { ScheduledBusCallout } from '@/components/map/ScheduledBusCallout';
 import { ScheduledBusMarker } from '@/components/map/ScheduledBusMarker';
 import { StopCallout } from '@/components/map/StopCallout';
@@ -39,7 +42,6 @@ import { useLocationPermission } from '@/hooks/useLocationPermission';
 import { useScheduledBusPosition } from '@/hooks/useScheduledBusPosition';
 import { useSettings } from '@/hooks/useSettings';
 import { useStaticGtfs } from '@/hooks/useStaticGtfs';
-import { refreshAll } from '@/services/refresh';
 import { tokens } from '@/theme/tokens';
 
 const POSITION_TWEEN_MS = 30_000;
@@ -85,9 +87,10 @@ export default function MapScreen() {
   const settings = useSettings();
   useLocationPermission();
   const [staticData, setStaticData] = useState<StaticData | null>(null);
-  const { positions, lastUpdated } = useBusPosition({
-    routeCode: settings.preferredRouteCode,
-  });
+  const { positions, lastUpdated, nextRefreshAt, isRefreshing } =
+    useBusPosition({
+      routeCode: settings.preferredRouteCode,
+    });
   const eta = useEta({
     stopId: settings.preferredStopId,
     routeCode: settings.preferredRouteCode,
@@ -138,19 +141,22 @@ export default function MapScreen() {
   }, [gtfs.ready, settings.preferredStopId, settings.preferredRouteCode]);
 
   const regionsRef = useRef(new Map<string, AnimatedRegion>());
+  const mapRef = useRef<MapView>(null);
 
-  const [refreshing, setRefreshing] = useState(false);
-  const handleRefresh = useCallback(() => {
-    if (refreshing) return;
-    setRefreshing(true);
-    void refreshAll()
-      .catch((err) => {
-        console.warn('[map] refresh failed', err);
-      })
-      .finally(() => {
-        setRefreshing(false);
-      });
-  }, [refreshing]);
+  const handleRecenterStop = useCallback(() => {
+    const stop = staticData?.stop;
+    if (!stop) return;
+    // ~660 m span — close enough to see the stop context, not claustrophobic.
+    mapRef.current?.animateToRegion(
+      {
+        latitude: stop.stop_lat,
+        longitude: stop.stop_lon,
+        latitudeDelta: 0.006,
+        longitudeDelta: 0.006,
+      },
+      450,
+    );
+  }, [staticData]);
 
   // Per-bus scheduled arrival (for BusCallout). Keyed by vehicleId. We look up
   // the scheduled departure from the user's stop for each visible trip. If a
@@ -266,6 +272,7 @@ export default function MapScreen() {
   return (
     <View style={styles.root}>
       <MapView
+        ref={mapRef}
         provider={PROVIDER_DEFAULT}
         style={styles.map}
         initialRegion={staticData.region}
@@ -368,10 +375,23 @@ export default function MapScreen() {
           eta={eta}
           stopName={staticData.stop.stop_name}
           lastUpdated={lastUpdated}
-          onRefresh={handleRefresh}
-          refreshing={refreshing}
+          livePosition={positions.find(
+            (p) => p.vehicleId === eta.current?.vehicleId,
+          )}
+          nextRefreshAt={nextRefreshAt}
+          isRefreshing={isRefreshing}
         />
       </View>
+      <SafeAreaView
+        edges={['top']}
+        style={styles.fabTopRight}
+        pointerEvents="box-none"
+      >
+        <View style={styles.fabStack}>
+          <RecenterStopButton onPress={handleRecenterStop} />
+          <MapLegendButton />
+        </View>
+      </SafeAreaView>
     </View>
   );
 }
@@ -387,6 +407,16 @@ const styles = StyleSheet.create({
     left: 16,
     right: 16,
     bottom: 110,
+  },
+  fabTopRight: {
+    position: 'absolute',
+    top: 0,
+    right: 16,
+    alignItems: 'flex-end',
+  },
+  fabStack: {
+    alignItems: 'flex-end',
+    gap: 10,
   },
   busMarker: {
     width: 32,

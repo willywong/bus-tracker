@@ -2,7 +2,7 @@
   "expo": {
     "name": "Bus Tracker",
     "slug": "bus-tracker",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "t816",
@@ -19,7 +19,8 @@
       "supportsTablet": false,
       "infoPlist": {
         "UIBackgroundModes": ["fetch"],
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSSupportsLiveActivities": true
       }
     },
     "android": {
@@ -53,7 +54,16 @@
           "locationAlwaysAndWhenInUsePermission": "Allow Bus Tracker to show bus and user location on the map."
         }
       ],
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-widgets",
+        {
+          "bundleIdentifier": "com.willywong.bustracker.widgets",
+          "groupIdentifier": "group.com.willywong.bustracker",
+          "enablePushNotifications": false,
+          "widgets": []
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

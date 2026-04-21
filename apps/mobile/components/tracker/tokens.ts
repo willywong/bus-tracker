@@ -36,6 +36,12 @@ export const surfaceColor = {
   canvas: dyn('#F2F2F7', '#000000'),
   /** Grouped-list card surface (systemGray6). */
   grouped: dyn('#FFFFFF', '#1C1C1E'),
+  /**
+   * Inset tray surface nested inside a `grouped` card. Darker than `grouped`
+   * in light mode, lighter in dark mode — mimics Apple's "recessed" inset
+   * group. Used for the telemetry tray at the bottom of CurrentBusCard.
+   */
+  inset: dyn('#F2F2F7', '#2C2C2E'),
   /** Hairline / separator (opaqueSeparator-equivalent). */
   hairline: dyn('#C6C6C8', '#2C2C2E'),
   /** Inline accent chip background in amber (low-opacity fill). */
@@ -52,4 +58,6 @@ export const trackerSpacing = {
   rowV: 14,
   rowH: 16,
   cardRadius: 14,
+  /** Vertical padding inside each hairline-divided section of CurrentBusCard. */
+  cardSectionV: 11,
 } as const;

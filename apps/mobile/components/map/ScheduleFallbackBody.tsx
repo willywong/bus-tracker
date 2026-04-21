@@ -1,6 +1,5 @@
 import { PlatformColor, StyleSheet, Text, View } from 'react-native';
 
-import { SourceBadge } from '@/components/shared/SourceBadge';
 import { formatClockHHMM } from '@/components/tracker/logic';
 
 interface ScheduleFallbackBodyProps {
@@ -16,12 +15,6 @@ export function ScheduleFallbackBody({
 }: ScheduleFallbackBodyProps) {
   return (
     <View style={styles.col}>
-      <View style={styles.eyebrowRow}>
-        <SourceBadge kind="scheduled" />
-        <Text style={styles.eyebrowText} selectable>
-          Next scheduled
-        </Text>
-      </View>
       <View style={styles.numberRow}>
         <Text style={styles.number} selectable allowFontScaling={false}>
           {Math.max(0, minutes)}
@@ -41,18 +34,6 @@ const styles = StyleSheet.create({
   col: {
     flex: 1,
     minWidth: 0,
-  },
-  eyebrowRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 4,
-  },
-  eyebrowText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: PlatformColor('secondaryLabel'),
-    letterSpacing: 0.2,
   },
   numberRow: {
     flexDirection: 'row',

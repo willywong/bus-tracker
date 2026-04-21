@@ -6,9 +6,12 @@ import { surfaceColor, trackerSpacing } from './tokens';
 interface TimetableChipProps {
   /** "HH:MM" clock display. */
   clock: string;
-  /** Short countdown label ("in 12 min", "in 1h 20m", "now"). */
+  /** Short countdown label ("in 12 min", "in 1h 20m", "now"). Ignored when `anchor`. */
   countdown: string;
-  /** If true, this chip is the one matching the live "current" bus. */
+  /** If true, this chip is the one matching the live "current" bus. The
+   * countdown is hidden for the anchor — the CurrentBusCard already shows the
+   * authoritative live ETA, and the scheduled countdown here would contradict
+   * it whenever the bus is running off-schedule. */
   anchor?: boolean;
   /** Called on press — optional; chip remains keyboard/VO focusable either way. */
   onPress?: () => void;
@@ -35,16 +38,17 @@ export function TimetableChip({
           style={[styles.clock, anchor && styles.clockAnchor]}
           selectable
           allowFontScaling={false}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.8}
         >
           {clock}
         </Text>
-        <Text
-          style={[styles.countdown, anchor && styles.countdownAnchor]}
-          selectable
-          numberOfLines={1}
-        >
-          {countdown}
-        </Text>
+        {!anchor ? (
+          <Text style={styles.countdown} selectable numberOfLines={1}>
+            {countdown}
+          </Text>
+        ) : null}
       </Container>
     </Animated.View>
   );
@@ -88,9 +92,6 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: PlatformColor('secondaryLabel'),
     letterSpacing: 0.1,
-  },
-  countdownAnchor: {
-    color: '#0A84FF',
   },
 });
 
