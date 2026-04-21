@@ -8,6 +8,7 @@ import {
   type ServiceDayBounds,
 } from "@/db/queries";
 import { useStaticGtfs } from "@/hooks/useStaticGtfs";
+import { devNow } from "@/utils/devClock";
 
 const REFRESH_MS = 30_000;
 const DEFAULT_LIMIT = 8;
@@ -46,13 +47,13 @@ export function useScheduledDepartures(
     ready: false,
     error: null,
   });
-  const [now, setNow] = useState(() => Date.now());
+  const [now, setNow] = useState(() => devNow());
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Re-query every 30s — schedule data is static so we just need `now` to
   // advance for `serviceEnded` / `beforeServiceStart` / the upcoming window.
   useEffect(() => {
-    tickRef.current = setInterval(() => setNow(Date.now()), REFRESH_MS);
+    tickRef.current = setInterval(() => setNow(devNow()), REFRESH_MS);
     return () => {
       if (tickRef.current) clearInterval(tickRef.current);
     };
@@ -62,7 +63,7 @@ export function useScheduledDepartures(
   // asleep for an hour and the in-memory `upcoming` list is stale.
   useEffect(() => {
     const sub = AppState.addEventListener("change", (status: AppStateStatus) => {
-      if (status === "active") setNow(Date.now());
+      if (status === "active") setNow(devNow());
     });
     return () => sub.remove();
   }, []);

@@ -5,8 +5,10 @@ import type { ScheduleDelay } from '@bus-tracker/shared';
 import BusArrivalActivity, {
   type BusActivityProps,
 } from '@/activities/BusArrivalActivity';
+import { formatStopName } from '@/components/map/format';
 import type { ArrivalEntry } from '@/hooks/useEta';
 import type { ResolvedEta } from '@/components/tracker/logic';
+import { devNow } from '@/utils/devClock';
 
 type Instance = ReturnType<typeof BusArrivalActivity.start>;
 
@@ -29,51 +31,128 @@ interface UseBusLiveActivityArgs {
   stopName: string | null;
   primaryArrival: ArrivalEntry | null;
   resolved: ResolvedEta;
+  /** True when the latest realtime ping is older than the stale threshold. */
+  isStale?: boolean;
+  /** True when today's service hasn't started yet. */
+  beforeServiceStart?: boolean;
+  /** Epoch ms of the first bus of today's service. */
+  firstBusToday?: number | null;
   enabled?: boolean;
 }
 
 /**
  * Reflects the tracker's resolved ETA onto a Dynamic Island / Lock Screen
- * Live Activity. Starts when a primary arrival is present with a usable
- * minutes-to-stop, updates on value change, and ends on arrival or teardown.
+ * Live Activity. Supports two modes:
+ *  - 'arrival': a bus is approaching — shows minutes + progress + rich pills
+ *  - 'pre-service': no buses yet today — shows "First bus at HH:MM"
  */
 export function useBusLiveActivity({
   routeCode,
   stopName,
   primaryArrival,
   resolved,
+  isStale = false,
+  beforeServiceStart = false,
+  firstBusToday = null,
   enabled = true,
 }: UseBusLiveActivityArgs): void {
   const instanceRef = useRef<Instance | null>(null);
   const lastPropsRef = useRef<BusActivityProps | null>(null);
+  // Stable across updates so the progress bar advances smoothly. Set on start,
+  // cleared on end.
+  const tripStartRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (Platform.OS !== 'ios') return;
-    if (!enabled) return;
 
+    // User toggled tracking off — tear down any running activity.
+    if (!enabled) {
+      const inst = instanceRef.current;
+      if (inst) {
+        void inst.end('immediate');
+        instanceRef.current = null;
+        lastPropsRef.current = null;
+        tripStartRef.current = null;
+      }
+      return;
+    }
+
+    const formattedStop = stopName ? formatStopName(stopName) : 'your stop';
+
+    // --- Pre-service branch: waiting for first bus of the day -----------
+    if (primaryArrival == null && beforeServiceStart && firstBusToday != null) {
+      if (tripStartRef.current == null) tripStartRef.current = devNow();
+
+      const next: BusActivityProps = {
+        kind: 'pre-service',
+        routeCode,
+        minutesToStop: null,
+        arrivalEpochMs: firstBusToday,
+        tripStartEpochMs: tripStartRef.current,
+        delayMinutes: null,
+        delayTone: null,
+        stopName: formattedStop,
+        busPlate: null,
+        source: 'schedule',
+        distanceToStopMeters: null,
+        isStale: false,
+      };
+
+      const inst = instanceRef.current;
+      if (!inst) {
+        try {
+          instanceRef.current = BusArrivalActivity.start(next, 't816://');
+          lastPropsRef.current = next;
+        } catch (err) {
+          console.warn('[live-activity] start failed', err);
+        }
+        return;
+      }
+
+      if (lastPropsRef.current && shallowEqual(lastPropsRef.current, next)) return;
+      try {
+        inst.update(next);
+        lastPropsRef.current = next;
+      } catch (err) {
+        console.warn('[live-activity] update failed', err);
+      }
+      return;
+    }
+
+    // --- Arrival branch: a bus is approaching ---------------------------
     const minutes = resolved.minutesToStop ?? primaryArrival?.live?.minutesToStop ?? null;
     const arrivalEpoch = primaryArrival?.epochMs ?? null;
 
-    // End once the bus has arrived or we lose a usable ETA.
+    // End once the bus has arrived or we lose a usable ETA (and no pre-service fallback).
     if (primaryArrival == null || arrivalEpoch == null || minutes == null || minutes <= 0) {
       const inst = instanceRef.current;
       if (inst) {
         void inst.end('default', lastPropsRef.current ?? undefined, new Date());
         instanceRef.current = null;
         lastPropsRef.current = null;
+        tripStartRef.current = null;
       }
       return;
     }
 
+    if (tripStartRef.current == null) tripStartRef.current = devNow();
+
+    const forwardMeters = primaryArrival.live?.forwardMeters ?? null;
+
     const next: BusActivityProps = {
+      kind: 'arrival',
       routeCode,
       minutesToStop: minutes,
       arrivalEpochMs: arrivalEpoch,
+      tripStartEpochMs: tripStartRef.current,
       delayMinutes: resolved.delay?.delayMinutes ?? null,
       delayTone: delayToneOf(resolved.delay),
-      stopName: stopName ?? 'your stop',
+      stopName: formattedStop,
       busPlate: primaryArrival.live?.vehicleId ?? null,
       source: primaryArrival.kind === 'live' ? 'live' : 'schedule',
+      distanceToStopMeters:
+        forwardMeters != null && Number.isFinite(forwardMeters) ? forwardMeters : null,
+      isStale,
     };
 
     const inst = instanceRef.current;
@@ -101,6 +180,9 @@ export function useBusLiveActivity({
     primaryArrival,
     resolved.minutesToStop,
     resolved.delay,
+    isStale,
+    beforeServiceStart,
+    firstBusToday,
   ]);
 
   // Final cleanup on unmount.
@@ -111,6 +193,7 @@ export function useBusLiveActivity({
         void inst.end('immediate');
         instanceRef.current = null;
         lastPropsRef.current = null;
+        tripStartRef.current = null;
       }
     };
   }, []);

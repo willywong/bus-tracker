@@ -30,6 +30,7 @@ import { useBusLiveActivity } from '@/hooks/useBusLiveActivity';
 import { useBusPosition } from '@/hooks/useBusPosition';
 import { useEta } from '@/hooks/useEta';
 import { usePushRegistrationState } from '@/hooks/PushRegistrationContext';
+import { devNow } from '@/utils/devClock';
 import { AVAILABLE_ROUTE_CODES, useSettings } from '@/hooks/useSettings';
 import { useWalkTimer } from '@/hooks/useWalkTimer';
 import { refreshAll } from '@/services/refresh';
@@ -63,7 +64,7 @@ export default function TrackerScreen() {
   const walk = useWalkTimer(settings.walkMinutes);
   const [stopName, setStopName] = useState<string | null>(null);
   const [trafficSignals, setTrafficSignals] = useState<TrafficSignalRow[]>([]);
-  const [now, setNow] = useState(() => Date.now());
+  const [now, setNow] = useState(() => devNow());
   const [refreshing, setRefreshing] = useState(false);
   const [isTracking, setIsTracking] = useState(false);
 
@@ -78,11 +79,14 @@ export default function TrackerScreen() {
     stopName,
     primaryArrival,
     resolved,
+    isStale: updated.isStale,
+    beforeServiceStart,
+    firstBusToday,
     enabled: isTracking,
   });
 
   useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 15_000);
+    const t = setInterval(() => setNow(devNow()), 15_000);
     return () => clearInterval(t);
   }, []);
 
@@ -293,6 +297,29 @@ export default function TrackerScreen() {
         unit={hero.unit}
         subtitle={subtitle}
         detail={hero.detail}
+        trailing={
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            {primaryArrival != null ||
+            (beforeServiceStart && firstBusToday != null) ? (
+              <TrackButton
+                isTracking={isTracking}
+                onToggle={setIsTracking}
+              />
+            ) : null}
+            {!serviceEnded ? (
+              <WalkCta
+                isWalking={walk.isWalking}
+                isLeaveNow={isLeaveNow}
+                onStart={() => {
+                  void walk.start();
+                }}
+                onCancel={() => {
+                  void walk.cancel();
+                }}
+              />
+            ) : null}
+          </View>
+        }
       />
 
       {push.permission === 'denied' ? (
@@ -312,34 +339,27 @@ export default function TrackerScreen() {
       ) : primaryArrival == null ? (
         <EmptyBusesRow />
       ) : (
-        <>
-          <CurrentBusCard
-            entry={primaryArrival}
-            livePosition={positions.find(
-              (p) => p.vehicleId === primaryArrival.live?.vehicleId,
-            )}
-            delay={primaryArrival.kind === 'live' ? resolved.delay : null}
-            isStale={updated.isStale}
-            lastUpdated={lastUpdated}
-            nextRefreshAt={nextRefreshAt}
-            isRefreshing={isRefreshing}
-            polylineMeters={polylineMeters}
-            trafficSignals={trafficSignals}
-            nextEntry={secondaryArrival}
-            nextLivePosition={
-              secondaryArrival?.live?.vehicleId
-                ? positions.find(
-                    (p) => p.vehicleId === secondaryArrival.live?.vehicleId,
-                  )
-                : undefined
-            }
-          />
-          <View style={{ height: 12 }} />
-          <TrackButton
-            isTracking={isTracking}
-            onToggle={setIsTracking}
-          />
-        </>
+        <CurrentBusCard
+          entry={primaryArrival}
+          livePosition={positions.find(
+            (p) => p.vehicleId === primaryArrival.live?.vehicleId,
+          )}
+          delay={primaryArrival.kind === 'live' ? resolved.delay : null}
+          isStale={updated.isStale}
+          lastUpdated={lastUpdated}
+          nextRefreshAt={nextRefreshAt}
+          isRefreshing={isRefreshing}
+          polylineMeters={polylineMeters}
+          trafficSignals={trafficSignals}
+          nextEntry={secondaryArrival}
+          nextLivePosition={
+            secondaryArrival?.live?.vehicleId
+              ? positions.find(
+                  (p) => p.vehicleId === secondaryArrival.live?.vehicleId,
+                )
+              : undefined
+          }
+        />
       )}
 
       {scheduledUpcoming.length > 0 && !serviceEnded ? (
@@ -354,20 +374,6 @@ export default function TrackerScreen() {
         </>
       ) : null}
 
-      <View style={{ height: trackerSpacing.sectionGap }} />
-
-      {serviceEnded ? null : (
-        <WalkCta
-          isWalking={walk.isWalking}
-          isLeaveNow={isLeaveNow}
-          onStart={() => {
-            void walk.start();
-          }}
-          onCancel={() => {
-            void walk.cancel();
-          }}
-        />
-      )}
     </TrackerCanvas>
   );
 }

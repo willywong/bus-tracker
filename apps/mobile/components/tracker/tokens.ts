@@ -52,7 +52,7 @@ export const surfaceColor = {
 
 export const trackerSpacing = {
   screenH: 20,
-  heroTopPad: 28,
+  heroTopPad: 12,
   heroBottomPad: 36,
   sectionGap: 28,
   rowV: 14,

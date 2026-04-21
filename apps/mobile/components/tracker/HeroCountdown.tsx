@@ -1,9 +1,10 @@
 import type { RouteId } from '@bus-tracker/shared';
+import type { ReactNode } from 'react';
 import { PlatformColor, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   Easing,
-  SlideInDown,
-  SlideOutUp,
+  FadeIn,
+  FadeOut,
 } from 'react-native-reanimated';
 
 import { PulsingDots } from '@/components/map/PulsingDots';
@@ -30,6 +31,8 @@ interface HeroCountdownProps {
   routeOptions: readonly RouteId[];
   /** Called when the user picks a different route. */
   onSelectRoute: (code: RouteId) => void;
+  /** Optional trailing content rendered flush-right on the switcher row. */
+  trailing?: ReactNode;
 }
 
 const NUMBER_HEIGHT = 130;
@@ -44,6 +47,7 @@ export function HeroCountdown({
   selectedRoute,
   routeOptions,
   onSelectRoute,
+  trailing,
 }: HeroCountdownProps) {
   const isEmpty = value === '—';
   // Walking timer ticks every second — a slide on every tick feels chaotic, so
@@ -62,6 +66,7 @@ export function HeroCountdown({
           options={routeOptions}
           onSelect={onSelectRoute}
         />
+        {trailing ? <View style={styles.trailingSlot}>{trailing}</View> : null}
       </View>
 
       <Text style={styles.eyebrow} selectable>
@@ -89,10 +94,8 @@ export function HeroCountdown({
         <View style={styles.numberClip}>
           <Animated.View
             key={value}
-            entering={SlideInDown.duration(300).easing(
-              Easing.out(Easing.cubic),
-            )}
-            exiting={SlideOutUp.duration(240).easing(Easing.in(Easing.cubic))}
+            entering={FadeIn.duration(260).easing(Easing.out(Easing.quad))}
+            exiting={FadeOut.duration(180).easing(Easing.in(Easing.quad))}
             style={styles.numberSlide}
           >
             <Text style={numberStyle} selectable allowFontScaling={false}>
@@ -128,8 +131,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   switcherRow: {
+    alignSelf: 'stretch',
+    flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 28,
+    justifyContent: 'flex-start',
+    paddingLeft: trackerSpacing.rowH,
+    marginBottom: 16,
+  },
+  trailingSlot: {
+    position: 'absolute',
+    right: trackerSpacing.rowH,
+    top: 0,
+    bottom: 0,
+    justifyContent: 'center',
   },
   eyebrow: {
     fontSize: 13,

@@ -1,9 +1,5 @@
-import { Host, HStack, Image, Text } from '@expo/ui/swift-ui';
-import {
-  foregroundStyle,
-  glassEffect,
-  padding,
-} from '@expo/ui/swift-ui/modifiers';
+import { Host, HStack, Image } from '@expo/ui/swift-ui';
+import { frame, glassEffect } from '@expo/ui/swift-ui/modifiers';
 import * as Haptics from 'expo-haptics';
 import { Pressable } from 'react-native';
 
@@ -18,16 +14,15 @@ interface TrackButtonProps {
 const activeAccent = '#34C759';
 
 /**
- * Liquid-glass toggle that controls the Dynamic Island / Lock Screen Live
- * Activity. Tap to start tracking — the activity stays on the island while
- * the app is backgrounded. Tap again to stop.
+ * Circular liquid-glass toggle that controls the Dynamic Island / Lock Screen
+ * Live Activity. Icon-only. Tap to start tracking — the activity stays on the
+ * island while the app is backgrounded. Tap again to stop.
  */
 export function TrackButton({
   isTracking,
   disabled,
   onToggle,
 }: TrackButtonProps) {
-  const label = isTracking ? 'Tracking' : 'Track';
   const icon = isTracking ? 'dot.radiowaves.left.and.right' : 'bus.fill';
 
   return (
@@ -54,29 +49,19 @@ export function TrackButton({
     >
       <Host matchContents>
         <HStack
-          spacing={8}
           modifiers={[
-            padding({ horizontal: 18, vertical: 10 }),
+            frame({ width: 40, height: 40 }),
             glassEffect({
               glass: { variant: 'regular', interactive: true },
-              shape: 'capsule',
+              shape: 'circle',
             }),
           ]}
         >
           <Image
             systemName={icon}
-            size={15}
-            modifiers={
-              isTracking ? [foregroundStyle(activeAccent)] : undefined
-            }
+            size={16}
+            color={isTracking ? activeAccent : undefined}
           />
-          <Text
-            modifiers={
-              isTracking ? [foregroundStyle(activeAccent)] : undefined
-            }
-          >
-            {label}
-          </Text>
         </HStack>
       </Host>
     </Pressable>

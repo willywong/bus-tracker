@@ -30,6 +30,7 @@ import {
   type EtaMode,
   type ResolvedEta,
 } from "@/components/tracker/logic";
+import { devNow } from "@/utils/devClock";
 
 export type { ApproachingBus } from "@/components/tracker/logic";
 
@@ -121,7 +122,7 @@ export function useEta({
   );
   const [trafficError, setTrafficError] = useState<Error | null>(null);
   const [lastComputedAt, setLastComputedAt] = useState<number | null>(null);
-  const [now, setNow] = useState(() => Date.now());
+  const [now, setNow] = useState(() => devNow());
 
   const previousByVehicleRef = useRef(
     new Map<string, { lat: number; lng: number }>(),
@@ -189,7 +190,7 @@ export function useEta({
 
   // 2. Drive `now` forward every 15s so `isStale` stays current.
   useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 15_000);
+    const t = setInterval(() => setNow(devNow()), 15_000);
     return () => clearInterval(t);
   }, []);
 
@@ -258,7 +259,7 @@ export function useEta({
     trafficInflightRef.current?.abort();
     const ctrl = new AbortController();
     trafficInflightRef.current = ctrl;
-    lastTrafficFetchRef.current = { at: Date.now(), key };
+    lastTrafficFetchRef.current = { at: devNow(), key };
 
     (async () => {
       try {
@@ -271,7 +272,7 @@ export function useEta({
         setTrafficMinutes(res.trafficMinutes);
         setTrafficSource(res.source);
         setTrafficError(null);
-        setLastComputedAt(Date.now());
+        setLastComputedAt(devNow());
       } catch (err) {
         if (ctrl.signal.aborted) return;
         if (err instanceof Error && err.name === "AbortError") return;

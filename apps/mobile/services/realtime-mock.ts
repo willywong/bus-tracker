@@ -1,6 +1,8 @@
-import type { VehiclePosition } from "@bus-tracker/shared";
+import { projectOntoRoute, type VehiclePosition } from "@bus-tracker/shared";
+import * as SecureStore from "expo-secure-store";
 import { openDb } from "@/db/database";
-import { getRoutePolyline, getRoutes } from "@/db/queries";
+import { getRoutePolyline, getRoutes, getStops } from "@/db/queries";
+import { devNow } from "@/utils/devClock";
 import type { RealtimeSnapshot, RealtimeStore } from "./realtime";
 
 const MOCK_ROUTE_CODE = "T816";
@@ -10,6 +12,18 @@ const TICK_MS = 5_000;
 /** ~22 km/h average — matches real T816 speeds through PJ traffic. */
 const ADVANCE_METERS_PER_TICK = 30;
 const START_OFFSET_METERS = 2_500;
+/**
+ * Distance the mock bus starts BEFORE the user's preferred stop, in meters.
+ * Picked so the live ETA (~5–6 min) beats the nearest scheduled departure so
+ * the mock bus shows as the primary arrival on the tracker. The cursor resets
+ * to this same approach point each time the bus reaches the stop, so the
+ * approach animation repeats indefinitely.
+ */
+const APPROACH_METERS = 2_000;
+/** SecureStore key — mirrors `STORAGE_KEYS.preferredStopByRoute` in useSettings.ts. */
+const PREFERRED_STOP_BY_ROUTE_KEY = "bt.preferredStopByRoute";
+/** Fallback when no user preference is set yet — matches STOP_DEFAULTS_BY_ROUTE.T816. */
+const DEFAULT_MOCK_STOP_ID = "12000759";
 
 interface PolyPoint {
   lat: number;
@@ -70,6 +84,20 @@ function pointAtDistance(points: PolyPoint[], meters: number) {
   };
 }
 
+async function resolvePreferredStopId(): Promise<string> {
+  try {
+    const raw = await SecureStore.getItemAsync(PREFERRED_STOP_BY_ROUTE_KEY);
+    if (!raw) return DEFAULT_MOCK_STOP_ID;
+    const parsed = JSON.parse(raw) as Record<string, string> | null;
+    const stopId = parsed?.[MOCK_ROUTE_CODE];
+    return typeof stopId === "string" && stopId.length > 0
+      ? stopId
+      : DEFAULT_MOCK_STOP_ID;
+  } catch {
+    return DEFAULT_MOCK_STOP_ID;
+  }
+}
+
 export function createMockRealtimeStore(): RealtimeStore {
   let snapshot: RealtimeSnapshot = {
     positions: [],
@@ -82,6 +110,9 @@ export function createMockRealtimeStore(): RealtimeStore {
   let refCount = 0;
   let points: PolyPoint[] = [];
   let cursor = 0;
+  /** cumMeters of the user's preferred stop along the polyline; null when no
+   * stop could be resolved (falls back to the plain tail loop). */
+  let stopCumMeters: number | null = null;
   let lastPoint: { lat: number; lng: number } | null = null;
   let timer: ReturnType<typeof setInterval> | null = null;
 
@@ -123,7 +154,35 @@ export function createMockRealtimeStore(): RealtimeStore {
         return { lat: p.lat, lng: p.lng, cumMeters: cum };
       });
       const total = points[points.length - 1].cumMeters;
-      cursor = Math.max(0, total - START_OFFSET_METERS);
+
+      // Position the bus APPROACH_METERS before the user's preferred stop so
+      // its live ETA (~5 min) beats the nearest scheduled departure and the
+      // tracker's primary arrival surfaces as LIVE. If the stop can't be
+      // resolved, fall back to the old tail-loop behaviour.
+      stopCumMeters = null;
+      try {
+        const stopId = await resolvePreferredStopId();
+        const stops = await getStops(db);
+        const stop = stops.find((s) => s.stop_id === stopId);
+        if (stop) {
+          const polyLL = points.map((p) => ({ lat: p.lat, lng: p.lng }));
+          const proj = projectOntoRoute(
+            { lat: stop.stop_lat, lng: stop.stop_lon },
+            polyLL,
+          );
+          const a = points[proj.segmentIndex];
+          const b = points[proj.segmentIndex + 1];
+          stopCumMeters =
+            a.cumMeters + (b.cumMeters - a.cumMeters) * proj.progress;
+        }
+      } catch {
+        // Fall through to default positioning.
+      }
+
+      cursor =
+        stopCumMeters != null
+          ? ((stopCumMeters - APPROACH_METERS) % total + total) % total
+          : Math.max(0, total - START_OFFSET_METERS);
     } catch (err) {
       snapshot = {
         ...snapshot,
@@ -151,19 +210,30 @@ export function createMockRealtimeStore(): RealtimeStore {
       lng: pt.lng,
       bearing,
       speed: MOCK_SPEED_KMH,
-      observedAt: Date.now(),
+      observedAt: devNow(),
     };
     lastPoint = pt;
     snapshot = {
       positions: [position],
-      lastUpdated: Date.now(),
+      lastUpdated: devNow(),
       lastError: null,
-      nextRefreshAt: Date.now() + TICK_MS,
+      nextRefreshAt: devNow() + TICK_MS,
       isRefreshing: false,
     };
     notify();
     cursor += ADVANCE_METERS_PER_TICK;
-    if (cursor > total) cursor = Math.max(0, total - START_OFFSET_METERS);
+    if (stopCumMeters != null) {
+      // Once the bus reaches the user's stop, teleport it back to the
+      // approach point so the live ETA keeps counting down instead of
+      // jumping to "full loop away". Bus intentionally rubber-bands every
+      // ~5 min in mock mode.
+      if (cursor >= stopCumMeters) {
+        cursor = ((stopCumMeters - APPROACH_METERS) % total + total) % total;
+        lastPoint = null;
+      }
+    } else if (cursor > total) {
+      cursor = Math.max(0, total - START_OFFSET_METERS);
+    }
   }
 
   function startTicking(): void {
@@ -207,6 +277,7 @@ export function createMockRealtimeStore(): RealtimeStore {
         listeners.clear();
         refCount = 0;
         lastPoint = null;
+        stopCumMeters = null;
         snapshot = {
           positions: [],
           lastUpdated: null,
