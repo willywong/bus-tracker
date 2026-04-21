@@ -47,6 +47,25 @@ async function hasOrphanTrips(db: Db): Promise<boolean> {
   return (row?.n ?? 0) > 0;
 }
 
+async function hasRouteWithoutTrips(
+  db: Db,
+  expected: readonly RouteId[],
+): Promise<boolean> {
+  if (expected.length === 0) return false;
+  const placeholders = expected.map(() => "?").join(",");
+  const rows = await db.getAllAsync<{ code: string; n: number }>(
+    `SELECT r.code AS code, COUNT(t.trip_id) AS n
+       FROM routes r
+       LEFT JOIN trips t ON t.route_id = r.route_id
+      WHERE r.code IN (${placeholders})
+      GROUP BY r.code;`,
+    ...expected,
+  );
+  // A code present in the routes table with zero trips means a stale or
+  // half-written bundle. Force a refresh to recover.
+  return rows.some((row) => (row.n ?? 0) === 0);
+}
+
 export async function needsRefresh(
   db: Db,
   now: number = Date.now(),
@@ -59,6 +78,10 @@ export async function needsRefresh(
   if (now - ts > staleMs) return true;
   // A new route code was shipped — cache is stale regardless of TTL.
   if (!(await cacheHasAllRoutes(db, AVAILABLE_ROUTE_CODES))) return true;
+  // Cache has the routes row but no trips for it — a partial bundle from an
+  // older API/JS combo or an interrupted writeBundle. Without this check, the
+  // cache silently serves an empty schedule for that route forever.
+  if (await hasRouteWithoutTrips(db, AVAILABLE_ROUTE_CODES)) return true;
   // Defence against a half-written bundle (e.g. app killed mid-write, or a v1
   // install upgrading to v2 where stop_times is a new table).
   if (await hasOrphanTrips(db)) return true;

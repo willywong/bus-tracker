@@ -29,6 +29,12 @@ export interface RealtimeStore {
   subscribe(listener: Listener): () => void;
   start(): void;
   stop(): void;
+  /**
+   * Forces an immediate poll, bypassing the 30 s timer. Used by pull-to-refresh.
+   * Resolves once the tick finishes (success or fail). No-op if there are no
+   * subscribers (refCount 0) or the app isn't active.
+   */
+  refresh(): Promise<void>;
   setFilter(filter: PositionFilter): void;
   resetFilterState(): void;
   __forTests: {
@@ -211,6 +217,7 @@ export function createRealtimeStore(
       refCount = Math.max(0, refCount - 1);
       if (refCount === 0) stopPolling();
     },
+    refresh: () => tick(),
     setFilter(filter) {
       positionFilter = filter;
     },

@@ -18,10 +18,14 @@ import {
 import { useEffect, useState } from 'react';
 import { View } from 'react-native';
 
+import type { RouteId } from '@bus-tracker/shared';
+
 import { formatStopName } from '@/components/map/format';
 import { openDb } from '@/db/database';
-import { getStops, type StopRow } from '@/db/queries';
+import { getStopsForRoute, type StopRow } from '@/db/queries';
+import { useStaticGtfs } from '@/hooks/useStaticGtfs';
 import {
+  AVAILABLE_ROUTE_CODES,
   NOTIF_BUFFER_CHOICES_MIN,
   TRAFFIC_PROVIDERS,
   useSettings,
@@ -53,15 +57,28 @@ const providerLabel: Record<TrafficProvider, string> = {
 
 export default function SettingsScreen() {
   const settings = useSettings();
-  const [stops, setStops] = useState<StopRow[]>([]);
+  // Re-fires the stops query once the static bundle finishes bootstrapping,
+  // so a fresh install that mounts Settings before the first fetch completes
+  // populates the pickers instead of getting stuck on an empty DB.
+  const gtfs = useStaticGtfs();
+  const [stopsByRoute, setStopsByRoute] = useState<
+    Partial<Record<RouteId, StopRow[]>>
+  >({});
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const db = await openDb();
-        const rows = await getStops(db);
-        if (!cancelled) setStops(rows);
+        const entries = await Promise.all(
+          AVAILABLE_ROUTE_CODES.map(
+            async (code) => [code, await getStopsForRoute(db, code)] as const,
+          ),
+        );
+        if (cancelled) return;
+        const next: Partial<Record<RouteId, StopRow[]>> = {};
+        for (const [code, rows] of entries) next[code] = rows;
+        setStopsByRoute(next);
       } catch (err) {
         console.warn('[settings] failed to load stops', err);
       }
@@ -69,18 +86,14 @@ export default function SettingsScreen() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [gtfs.ready, gtfs.result?.generatedAt]);
 
-  if (!settings.ready || stops.length === 0) {
+  if (!settings.ready) {
     return <View style={{ flex: 1 }} />;
   }
 
   const notifBufferIndex = NOTIF_BUFFER_CHOICES_MIN.indexOf(
     settings.notifBufferMin,
-  );
-  const preferredStopIndex = Math.max(
-    0,
-    stops.findIndex((s) => s.stop_id === settings.preferredStopId),
   );
   const providerIndex = TRAFFIC_PROVIDERS.indexOf(settings.trafficProvider);
 
@@ -142,24 +155,63 @@ export default function SettingsScreen() {
         </Section>
 
         <Section
-          header={<Text>Preferred stop</Text>}
-          footer={<Text>Alighting stop used for ETA and directions.</Text>}
+          header={<Text>Preferred stops</Text>}
+          footer={
+            <Text>Boarding stop used for ETA on each route.</Text>
+          }
         >
-          <Picker
-            label="Stop"
-            selection={preferredStopIndex}
-            onSelectionChange={(i) => {
-              const idx = typeof i === 'number' ? i : Number(i);
-              const stop = stops[idx];
-              if (stop) settings.setPreferredStopId(stop.stop_id);
-            }}
-          >
-            {stops.map((s, i) => (
-              <Text key={s.stop_id} modifiers={[tag(i)]}>
-                {formatStopName(s.stop_name)}
-              </Text>
-            ))}
-          </Picker>
+          {AVAILABLE_ROUTE_CODES.map((code) => {
+            const routeStops = stopsByRoute[code] ?? [];
+            // Pre-bootstrap, the JOIN returns 0 rows; render a disabled
+            // placeholder so the Form still paints instead of feeding the
+            // SwiftUI Picker zero children with selection=0.
+            if (routeStops.length === 0) {
+              return (
+                <HStack
+                  key={code}
+                  spacing={12}
+                  modifiers={[padding({ vertical: 6 })]}
+                >
+                  <Text>{code}</Text>
+                  <Text
+                    modifiers={[
+                      foregroundStyle({
+                        type: 'hierarchical',
+                        style: 'secondary',
+                      }),
+                    ]}
+                  >
+                    Loading…
+                  </Text>
+                </HStack>
+              );
+            }
+            const selectedStopId = settings.preferredStopByRoute[code];
+            const selection = Math.max(
+              0,
+              routeStops.findIndex((s) => s.stop_id === selectedStopId),
+            );
+            return (
+              <Picker
+                key={code}
+                label={code}
+                selection={selection}
+                onSelectionChange={(i) => {
+                  const idx = typeof i === 'number' ? i : Number(i);
+                  const stop = routeStops[idx];
+                  if (stop) {
+                    settings.setPreferredStopForRoute(code, stop.stop_id);
+                  }
+                }}
+              >
+                {routeStops.map((s, i) => (
+                  <Text key={s.stop_id} modifiers={[tag(i)]}>
+                    {formatStopName(s.stop_name)}
+                  </Text>
+                ))}
+              </Picker>
+            );
+          })}
         </Section>
 
         <Section

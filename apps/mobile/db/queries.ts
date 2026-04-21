@@ -54,6 +54,22 @@ export async function getStops(db: Db): Promise<StopRow[]> {
   );
 }
 
+export async function getStopsForRoute(
+  db: Db,
+  routeCode: string,
+): Promise<StopRow[]> {
+  return db.getAllAsync<StopRow>(
+    `SELECT DISTINCT s.stop_id, s.stop_name, s.stop_lat, s.stop_lon
+       FROM stops s
+       JOIN stop_times st ON st.stop_id = s.stop_id
+       JOIN trips t       ON t.trip_id  = st.trip_id
+       JOIN routes r      ON r.route_id = t.route_id
+      WHERE r.code = ?
+      ORDER BY s.stop_name;`,
+    routeCode,
+  );
+}
+
 export async function getRoutes(db: Db): Promise<RouteRow[]> {
   return db.getAllAsync<RouteRow>(
     "SELECT route_id, code, long_name FROM routes ORDER BY code;",

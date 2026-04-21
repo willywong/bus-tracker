@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 
 import { registerPushToken } from '@/services/pushRegistration';
-import { useSettings, type Settings } from '@/hooks/useSettings';
+import { useSettings, type SettingsApi } from '@/hooks/useSettings';
 
 export type PushPermissionStatus =
   | 'unknown'
@@ -55,7 +55,7 @@ function getProjectId(): string | undefined {
   return eas?.projectId ?? Constants.easConfig?.projectId;
 }
 
-function settingsToPayload(s: Settings) {
+function settingsToPayload(s: SettingsApi) {
   return {
     walkMinutes: s.walkMinutes,
     notifBufferMin: s.notifBufferMin,

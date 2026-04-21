@@ -1,19 +1,41 @@
 import { type ReactNode } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import {
+  PlatformColor,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  View,
+} from 'react-native';
 
 import { surfaceColor, trackerSpacing } from './tokens';
 
 interface TrackerCanvasProps {
   children: ReactNode;
+  /** Pull-to-refresh handler. Omit to disable the gesture. */
+  onRefresh?: () => void;
+  refreshing?: boolean;
 }
 
-export function TrackerCanvas({ children }: TrackerCanvasProps) {
+export function TrackerCanvas({
+  children,
+  onRefresh,
+  refreshing = false,
+}: TrackerCanvasProps) {
   return (
     <View style={styles.root}>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          onRefresh ? (
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={PlatformColor('secondaryLabel')}
+            />
+          ) : undefined
+        }
       >
         {children}
       </ScrollView>

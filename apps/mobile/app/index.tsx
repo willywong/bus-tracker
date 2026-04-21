@@ -1,7 +1,7 @@
 import { SymbolView } from 'expo-symbols';
 import { PlatformColor, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn } from 'react-native-reanimated';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { formatStopName } from '@/components/map/format';
 import { CurrentBusCard } from '@/components/tracker/CurrentBusCard';
@@ -31,6 +31,7 @@ import { useEta } from '@/hooks/useEta';
 import { usePushRegistrationState } from '@/hooks/PushRegistrationContext';
 import { AVAILABLE_ROUTE_CODES, useSettings } from '@/hooks/useSettings';
 import { useWalkTimer } from '@/hooks/useWalkTimer';
+import { refreshAll } from '@/services/refresh';
 
 export default function TrackerScreen() {
   const settings = useSettings();
@@ -61,11 +62,24 @@ export default function TrackerScreen() {
   const [stopName, setStopName] = useState<string | null>(null);
   const [trafficSignals, setTrafficSignals] = useState<TrafficSignalRow[]>([]);
   const [now, setNow] = useState(() => Date.now());
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 15_000);
     return () => clearInterval(t);
   }, []);
+
+  const handleRefresh = useCallback(() => {
+    if (refreshing) return;
+    setRefreshing(true);
+    void refreshAll()
+      .catch((err) => {
+        console.warn('[tracker] refresh failed', err);
+      })
+      .finally(() => {
+        setRefreshing(false);
+      });
+  }, [refreshing]);
 
   useEffect(() => {
     let cancelled = false;
@@ -251,7 +265,7 @@ export default function TrackerScreen() {
   const subtitle = stopName ? `to ${formatStopName(stopName)}` : 'to your stop';
 
   return (
-    <TrackerCanvas>
+    <TrackerCanvas onRefresh={handleRefresh} refreshing={refreshing}>
       <HeroCountdown
         state={heroState}
         selectedRoute={settings.preferredRouteCode}

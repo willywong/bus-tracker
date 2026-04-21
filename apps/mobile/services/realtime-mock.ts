@@ -190,6 +190,7 @@ export function createMockRealtimeStore(): RealtimeStore {
       refCount = Math.max(0, refCount - 1);
       if (refCount === 0) stopTicking();
     },
+    refresh: async () => emit(),
     setFilter() {
       // no-op in mock mode
     },

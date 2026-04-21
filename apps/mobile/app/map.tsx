@@ -4,7 +4,7 @@ import {
   type LatLng as SharedLatLng,
 } from '@bus-tracker/shared';
 import { SymbolView } from 'expo-symbols';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View, type ColorValue } from 'react-native';
 import MapView, {
   AnimatedRegion,
@@ -39,6 +39,7 @@ import { useLocationPermission } from '@/hooks/useLocationPermission';
 import { useScheduledBusPosition } from '@/hooks/useScheduledBusPosition';
 import { useSettings } from '@/hooks/useSettings';
 import { useStaticGtfs } from '@/hooks/useStaticGtfs';
+import { refreshAll } from '@/services/refresh';
 import { tokens } from '@/theme/tokens';
 
 const POSITION_TWEEN_MS = 30_000;
@@ -137,6 +138,19 @@ export default function MapScreen() {
   }, [gtfs.ready, settings.preferredStopId, settings.preferredRouteCode]);
 
   const regionsRef = useRef(new Map<string, AnimatedRegion>());
+
+  const [refreshing, setRefreshing] = useState(false);
+  const handleRefresh = useCallback(() => {
+    if (refreshing) return;
+    setRefreshing(true);
+    void refreshAll()
+      .catch((err) => {
+        console.warn('[map] refresh failed', err);
+      })
+      .finally(() => {
+        setRefreshing(false);
+      });
+  }, [refreshing]);
 
   // Per-bus scheduled arrival (for BusCallout). Keyed by vehicleId. We look up
   // the scheduled departure from the user's stop for each visible trip. If a
@@ -354,6 +368,8 @@ export default function MapScreen() {
           eta={eta}
           stopName={staticData.stop.stop_name}
           lastUpdated={lastUpdated}
+          onRefresh={handleRefresh}
+          refreshing={refreshing}
         />
       </View>
     </View>

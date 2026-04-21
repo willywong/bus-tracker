@@ -1,13 +1,24 @@
-import { useMemo } from 'react';
+import { SymbolView } from 'expo-symbols';
+import { useEffect, useMemo } from 'react';
 import {
   DynamicColorIOS,
   PlatformColor,
+  Pressable,
   StyleSheet,
   Text,
   View,
   type ColorValue,
 } from 'react-native';
-import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
+import Animated, {
+  Easing,
+  FadeIn,
+  FadeOut,
+  cancelAnimation,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withTiming,
+} from 'react-native-reanimated';
 
 import { GlassGuard } from '@/components/GlassGuard';
 import { LiveDot } from '@/components/tracker/LiveDot';
@@ -31,6 +42,9 @@ interface MapStatusCardProps {
   eta: UseEtaResult;
   stopName: string;
   lastUpdated: number | null;
+  /** Tap on the refresh icon. Omit to hide the icon. */
+  onRefresh?: () => void;
+  refreshing?: boolean;
 }
 
 export function MapStatusCard({
@@ -38,6 +52,8 @@ export function MapStatusCard({
   eta,
   stopName,
   lastUpdated,
+  onRefresh,
+  refreshing = false,
 }: MapStatusCardProps) {
   const updated = useLastUpdatedLabel(lastUpdated);
 
@@ -96,6 +112,9 @@ export function MapStatusCard({
           </Text>
           <View style={styles.statusSpacer} />
           {eta.trafficError ? <TrafficErrorBadge /> : null}
+          {onRefresh ? (
+            <RefreshButton onPress={onRefresh} refreshing={refreshing} />
+          ) : null}
         </View>
 
         <Animated.View
@@ -196,6 +215,54 @@ function EtaBody({
         </View>
       ) : null}
     </>
+  );
+}
+
+function RefreshButton({
+  onPress,
+  refreshing,
+}: {
+  onPress: () => void;
+  refreshing: boolean;
+}) {
+  const angle = useSharedValue(0);
+  useEffect(() => {
+    if (refreshing) {
+      angle.value = 0;
+      angle.value = withRepeat(
+        withTiming(360, { duration: 900, easing: Easing.linear }),
+        -1,
+      );
+    } else {
+      cancelAnimation(angle);
+      angle.value = 0;
+    }
+  }, [refreshing, angle]);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${angle.value}deg` }],
+  }));
+
+  return (
+    <Pressable
+      onPress={onPress}
+      hitSlop={10}
+      accessibilityRole="button"
+      accessibilityLabel="Refresh"
+      style={({ pressed }) => [
+        styles.refreshButton,
+        pressed ? styles.refreshButtonPressed : null,
+      ]}
+    >
+      <Animated.View style={animatedStyle}>
+        <SymbolView
+          name="arrow.clockwise"
+          size={14}
+          tintColor={PlatformColor('secondaryLabel') as unknown as string}
+          resizeMode="scaleAspectFit"
+        />
+      </Animated.View>
+    </Pressable>
   );
 }
 
@@ -385,5 +452,16 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
     letterSpacing: 0.1,
     marginTop: -2,
+  },
+  refreshButton: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 6,
+  },
+  refreshButtonPressed: {
+    opacity: 0.5,
   },
 });
