@@ -5,6 +5,12 @@ import {
   type LeaveNowRunResult,
 } from "../../src/leave-now-service.js";
 
+// NOTE: This route is intentionally NOT scheduled in `vercel.json` — each
+// invocation can trigger a HERE transaction, so we gate activation behind an
+// external trigger (cron-job.org, GitHub Actions, or Vercel cron added later)
+// rather than have it fire automatically. If you re-enable a Vercel schedule,
+// pair it with a service-hours guard and expect roughly `(service_minutes) *
+// (active_registrations)` HERE calls/day in the worst case.
 export const config = { runtime: "edge" };
 
 export function createLeaveNowApp(
