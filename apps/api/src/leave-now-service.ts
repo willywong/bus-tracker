@@ -108,15 +108,25 @@ export class LeaveNowService {
   private readonly deps: LeaveNowDeps;
 
   constructor(deps: Partial<LeaveNowDeps> = {}) {
+    const kv = deps.kv ?? defaultKv();
     this.deps = {
       gtfs: deps.gtfs ?? defaultService,
       traffic:
         deps.traffic ??
-        new TrafficEtaService({
-          here: process.env.HERE_API_KEY,
-          tomtom: process.env.TOMTOM_API_KEY,
-        }),
-      kv: deps.kv ?? defaultKv(),
+        new TrafficEtaService(
+          {
+            here: process.env.HERE_API_KEY,
+            tomtom: process.env.TOMTOM_API_KEY,
+          },
+          fetch,
+          Date.now,
+          undefined,
+          // Share the KV-backed cache with /api/traffic-eta so a mobile fetch
+          // within the last 60s can satisfy the cron's HERE call (and vice
+          // versa) without a second billable request.
+          { kv },
+        ),
+      kv,
       fetchRealtime: deps.fetchRealtime ?? defaultFetchRealtime,
       sendPush: deps.sendPush ?? defaultSendPush,
       now: deps.now ?? Date.now,

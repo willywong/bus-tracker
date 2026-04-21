@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { beforeEach } from "node:test";
 import { createTrafficEtaApp } from "../../api/traffic-eta.js";
+import { createInMemoryKv, resetDefaultKvForTests } from "../kv.js";
 import {
   MissingHereKeyError,
   MissingProviderKeyError,
@@ -9,6 +10,12 @@ import {
   parseLatLngPair,
   parseTrafficProvider,
 } from "../traffic-service.js";
+
+beforeEach(() => {
+  // The endpoint tests share a process-wide default KV singleton for rate
+  // limiting — reset so the per-IP bucket doesn't carry across tests.
+  resetDefaultKvForTests();
+});
 
 interface HereFake {
   sections: Array<{ summary: { duration: number } }>;
@@ -40,7 +47,9 @@ test("TrafficEtaService: converts HERE seconds to minutes and caches within TTL"
     calls++;
     return fakeResponse(420); // 7 min
   };
-  const svc = new TrafficEtaService("KEY", fetchMock, () => nowMs);
+  // Explicit 15s TTL so the timing asserts are self-documenting even if the
+  // default (60s) changes again later.
+  const svc = new TrafficEtaService("KEY", fetchMock, () => nowMs, 15_000);
 
   const first = await svc.getEta({
     originLat: 3.1,
@@ -64,7 +73,7 @@ test("TrafficEtaService: converts HERE seconds to minutes and caches within TTL"
   assert.equal(second.cached, true);
   assert.equal(calls, 1);
 
-  nowMs += 20_000; // past TTL
+  nowMs += 20_000; // past 15s TTL
   const third = await svc.getEta({
     originLat: 3.1,
     originLng: 101.6,
@@ -145,7 +154,7 @@ test("traffic-eta endpoint: 200 with cache headers, HIT on second call", async (
   const res1 = await app.fetch(req);
   assert.equal(res1.status, 200);
   assert.equal(res1.headers.get("x-cache"), "MISS");
-  assert.match(res1.headers.get("cache-control") ?? "", /max-age=15/);
+  assert.match(res1.headers.get("cache-control") ?? "", /max-age=30/);
   const body = (await res1.json()) as { trafficMinutes: number; source: string };
   assert.equal(body.trafficMinutes, 3);
   assert.equal(body.source, "here");
@@ -285,4 +294,107 @@ test("traffic-eta endpoint: rejects unknown provider", async () => {
     ),
   );
   assert.equal(res.status, 400);
+});
+
+test("TrafficEtaService: L2 KV cache is shared across service instances", async () => {
+  // Simulates two separate serverless-function instances both backed by the
+  // same Upstash Redis — the second one should serve from L2 without a fresh
+  // HERE call.
+  const kv = createInMemoryKv();
+  let calls = 0;
+  const fetchMock: typeof fetch = async () => {
+    calls++;
+    return fakeResponse(300);
+  };
+  const nowFn = () => 1_000;
+  const svcA = new TrafficEtaService("KEY", fetchMock, nowFn, undefined, {
+    kv,
+    log: () => {},
+  });
+  const svcB = new TrafficEtaService("KEY", fetchMock, nowFn, undefined, {
+    kv,
+    log: () => {},
+  });
+  const q = {
+    originLat: 3.1,
+    originLng: 101.6,
+    destLat: 3.12,
+    destLng: 101.62,
+  };
+  const a = await svcA.getEta(q);
+  assert.equal(a.layer, "miss");
+  assert.equal(calls, 1);
+
+  const b = await svcB.getEta(q);
+  assert.equal(b.cached, true);
+  assert.equal(b.layer, "l2");
+  assert.equal(calls, 1);
+});
+
+test("TrafficEtaService: falls back to upstream when KV read fails", async () => {
+  const failingKv = {
+    async get() {
+      throw new Error("kv down");
+    },
+    async set() {
+      throw new Error("kv down");
+    },
+  };
+  const fetchMock: typeof fetch = async () => fakeResponse(240);
+  const svc = new TrafficEtaService("KEY", fetchMock, () => 1_000, undefined, {
+    kv: failingKv,
+    log: () => {},
+  });
+  const res = await svc.getEta({
+    originLat: 3.1,
+    originLng: 101.6,
+    destLat: 3.12,
+    destLng: 101.62,
+  });
+  assert.equal(res.result.trafficMinutes, 4);
+});
+
+test("traffic-eta endpoint: rate limits per IP to 10 req/min", async () => {
+  const fetchMock: typeof fetch = async () => fakeResponse(120);
+  const svc = new TrafficEtaService("KEY", fetchMock, () => 1_000);
+  const kv = createInMemoryKv();
+  const app = createTrafficEtaApp({ service: svc, kv, now: () => 1_000 });
+  const makeReq = () =>
+    new Request(
+      "https://local/api/traffic-eta?origin=3.1,101.6&destination=3.12,101.62",
+      { headers: { "x-forwarded-for": "9.9.9.9" } },
+    );
+
+  for (let i = 0; i < 10; i++) {
+    const res = await app.fetch(makeReq());
+    assert.equal(res.status, 200, `req ${i + 1} should pass`);
+  }
+  const blocked = await app.fetch(makeReq());
+  assert.equal(blocked.status, 429);
+  assert.ok(blocked.headers.get("retry-after"));
+});
+
+test("traffic-eta endpoint: separate IPs get separate rate-limit buckets", async () => {
+  const fetchMock: typeof fetch = async () => fakeResponse(120);
+  const svc = new TrafficEtaService("KEY", fetchMock, () => 1_000);
+  const kv = createInMemoryKv();
+  const app = createTrafficEtaApp({ service: svc, kv, now: () => 1_000 });
+
+  for (let i = 0; i < 10; i++) {
+    const res = await app.fetch(
+      new Request(
+        "https://local/api/traffic-eta?origin=3.1,101.6&destination=3.12,101.62",
+        { headers: { "x-forwarded-for": "1.1.1.1" } },
+      ),
+    );
+    assert.equal(res.status, 200);
+  }
+  // Different IP should still have its full budget.
+  const other = await app.fetch(
+    new Request(
+      "https://local/api/traffic-eta?origin=3.1,101.6&destination=3.12,101.62",
+      { headers: { "x-forwarded-for": "2.2.2.2" } },
+    ),
+  );
+  assert.equal(other.status, 200);
 });

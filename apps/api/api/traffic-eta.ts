@@ -1,5 +1,10 @@
 import { Hono } from "hono";
 import { handle } from "hono/vercel";
+import { defaultKv, type Kv } from "../src/kv.js";
+import {
+  checkRateLimit,
+  RATE_LIMIT_MAX_PER_MINUTE,
+} from "../src/rate-limit.js";
 import {
   MissingProviderKeyError,
   TrafficEtaService,
@@ -14,19 +19,39 @@ let defaultService: TrafficEtaService | null = null;
 
 function getDefaultService(): TrafficEtaService {
   if (!defaultService) {
-    defaultService = new TrafficEtaService({
-      here: process.env.HERE_API_KEY,
-      tomtom: process.env.TOMTOM_API_KEY,
-    });
+    defaultService = new TrafficEtaService(
+      {
+        here: process.env.HERE_API_KEY,
+        tomtom: process.env.TOMTOM_API_KEY,
+      },
+      fetch,
+      Date.now,
+      undefined,
+      { kv: defaultKv() },
+    );
   }
   return defaultService;
 }
 
-export function createTrafficEtaApp(service?: TrafficEtaService): Hono {
+export interface TrafficEtaAppOptions {
+  service?: TrafficEtaService;
+  kv?: Kv;
+  now?: () => number;
+}
+
+export function createTrafficEtaApp(
+  serviceOrOptions?: TrafficEtaService | TrafficEtaAppOptions,
+): Hono {
   const app = new Hono();
+  const opts: TrafficEtaAppOptions =
+    serviceOrOptions instanceof TrafficEtaService
+      ? { service: serviceOrOptions }
+      : serviceOrOptions ?? {};
+  const rateKv = opts.kv ?? defaultKv();
+  const now = opts.now ?? Date.now;
 
   app.get("/api/traffic-eta", async (c) => {
-    const svc = service ?? getDefaultService();
+    const svc = opts.service ?? getDefaultService();
     const origin = parseLatLngPair(c.req.query("origin"));
     const destination = parseLatLngPair(c.req.query("destination"));
     const provider = parseTrafficProvider(c.req.query("provider"));
@@ -39,16 +64,36 @@ export function createTrafficEtaApp(service?: TrafficEtaService): Hono {
     if (!provider) {
       return c.json({ error: "provider must be 'here' or 'tomtom'" }, 400);
     }
+
+    // Upstream `x-forwarded-for` is "client, proxy1, proxy2..." — take the
+    // leftmost entry as the client IP. Fall back to a fixed bucket so bad/
+    // missing headers still get limited (prevents bypass via header stripping).
+    const fwd = c.req.header("x-forwarded-for") ?? "";
+    const ip = fwd.split(",")[0]?.trim() || "unknown";
+    const rl = await checkRateLimit(rateKv, `traffic-eta:${ip}`, now());
+    if (!rl.allowed) {
+      c.header("Retry-After", String(rl.retryAfterSeconds));
+      return c.json(
+        {
+          error: `rate limit exceeded (${RATE_LIMIT_MAX_PER_MINUTE}/min per IP)`,
+        },
+        429,
+      );
+    }
+
     try {
-      const { result, cached } = await svc.getEta({
+      const { result, cached, layer } = await svc.getEta({
         originLat: origin[0],
         originLng: origin[1],
         destLat: destination[0],
         destLng: destination[1],
         provider,
       });
-      c.header("Cache-Control", "public, max-age=15");
+      // max-age=30 aligns with the mobile hook's 30s refresh floor so any
+      // intermediate CDN/proxy cache collapses duplicate requests.
+      c.header("Cache-Control", "public, max-age=30");
       c.header("X-Cache", cached ? "HIT" : "MISS");
+      c.header("X-Cache-Layer", layer);
       return c.json(result);
     } catch (err) {
       if (err instanceof MissingProviderKeyError) {

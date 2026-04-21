@@ -8,6 +8,7 @@ import {
   type VehiclePosition,
 } from "@bus-tracker/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { AppState, type AppStateStatus } from "react-native";
 import { openDb } from "@/db/database";
 import {
   getRoutePolyline,
@@ -81,6 +82,19 @@ export function useEta({
   );
   const lastTrafficFetchRef = useRef<{ at: number; key: string } | null>(null);
   const trafficInflightRef = useRef<AbortController | null>(null);
+  const [appActive, setAppActive] = useState(
+    () => AppState.currentState === "active",
+  );
+
+  // Pause the traffic-ETA poll when the app isn't foregrounded — the biggest
+  // single source of wasted HERE transactions is an app left open on a desk.
+  useEffect(() => {
+    const onChange = (status: AppStateStatus) => {
+      setAppActive(status === "active");
+    };
+    const sub = AppState.addEventListener("change", onChange);
+    return () => sub.remove();
+  }, []);
 
   // 1. Load static data once per (stopId, routeCode).
   useEffect(() => {
@@ -180,16 +194,16 @@ export function useEta({
   }, [staticCtx, positions, composition?.vehicleId]);
 
   // 5. Fetch traffic ETA when the picked vehicle changes or ≥ 30s has passed.
+  //    Key is intentionally coarse (vehicleId + provider only) — the server
+  //    already caches per-coordinate for 60s, and the 30s floor below is what
+  //    really throttles us. Including lat/lng here just forced an early
+  //    refetch every time the bus moved, defeating the purpose of the floor.
   useEffect(() => {
+    if (!appActive) return;
     if (!composition || !composition.busProjection || !staticCtx) return;
     const busLat = composition.busProjection.projected.lat;
     const busLng = composition.busProjection.projected.lng;
-    const key = [
-      composition.vehicleId ?? "",
-      busLat.toFixed(3),
-      busLng.toFixed(3),
-      trafficProvider ?? "",
-    ].join("|");
+    const key = [composition.vehicleId ?? "", trafficProvider ?? ""].join("|");
 
     const last = lastTrafficFetchRef.current;
     const fresh = last && last.key === key && now - last.at < TRAFFIC_REFRESH_MS;
@@ -222,7 +236,7 @@ export function useEta({
     return () => {
       ctrl.abort();
     };
-  }, [composition?.vehicleId, composition?.busProjection?.projected.lat, composition?.busProjection?.projected.lng, composition, staticCtx, now, trafficProvider]);
+  }, [composition?.vehicleId, composition, staticCtx, now, trafficProvider, appActive]);
 
   // 6. When no approaching vehicle, clear stale traffic so we don't keep showing old minutes.
   useEffect(() => {
