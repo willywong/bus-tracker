@@ -1,5 +1,6 @@
-import type { T816Bundle } from "@bus-tracker/shared";
+import type { RouteId, T816Bundle } from "@bus-tracker/shared";
 import { API_BASE_URL } from "@/config/env";
+import { AVAILABLE_ROUTE_CODES } from "@/hooks/useSettings";
 import { openDb, type Db } from "./database";
 import { META_KEYS } from "./schema";
 
@@ -21,6 +22,20 @@ async function setMeta(db: Db, key: string, value: string): Promise<void> {
   );
 }
 
+async function cacheHasAllRoutes(
+  db: Db,
+  expected: readonly RouteId[],
+): Promise<boolean> {
+  if (expected.length === 0) return true;
+  const placeholders = expected.map(() => "?").join(",");
+  const rows = await db.getAllAsync<{ code: string }>(
+    `SELECT code FROM routes WHERE code IN (${placeholders});`,
+    ...expected,
+  );
+  const have = new Set(rows.map((r) => r.code));
+  return expected.every((c) => have.has(c));
+}
+
 export async function needsRefresh(
   db: Db,
   now: number = Date.now(),
@@ -30,7 +45,10 @@ export async function needsRefresh(
   if (!fetchedAt) return true;
   const ts = Number.parseInt(fetchedAt, 10);
   if (!Number.isFinite(ts)) return true;
-  return now - ts > staleMs;
+  if (now - ts > staleMs) return true;
+  // A new route code was shipped — cache is stale regardless of TTL.
+  if (!(await cacheHasAllRoutes(db, AVAILABLE_ROUTE_CODES))) return true;
+  return false;
 }
 
 export async function writeBundle(
