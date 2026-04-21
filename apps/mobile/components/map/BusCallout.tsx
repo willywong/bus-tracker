@@ -1,21 +1,36 @@
-import type { VehiclePosition } from '@bus-tracker/shared';
+import type { ScheduleDelay, VehiclePosition } from '@bus-tracker/shared';
 import { StyleSheet, Text, View } from 'react-native';
 import { Callout } from 'react-native-maps';
+
+import { formatClockHHMM, formatDeltaMin } from '@/components/tracker/logic';
 
 import { bearingToCardinal } from './format';
 
 interface BusCalloutProps {
   position: VehiclePosition;
+  scheduledArrival?: {
+    /** Epoch ms of the scheduled departure at the user's stop. */
+    at: number;
+    delay: ScheduleDelay | null;
+  } | null;
 }
 
-export function BusCallout({ position }: BusCalloutProps) {
+export function BusCallout({ position, scheduledArrival }: BusCalloutProps) {
+  // VehiclePosition.speed is already km/h (Prasarana feed quirk — see the
+  // type definition).
   const speedKmh =
     position.speed != null && Number.isFinite(position.speed)
-      ? Math.round(position.speed * 3.6)
+      ? Math.round(position.speed)
       : null;
   const heading = bearingToCardinal(position.bearing);
   const hasTelemetry = speedKmh != null || heading != null;
   const updated = formatClock(position.observedAt);
+  const scheduleLine = (() => {
+    if (!scheduledArrival) return null;
+    const clock = formatClockHHMM(scheduledArrival.at);
+    const delta = formatDeltaMin(scheduledArrival.delay);
+    return delta ? `Scheduled ${clock} · ${delta}` : `Scheduled ${clock}`;
+  })();
 
   return (
     <Callout tooltip>
@@ -48,6 +63,11 @@ export function BusCallout({ position }: BusCalloutProps) {
             </View>
           )}
 
+          {scheduleLine ? (
+            <Text style={styles.scheduleLine} numberOfLines={1} selectable>
+              {scheduleLine}
+            </Text>
+          ) : null}
           <Text style={styles.footer}>Updated {updated}</Text>
         </View>
         <View style={styles.tail} />
@@ -177,6 +197,15 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '500',
     color: '#8E8E93',
+  },
+  scheduleLine: {
+    marginTop: 4,
+    marginBottom: 4,
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#3A3A3C',
+    fontVariant: ['tabular-nums'],
+    letterSpacing: 0.1,
   },
   footer: {
     fontSize: 11,

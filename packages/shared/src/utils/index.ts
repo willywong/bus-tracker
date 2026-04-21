@@ -27,11 +27,17 @@ export {
 } from "./outlier.js";
 export {
   distanceAlongRoute,
+  pointAlongRoute,
   polylineLength,
   projectOntoRoute,
   type LatLng,
   type RouteProjection,
 } from "./route.js";
+export {
+  interpolateScheduledPosition,
+  type InterpolateScheduledPositionArgs,
+  type ScheduledStopTime,
+} from "./scheduled-position.js";
 export {
   isWithinQuietHours,
   minuteOfDay,
@@ -41,6 +47,28 @@ export {
   shouldNotify,
   type ShouldNotifyArgs,
 } from "./leave-now.js";
+export {
+  MY_TZ_OFFSET_MIN,
+  gtfsTimeToSeconds,
+  secondsToClockHHMM,
+  toMalaysiaParts,
+  type MalaysiaDateParts,
+} from "./gtfs-time.js";
+export {
+  computeScheduleDelay,
+  type ComputeScheduleDelayArgs,
+  type OnTimeWindow,
+  type ScheduleDelay,
+} from "./schedule-delay.js";
+export {
+  getMotionStatus,
+  SIGNAL_PROXIMITY_METERS,
+  SLOW_SPEED_KMH,
+  STOPPED_SPEED_KMH,
+  type MotionStatus,
+  type MotionStatusArgs,
+  type MotionStatusResult,
+} from "./motion-status.js";
 export {
   DEFAULT_DWELL_MINUTES_PER_STOP,
   computeEta,

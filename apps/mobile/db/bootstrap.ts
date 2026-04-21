@@ -1,4 +1,5 @@
 import type { RouteId, T816Bundle } from "@bus-tracker/shared";
+import { gtfsTimeToSeconds } from "@bus-tracker/shared";
 import { API_BASE_URL } from "@/config/env";
 import { AVAILABLE_ROUTE_CODES } from "@/hooks/useSettings";
 import { openDb, type Db } from "./database";
@@ -36,6 +37,16 @@ async function cacheHasAllRoutes(
   return expected.every((c) => have.has(c));
 }
 
+async function hasOrphanTrips(db: Db): Promise<boolean> {
+  const row = await db.getFirstAsync<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM trips
+      WHERE NOT EXISTS (
+        SELECT 1 FROM stop_times st WHERE st.trip_id = trips.trip_id
+      );`,
+  );
+  return (row?.n ?? 0) > 0;
+}
+
 export async function needsRefresh(
   db: Db,
   now: number = Date.now(),
@@ -48,6 +59,9 @@ export async function needsRefresh(
   if (now - ts > staleMs) return true;
   // A new route code was shipped — cache is stale regardless of TTL.
   if (!(await cacheHasAllRoutes(db, AVAILABLE_ROUTE_CODES))) return true;
+  // Defence against a half-written bundle (e.g. app killed mid-write, or a v1
+  // install upgrading to v2 where stop_times is a new table).
+  if (await hasOrphanTrips(db)) return true;
   return false;
 }
 
@@ -58,7 +72,7 @@ export async function writeBundle(
 ): Promise<void> {
   await db.withTransactionAsync(async () => {
     await db.execAsync(
-      "DELETE FROM routes; DELETE FROM stops; DELETE FROM trips; DELETE FROM shape_points;",
+      "DELETE FROM routes; DELETE FROM stops; DELETE FROM trips; DELETE FROM shape_points; DELETE FROM stop_times; DELETE FROM calendar; DELETE FROM traffic_signals;",
     );
 
     for (const r of bundle.routes) {
@@ -100,6 +114,64 @@ export async function writeBundle(
           p.lat,
           p.lng,
         );
+      }
+    }
+
+    if (bundle.stopTimes.length > 0) {
+      const stopTimeStmt = await db.prepareAsync(
+        "INSERT INTO stop_times(trip_id, stop_sequence, stop_id, arrival_seconds, departure_seconds) VALUES (?, ?, ?, ?, ?);",
+      );
+      try {
+        for (const st of bundle.stopTimes) {
+          await stopTimeStmt.executeAsync([
+            st.trip_id,
+            st.stop_sequence,
+            st.stop_id,
+            gtfsTimeToSeconds(st.arrival_time),
+            gtfsTimeToSeconds(st.departure_time),
+          ]);
+        }
+      } finally {
+        await stopTimeStmt.finalizeAsync();
+      }
+    }
+
+    if (bundle.calendar.length > 0) {
+      const calStmt = await db.prepareAsync(
+        "INSERT INTO calendar(service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+      );
+      try {
+        for (const c of bundle.calendar) {
+          await calStmt.executeAsync([
+            c.service_id,
+            c.monday ? 1 : 0,
+            c.tuesday ? 1 : 0,
+            c.wednesday ? 1 : 0,
+            c.thursday ? 1 : 0,
+            c.friday ? 1 : 0,
+            c.saturday ? 1 : 0,
+            c.sunday ? 1 : 0,
+            c.start_date,
+            c.end_date,
+          ]);
+        }
+      } finally {
+        await calStmt.finalizeAsync();
+      }
+    }
+
+    if (bundle.trafficSignals) {
+      const sigStmt = await db.prepareAsync(
+        "INSERT OR IGNORE INTO traffic_signals(route_code, osm_id, lat, lng) VALUES (?, ?, ?, ?);",
+      );
+      try {
+        for (const [code, signals] of Object.entries(bundle.trafficSignals)) {
+          for (const s of signals) {
+            await sigStmt.executeAsync([code, s.id, s.lat, s.lng]);
+          }
+        }
+      } finally {
+        await sigStmt.finalizeAsync();
       }
     }
 

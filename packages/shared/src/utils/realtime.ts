@@ -41,6 +41,9 @@ function toPosition(
 
   const { latitude, longitude, bearing, speed } = v.position;
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  // Prasarana publishes `speed` in km/h despite the GTFS-RT spec calling for
+  // m/s; pass the value through unchanged and keep the unit as km/h in
+  // `VehiclePosition`. See VehiclePosition.speed for the full rationale.
 
   const vehicleId =
     v.vehicle?.id ?? v.vehicle?.label ?? entity.id ?? v.trip.trip_id;

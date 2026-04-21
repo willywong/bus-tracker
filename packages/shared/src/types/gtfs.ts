@@ -61,6 +61,13 @@ export interface BundledRoute {
   long_name?: string;
 }
 
+export interface TrafficSignal {
+  /** OpenStreetMap node id. */
+  id: number;
+  lat: number;
+  lng: number;
+}
+
 export interface T816Bundle {
   generatedAt: number;
   routes: BundledRoute[];
@@ -69,4 +76,6 @@ export interface T816Bundle {
   stopTimes: GtfsStopTime[];
   shapes: Record<string, PolylinePoint[]>;
   calendar: GtfsCalendar[];
+  /** OSM traffic signals along each route's polyline, keyed by route code. */
+  trafficSignals?: Record<string, TrafficSignal[]>;
 }

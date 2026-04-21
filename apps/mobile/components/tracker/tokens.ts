@@ -11,6 +11,7 @@ export const heroStateColor: Record<HeroState, string> = {
   relaxed: '#30D158',
   leaveNow: '#FF9F0A',
   walking: '#0A84FF',
+  hurry: '#FF453A',
 };
 
 export const delayStatusColor: Record<DelayStatus, string> = {
@@ -18,6 +19,13 @@ export const delayStatusColor: Record<DelayStatus, string> = {
   delayed: '#FF9F0A',
   heavilyDelayed: '#FF453A',
 };
+
+/** Badge colors for LIVE vs SCHEDULED data sources. */
+export const sourceColor = {
+  live: heroStateColor.relaxed,
+  stale: heroStateColor.waiting,
+  scheduled: '#8E8E93',
+} as const;
 
 /** Apple Settings-style flat grays in dark mode (systemGray{5,6}, etc.). */
 const dyn = (light: string, dark: string) =>

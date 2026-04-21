@@ -3,6 +3,7 @@ import test from "node:test";
 import { haversineMeters } from "../outlier.js";
 import {
   distanceAlongRoute,
+  pointAlongRoute,
   polylineLength,
   projectOntoRoute,
   type LatLng,
@@ -102,4 +103,43 @@ test("distanceAlongRoute: bus past stop wraps when loop=true", () => {
   const total = polylineLength(POLY);
   assert.ok(d > 0);
   assert.ok(d < total);
+});
+
+test("pointAlongRoute: 0 returns the start point", () => {
+  const p = pointAlongRoute(POLY, 0);
+  assert.ok(Math.abs(p.lat - POLY[0].lat) < 1e-9);
+  assert.ok(Math.abs(p.lng - POLY[0].lng) < 1e-9);
+});
+
+test("pointAlongRoute: total length returns the last point", () => {
+  const p = pointAlongRoute(POLY, polylineLength(POLY));
+  const last = POLY[POLY.length - 1];
+  assert.ok(Math.abs(p.lat - last.lat) < 1e-6);
+  assert.ok(Math.abs(p.lng - last.lng) < 1e-6);
+});
+
+test("pointAlongRoute: half the total length lands on the corner of POLY", () => {
+  // POLY's two segments are roughly equal length, so half-total ≈ the corner.
+  const half = polylineLength(POLY) / 2;
+  const p = pointAlongRoute(POLY, half);
+  // Both segments are ~1.1 km; the corner sits within ~50m of the midpoint.
+  assert.ok(Math.abs(p.lng - 101.61) < 0.001, `lng=${p.lng}`);
+});
+
+test("pointAlongRoute: negative without loop clamps to start", () => {
+  const p = pointAlongRoute(POLY, -100);
+  assert.deepEqual(p, POLY[0]);
+});
+
+test("pointAlongRoute: past total without loop clamps to end", () => {
+  const p = pointAlongRoute(POLY, polylineLength(POLY) + 1000);
+  assert.deepEqual(p, POLY[POLY.length - 1]);
+});
+
+test("pointAlongRoute: with loop, distance past total wraps back to start", () => {
+  const total = polylineLength(POLY);
+  const p = pointAlongRoute(POLY, total + 0, { loop: true });
+  // total mod total = 0 → start point.
+  assert.ok(Math.abs(p.lat - POLY[0].lat) < 1e-9);
+  assert.ok(Math.abs(p.lng - POLY[0].lng) < 1e-9);
 });

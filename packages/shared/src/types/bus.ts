@@ -15,6 +15,14 @@ export interface VehiclePosition {
   lat: number;
   lng: number;
   bearing?: number;
+  /**
+   * Vehicle speed in **km/h**.
+   *
+   * Note: GTFS-Realtime spec defines `Position.speed` as m/s, but the
+   * Prasarana RapidKL feed (api.data.gov.my) actually publishes km/h.
+   * `entitiesToPositions` passes the raw value through unchanged, so
+   * downstream consumers should treat this field as km/h.
+   */
   speed?: number;
   observedAt: number;
 }

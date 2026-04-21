@@ -2,11 +2,20 @@ import {
   filterToT816,
   parseGtfsZip,
   type T816Bundle,
+  type TrafficSignal,
 } from "@bus-tracker/shared";
+import trafficSignalsData from "./data/traffic-signals.json" with { type: "json" };
 
 const UPSTREAM_URL =
   "https://api.data.gov.my/gtfs-static/prasarana?category=rapid-bus-mrtfeeder";
 const TTL_MS = 24 * 60 * 60 * 1000;
+
+// Checked in; updated out-of-band by packages/shared/scripts/fetch-traffic-signals.ts.
+const TRAFFIC_SIGNALS = trafficSignalsData as Record<string, TrafficSignal[]>;
+
+function withTrafficSignals(bundle: T816Bundle): T816Bundle {
+  return { ...bundle, trafficSignals: TRAFFIC_SIGNALS };
+}
 
 interface CacheEntry {
   fetchedAt: number;
@@ -35,7 +44,9 @@ export class GtfsBundleService {
     }
     try {
       const zip = await this.fetchZip();
-      const bundle = filterToT816(parseGtfsZip(zip), undefined, this.now);
+      const bundle = withTrafficSignals(
+        filterToT816(parseGtfsZip(zip), undefined, this.now),
+      );
       this.cache = { fetchedAt: now, bundle };
       return { bundle, cached: false };
     } catch (err) {
@@ -46,7 +57,9 @@ export class GtfsBundleService {
 
   async refresh(): Promise<T816Bundle> {
     const zip = await this.fetchZip();
-    const bundle = filterToT816(parseGtfsZip(zip), undefined, this.now);
+    const bundle = withTrafficSignals(
+      filterToT816(parseGtfsZip(zip), undefined, this.now),
+    );
     this.cache = { fetchedAt: this.now(), bundle };
     return bundle;
   }

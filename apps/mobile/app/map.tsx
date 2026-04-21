@@ -1,5 +1,10 @@
+import {
+  computeScheduleDelay,
+  toMalaysiaParts,
+  type LatLng as SharedLatLng,
+} from '@bus-tracker/shared';
 import { SymbolView } from 'expo-symbols';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View, type ColorValue } from 'react-native';
 import MapView, {
   AnimatedRegion,
@@ -13,17 +18,25 @@ import MapView, {
 import { BusCallout } from '@/components/map/BusCallout';
 import { MapStatusCard } from '@/components/map/MapStatusCard';
 import { MapStatusCardSkeleton } from '@/components/map/MapStatusCardSkeleton';
+import { ScheduledBusCallout } from '@/components/map/ScheduledBusCallout';
+import { ScheduledBusMarker } from '@/components/map/ScheduledBusMarker';
 import { StopCallout } from '@/components/map/StopCallout';
+import { TrafficSignalMarker } from '@/components/map/TrafficSignalMarker';
 import { openDb } from '@/db/database';
 import {
   getRoutePolyline,
   getRoutes,
+  getScheduledStopTimeForTrip,
   getStops,
+  getTrafficSignals,
   type PolylinePoint,
   type StopRow,
+  type TrafficSignalRow,
 } from '@/db/queries';
 import { useBusPosition } from '@/hooks/useBusPosition';
 import { useEta } from '@/hooks/useEta';
+import { useLocationPermission } from '@/hooks/useLocationPermission';
+import { useScheduledBusPosition } from '@/hooks/useScheduledBusPosition';
 import { useSettings } from '@/hooks/useSettings';
 import { useStaticGtfs } from '@/hooks/useStaticGtfs';
 import { tokens } from '@/theme/tokens';
@@ -31,12 +44,19 @@ import { tokens } from '@/theme/tokens';
 const POSITION_TWEEN_MS = 30_000;
 const BBOX_PAD_DEG = 0.008;
 
+const EMPTY_STOPS: ReadonlyMap<string, SharedLatLng> = new Map();
+
 type LatLng = { latitude: number; longitude: number };
 
 interface StaticData {
   polyline: LatLng[];
+  /** Same polyline in `{lat,lng}` shape, for shared-package consumers. */
+  polylineLatLng: SharedLatLng[];
   stop: StopRow;
+  /** All stops keyed by `stop_id` — used to interpolate scheduled bus positions. */
+  stopsById: ReadonlyMap<string, SharedLatLng>;
   region: Region;
+  trafficSignals: TrafficSignalRow[];
 }
 
 function computeRegion(points: PolylinePoint[]): Region | null {
@@ -62,6 +82,7 @@ function computeRegion(points: PolylinePoint[]): Region | null {
 export default function MapScreen() {
   const gtfs = useStaticGtfs();
   const settings = useSettings();
+  useLocationPermission();
   const [staticData, setStaticData] = useState<StaticData | null>(null);
   const { positions, lastUpdated } = useBusPosition({
     routeCode: settings.preferredRouteCode,
@@ -86,16 +107,25 @@ export default function MapScreen() {
         const stop =
           stops.find((s) => s.stop_id === settings.preferredStopId) ?? stops[0];
         if (!stop) return;
-        const polyPoints = await getRoutePolyline(db, route.route_id);
+        const [polyPoints, trafficSignals] = await Promise.all([
+          getRoutePolyline(db, route.route_id),
+          getTrafficSignals(db, route.code),
+        ]);
         const region = computeRegion(polyPoints);
         if (!region || cancelled) return;
+        const stopsById = new Map<string, SharedLatLng>(
+          stops.map((s) => [s.stop_id, { lat: s.stop_lat, lng: s.stop_lon }]),
+        );
         setStaticData({
           polyline: polyPoints.map((p) => ({
             latitude: p.lat,
             longitude: p.lng,
           })),
+          polylineLatLng: polyPoints.map((p) => ({ lat: p.lat, lng: p.lng })),
           stop,
+          stopsById,
           region,
+          trafficSignals,
         });
       } catch (err) {
         console.warn('[map] static data load failed', err);
@@ -107,6 +137,69 @@ export default function MapScreen() {
   }, [gtfs.ready, settings.preferredStopId, settings.preferredRouteCode]);
 
   const regionsRef = useRef(new Map<string, AnimatedRegion>());
+
+  // Per-bus scheduled arrival (for BusCallout). Keyed by vehicleId. We look up
+  // the scheduled departure from the user's stop for each visible trip. If a
+  // live vehicle's tripId doesn't match our static cache (the GTFS-RT doc
+  // warns matching can be flaky), we silently omit the schedule line.
+  const [tripSeconds, setTripSeconds] = useState<Record<string, number>>({});
+  const tripIds = useMemo(
+    () => [...new Set(positions.map((p) => p.tripId).filter(Boolean))],
+    [positions],
+  );
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const db = await openDb();
+        const entries: [string, number][] = [];
+        for (const tripId of tripIds) {
+          const s = await getScheduledStopTimeForTrip(
+            db,
+            tripId,
+            settings.preferredStopId,
+          );
+          if (s != null) entries.push([tripId, s]);
+        }
+        if (!cancelled) {
+          setTripSeconds(Object.fromEntries(entries));
+        }
+      } catch {
+        // silent fail — calling side treats missing entries as "no schedule".
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tripIds, settings.preferredStopId]);
+
+  // Pick the next scheduled departure that no live vehicle is broadcasting
+  // for. When a real bus eventually picks up that tripId, this returns null
+  // and the ghost disappears — the live MarkerAnimated takes over.
+  const liveTripIds = useMemo(
+    () =>
+      new Set(
+        positions
+          .map((p) => p.tripId)
+          .filter((id): id is string => !!id),
+      ),
+    [positions],
+  );
+  const ghostScheduled = useMemo(() => {
+    for (const dep of eta.scheduledUpcoming) {
+      if (liveTripIds.has(dep.tripId)) continue;
+      return dep;
+    }
+    return null;
+  }, [eta.scheduledUpcoming, liveTripIds]);
+
+  const ghostPosition = useScheduledBusPosition({
+    tripId: ghostScheduled?.tripId ?? null,
+    polyline: staticData?.polylineLatLng ?? [],
+    stopsById: staticData?.stopsById ?? EMPTY_STOPS,
+    serviceDayMidnightUtcMs: ghostScheduled?.serviceDayMidnightUtcMs ?? null,
+    loop: true,
+  });
 
   useEffect(() => {
     if (positions.length === 0) return;
@@ -173,6 +266,12 @@ export default function MapScreen() {
             strokeWidth={4}
           />
         )}
+        {staticData.trafficSignals.map((s) => (
+          <TrafficSignalMarker
+            key={s.osm_id}
+            coordinate={{ latitude: s.lat, longitude: s.lng }}
+          />
+        ))}
         <Marker
           coordinate={{
             latitude: staticData.stop.stop_lat,
@@ -181,11 +280,48 @@ export default function MapScreen() {
           pinColor="green"
           calloutAnchor={{ x: 0.5, y: 0 }}
         >
-          <StopCallout stopName={staticData.stop.stop_name} eta={eta} />
+          <StopCallout
+            stopName={staticData.stop.stop_name}
+            eta={eta}
+            schedule={eta.scheduledUpcoming}
+          />
         </Marker>
+        {ghostScheduled && ghostPosition.coord ? (
+          <ScheduledBusMarker
+            coordinate={{
+              latitude: ghostPosition.coord.lat,
+              longitude: ghostPosition.coord.lng,
+            }}
+          >
+            <ScheduledBusCallout
+              routeCode={ghostScheduled.routeCode}
+              scheduledEpochMs={ghostScheduled.departureEpochMs}
+            />
+          </ScheduledBusMarker>
+        ) : null}
         {positions.map((p) => {
           const region = regionsRef.current.get(p.vehicleId);
           if (!region) return null;
+          const secs = p.tripId ? tripSeconds[p.tripId] : undefined;
+          const scheduledArrival = (() => {
+            if (secs == null) return null;
+            // Use today's Malaysia midnight as the service-day anchor for
+            // display. If the trip spilled from yesterday (25:xx:00) this
+            // becomes next-day display; acceptable for a callout.
+            const parts = toMalaysiaParts(new Date());
+            const at = parts.midnightUtcMs + secs * 1000;
+            const projected = Date.now() + (eta.minutesToStop ?? 0) * 60_000;
+            const delay =
+              eta.current?.vehicleId === p.vehicleId &&
+              eta.minutesToStop != null
+                ? computeScheduleDelay({
+                    scheduledDepartureSeconds: secs,
+                    projectedArrivalEpochMs: projected,
+                    serviceDayMidnightUtcMs: parts.midnightUtcMs,
+                  })
+                : null;
+            return { at, delay };
+          })();
           return (
             <MarkerAnimated
               key={p.vehicleId}
@@ -207,7 +343,7 @@ export default function MapScreen() {
                   resizeMode="scaleAspectFit"
                 />
               </View>
-              <BusCallout position={p} />
+              <BusCallout position={p} scheduledArrival={scheduledArrival} />
             </MarkerAnimated>
           );
         })}

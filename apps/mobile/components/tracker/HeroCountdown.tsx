@@ -8,10 +8,9 @@ import Animated, {
 
 import { PulsingDots } from '@/components/map/PulsingDots';
 
-import { LiveDot } from './LiveDot';
 import type { HeroState } from './logic';
 import { RouteSwitcher } from './RouteSwitcher';
-import { heroStateColor, trackerSpacing } from './tokens';
+import { trackerSpacing } from './tokens';
 
 interface HeroCountdownProps {
   state: HeroState;
@@ -23,10 +22,8 @@ interface HeroCountdownProps {
   eyebrow: string;
   /** Subtitle first line (usually the stop name). */
   subtitle: string;
-  /** Subtitle second line (usually the updated ticker). */
-  meta: string;
-  /** Is the live feed stale? Shifts dot color to amber. */
-  isStale: boolean;
+  /** Optional caption below the unit — e.g. "4 min to spare" during a walk. */
+  detail?: string | null;
   /** Currently selected route. */
   selectedRoute: RouteId;
   /** Routes available in the switcher. */
@@ -43,18 +40,19 @@ export function HeroCountdown({
   unit,
   eyebrow,
   subtitle,
-  meta,
-  isStale,
+  detail,
   selectedRoute,
   routeOptions,
   onSelectRoute,
 }: HeroCountdownProps) {
-  const dotColor = isStale ? heroStateColor.waiting : heroStateColor[state];
-  const statusText = isStale ? 'Stale' : 'Live';
   const isEmpty = value === '—';
   // Walking timer ticks every second — a slide on every tick feels chaotic, so
   // skip the layout animation in that state and let the text update in place.
   const isTicking = state === 'walking';
+  const numberStyle =
+    state === 'hurry' ? [styles.number, styles.numberHurry] : styles.number;
+  const detailStyle =
+    state === 'hurry' ? [styles.detail, styles.detailHurry] : styles.detail;
 
   return (
     <View style={styles.container}>
@@ -64,21 +62,6 @@ export function HeroCountdown({
           options={routeOptions}
           onSelect={onSelectRoute}
         />
-      </View>
-
-      <View style={styles.statusRow}>
-        <LiveDot color={dotColor} size={7} />
-        <Text style={styles.statusText} selectable>
-          {statusText}
-        </Text>
-        {meta ? (
-          <>
-            <Text style={styles.statusDot}>·</Text>
-            <Text style={styles.statusMeta} selectable numberOfLines={1}>
-              {meta}
-            </Text>
-          </>
-        ) : null}
       </View>
 
       <Text style={styles.eyebrow} selectable>
@@ -112,7 +95,7 @@ export function HeroCountdown({
             exiting={SlideOutUp.duration(240).easing(Easing.in(Easing.cubic))}
             style={styles.numberSlide}
           >
-            <Text style={styles.number} selectable allowFontScaling={false}>
+            <Text style={numberStyle} selectable allowFontScaling={false}>
               {value}
             </Text>
           </Animated.View>
@@ -122,6 +105,12 @@ export function HeroCountdown({
       {unit ? (
         <Text style={styles.unit} selectable>
           {unit}
+        </Text>
+      ) : null}
+
+      {detail ? (
+        <Text style={detailStyle} selectable numberOfLines={2}>
+          {detail}
         </Text>
       ) : null}
 
@@ -140,33 +129,7 @@ const styles = StyleSheet.create({
   },
   switcherRow: {
     alignItems: 'center',
-    marginBottom: 12,
-  },
-  statusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 20,
-  },
-  statusText: {
-    fontSize: 12,
-    fontWeight: '600',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-    color: PlatformColor('secondaryLabel'),
-  },
-  statusDot: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: PlatformColor('tertiaryLabel'),
-  },
-  statusMeta: {
-    fontSize: 12,
-    fontWeight: '500',
-    letterSpacing: 0.6,
-    textTransform: 'uppercase',
-    color: PlatformColor('tertiaryLabel'),
-    flexShrink: 1,
+    marginBottom: 28,
   },
   eyebrow: {
     fontSize: 13,
@@ -196,6 +159,9 @@ const styles = StyleSheet.create({
     letterSpacing: -4,
     textAlign: 'center',
   },
+  numberHurry: {
+    color: '#FF453A',
+  },
   emptyBlock: {
     height: NUMBER_HEIGHT,
     alignItems: 'center',
@@ -213,6 +179,19 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: PlatformColor('secondaryLabel'),
     marginTop: 2,
+  },
+  detail: {
+    marginTop: 8,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#30D158',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
+    textAlign: 'center',
+    paddingHorizontal: 12,
+  },
+  detailHurry: {
+    color: '#FF453A',
   },
   subtitle: {
     marginTop: 18,

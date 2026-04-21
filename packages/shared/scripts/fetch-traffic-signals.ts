@@ -1,0 +1,169 @@
+/**
+ * Fetches OSM traffic_signals nodes along each bundled route's polyline and
+ * writes them to apps/api/src/data/traffic-signals.json.
+ *
+ * Rerun quarterly, or when a new route is added to T816_TARGET_CODES.
+ *
+ *   pnpm -C packages/shared exec tsx scripts/fetch-traffic-signals.ts
+ */
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { parseGtfsZip } from "../src/utils/gtfs-parser.js";
+import { projectOntoRoute } from "../src/utils/route.js";
+import {
+  T816_TARGET_CODES,
+  filterToT816,
+} from "../src/utils/t816-bundle.js";
+import type { TrafficSignal } from "../src/types/gtfs.js";
+
+const GTFS_URL =
+  "https://api.data.gov.my/gtfs-static/prasarana?category=rapid-bus-mrtfeeder";
+const OVERPASS_URL = "https://overpass-api.de/api/interpreter";
+// Signals farther than this from the polyline are dropped (they belong to
+// adjacent roads, not the route itself).
+const CORRIDOR_METERS = 80;
+// Padding applied to the route bbox when querying Overpass. Keeps us within a
+// single query while ensuring we don't miss a signal right at the corridor
+// edge.
+const BBOX_PAD_DEG = 0.003;
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const OUTPUT_PATH = resolve(
+  __dirname,
+  "../../../apps/api/src/data/traffic-signals.json",
+);
+
+interface OverpassNode {
+  type: "node";
+  id: number;
+  lat: number;
+  lon: number;
+}
+interface OverpassResponse {
+  elements: OverpassNode[];
+}
+
+function bboxOf(points: readonly { lat: number; lng: number }[]) {
+  let minLat = Infinity;
+  let maxLat = -Infinity;
+  let minLng = Infinity;
+  let maxLng = -Infinity;
+  for (const p of points) {
+    if (p.lat < minLat) minLat = p.lat;
+    if (p.lat > maxLat) maxLat = p.lat;
+    if (p.lng < minLng) minLng = p.lng;
+    if (p.lng > maxLng) maxLng = p.lng;
+  }
+  return {
+    s: minLat - BBOX_PAD_DEG,
+    w: minLng - BBOX_PAD_DEG,
+    n: maxLat + BBOX_PAD_DEG,
+    e: maxLng + BBOX_PAD_DEG,
+  };
+}
+
+async function fetchSignalsInBbox(bbox: {
+  s: number;
+  w: number;
+  n: number;
+  e: number;
+}): Promise<OverpassNode[]> {
+  const query =
+    `[out:json][timeout:60];` +
+    `node["highway"="traffic_signals"](${bbox.s},${bbox.w},${bbox.n},${bbox.e});` +
+    `out;`;
+  const res = await fetch(OVERPASS_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      // Overpass rejects requests without a descriptive UA (returns 406).
+      "User-Agent":
+        "bus-tracker/fetch-traffic-signals (https://github.com/; OSM corridor query)",
+    },
+    body: `data=${encodeURIComponent(query)}`,
+  });
+  if (!res.ok) {
+    throw new Error(`overpass ${res.status}: ${await res.text()}`);
+  }
+  const json = (await res.json()) as OverpassResponse;
+  return json.elements.filter((e) => e.type === "node");
+}
+
+async function main(): Promise<void> {
+  console.log(`→ fetching GTFS zip from ${GTFS_URL}`);
+  const res = await fetch(GTFS_URL);
+  if (!res.ok) throw new Error(`gtfs ${res.status}`);
+  const zip = new Uint8Array(await res.arrayBuffer());
+
+  const parsed = parseGtfsZip(zip);
+  const bundle = filterToT816(parsed);
+
+  const output: Record<string, TrafficSignal[]> = {};
+
+  for (const code of T816_TARGET_CODES) {
+    const route = bundle.routes.find((r) => r.code === code);
+    if (!route) {
+      console.warn(`· ${code}: route not found in bundle, skipping`);
+      continue;
+    }
+    const shapeIds = new Set(
+      bundle.trips
+        .filter((t) => t.route_id === route.route_id)
+        .map((t) => t.shape_id)
+        .filter((s): s is string => !!s),
+    );
+    let longestShape: { id: string; pts: { lat: number; lng: number }[] } = {
+      id: "",
+      pts: [],
+    };
+    for (const id of shapeIds) {
+      const pts = bundle.shapes[id] ?? [];
+      if (pts.length > longestShape.pts.length) {
+        longestShape = { id, pts: pts.map((p) => ({ lat: p.lat, lng: p.lng })) };
+      }
+    }
+    if (longestShape.pts.length < 2) {
+      console.warn(`· ${code}: no shape points, skipping`);
+      continue;
+    }
+
+    const bbox = bboxOf(longestShape.pts);
+    const nodes = await fetchSignalsInBbox(bbox);
+    const polyline = longestShape.pts;
+    const matched: TrafficSignal[] = [];
+    const seen = new Set<number>();
+    for (const n of nodes) {
+      if (seen.has(n.id)) continue;
+      const proj = projectOntoRoute(
+        { lat: n.lat, lng: n.lon },
+        polyline,
+      );
+      if (proj.offRouteMeters <= CORRIDOR_METERS) {
+        seen.add(n.id);
+        matched.push({ id: n.id, lat: n.lat, lng: n.lon });
+      }
+    }
+    output[code] = matched;
+    console.log(
+      `· ${code}: ${matched.length} signals within ${CORRIDOR_METERS}m of ${longestShape.pts.length}-point polyline (bbox returned ${nodes.length})`,
+    );
+  }
+
+  mkdirSync(dirname(OUTPUT_PATH), { recursive: true });
+  const json = JSON.stringify(output, null, 2) + "\n";
+  writeFileSync(OUTPUT_PATH, json, "utf8");
+  const totalSignals = Object.values(output).reduce(
+    (sum, arr) => sum + arr.length,
+    0,
+  );
+  console.log(
+    `\n✓ wrote ${totalSignals} signals across ${Object.keys(output).length} routes → ${OUTPUT_PATH}`,
+  );
+  console.log(`  payload size: ~${Math.round(json.length / 1024)} KB`);
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

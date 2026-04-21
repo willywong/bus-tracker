@@ -204,6 +204,26 @@ export default function SettingsScreen() {
             onDateChange={(d) => settings.setQuietEndMin(minutesFromDate(d))}
           />
         </Section>
+
+        <Section
+          header={<Text>About</Text>}
+          footer={
+            <Text>
+              Traffic signal locations © OpenStreetMap contributors.
+            </Text>
+          }
+        >
+          <HStack spacing={8} modifiers={[padding({ vertical: 4 })]}>
+            <Image systemName="map" size={16} color="#8E8E93" />
+            <Text
+              modifiers={[
+                foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
+              ]}
+            >
+              Map data credits
+            </Text>
+          </HStack>
+        </Section>
       </Form>
     </Host>
   );

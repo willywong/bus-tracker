@@ -1,6 +1,8 @@
 import {
   computeEta,
   pickApproachingVehicle,
+  polylineLength,
+  toMalaysiaParts,
   type ComputeEtaResult,
   type EtaSource,
   type LatLng,
@@ -13,23 +15,44 @@ import { openDb } from "@/db/database";
 import {
   getRoutePolyline,
   getRoutes,
+  getScheduledStopTimeForTrip,
   getStops,
   type PolylinePoint,
+  type ScheduledDeparture,
   type StopRow,
 } from "@/db/queries";
 import { useBusPosition } from "@/hooks/useBusPosition";
+import { useScheduledDepartures } from "@/hooks/useScheduledDepartures";
 import { fetchTrafficEta, type TrafficProvider } from "@/services/trafficEta";
+import {
+  resolveEta,
+  type ApproachingBus,
+  type EtaMode,
+  type ResolvedEta,
+} from "@/components/tracker/logic";
+
+export type { ApproachingBus } from "@/components/tracker/logic";
 
 const TRAFFIC_REFRESH_MS = 30_000;
 const STALE_AFTER_MS = 60_000;
 /** Rough bus speed used to project a "next vehicle" ETA when we don't hit /traffic-eta for the second bus. */
 const FALLBACK_BUS_METERS_PER_MINUTE = 20_000 / 60;
 
-export interface ApproachingBus {
-  minutesToStop: number | null;
-  vehicleId: string;
-  forwardMeters: number;
-  source: EtaSource | null;
+/** Max |live-projected-arrival - trip-scheduled-departure| we trust before declaring the trip-id match unreliable. */
+export const TRIP_MATCH_MAX_MIN = 15;
+
+export type ArrivalKind = "live" | "sched";
+
+export interface ArrivalEntry {
+  kind: ArrivalKind;
+  /** Absolute epoch ms when the bus is expected at the user's stop. */
+  epochMs: number;
+  /** Live vehicle info — present when `kind === "live"`. */
+  live: ApproachingBus | null;
+  /** Scheduled row — present when `kind === "sched"`, or when a confident trip-id match annotates a live entry. */
+  sched: ScheduledDeparture | null;
+  /** Trip id backing this entry (live's reported trip_id or sched.tripId). Used for dedupe. */
+  tripId: string | null;
 }
 
 export interface UseEtaResult {
@@ -48,6 +71,29 @@ export interface UseEtaResult {
   current: ApproachingBus | null;
   /** The second-closest approaching bus, with a rough distance-based ETA (no traffic call). */
   next: ApproachingBus | null;
+  /** Timetable-fed view, blended with live data. */
+  resolved: ResolvedEta;
+  /** Which data source drives the hero countdown. */
+  etaMode: EtaMode;
+  /** Upcoming scheduled departures (next ~8) for the (stop, route) pair. */
+  scheduledUpcoming: ScheduledDeparture[];
+  /** Scheduled departure matched to the live `current` bus, if any. */
+  currentScheduled: ScheduledDeparture | null;
+  /** Exact epoch ms of the live trip's scheduled departure (derived from the matched stop_times row). Null when no trip match or match is beyond TRIP_MATCH_MAX_MIN. */
+  currentScheduledEpochMs: number | null;
+  /** Next scheduled departure that is NOT the one already represented by `currentScheduled`. Drives the "Next" row's schedule caption. */
+  nextScheduledExcludingCurrent: ScheduledDeparture | null;
+  /** Soonest expected bus arrival at the user's stop (live if available, otherwise first scheduled). */
+  primaryArrival: ArrivalEntry | null;
+  /** The arrival *after* `primaryArrival` — guaranteed to be a different trip and later in time. */
+  secondaryArrival: ArrivalEntry | null;
+  /** Service-day bounds for tracker edge states. */
+  firstBusToday: number | null;
+  lastBusToday: number | null;
+  serviceEnded: boolean;
+  beforeServiceStart: boolean;
+  /** Total length (meters) of the active route's polyline. Null until the static cache loads. */
+  polylineMeters: number | null;
 }
 
 interface StaticCtx {
@@ -274,8 +320,263 @@ export function useEta({
         }
       : null;
 
+  // Schedule overlay: upcoming departures for (stop, route) plus per-trip
+  // match for the currently-picked vehicle.
+  const scheduled = useScheduledDepartures({ stopId, routeCode, limit: 8 });
+
+  // Trip id of the picked vehicle, for matching against stop_times.
+  const currentTripId = useMemo(() => {
+    if (!current) return null;
+    const hit = positions.find((p) => p.vehicleId === current.vehicleId);
+    return hit?.tripId ?? null;
+  }, [current, positions]);
+
+  const [currentScheduledSeconds, setCurrentScheduledSeconds] = useState<
+    number | null
+  >(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (!currentTripId) {
+      setCurrentScheduledSeconds(null);
+      return;
+    }
+    (async () => {
+      try {
+        const db = await openDb();
+        const secs = await getScheduledStopTimeForTrip(db, currentTripId, stopId);
+        if (!cancelled) setCurrentScheduledSeconds(secs);
+      } catch {
+        if (!cancelled) setCurrentScheduledSeconds(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentTripId, stopId]);
+
+  // Pick the scheduled departure whose wall-clock is nearest the live bus's
+  // scheduled departure (used as the "anchor" chip in TimetableStrip, and as
+  // a fallback delay input when getScheduledStopTimeForTrip fails).
+  const currentScheduled: ScheduledDeparture | null = useMemo(() => {
+    if (scheduled.upcoming.length === 0) return null;
+    if (currentScheduledSeconds == null) return null;
+    // departureSeconds is "seconds since today-midnight"; find the nearest.
+    let best: ScheduledDeparture | null = null;
+    let bestDiff = Infinity;
+    for (const d of scheduled.upcoming) {
+      const diff = Math.abs(d.departureSeconds - currentScheduledSeconds);
+      if (diff < bestDiff) {
+        best = d;
+        bestDiff = diff;
+      }
+    }
+    return best;
+  }, [scheduled.upcoming, currentScheduledSeconds]);
+
+  const nextScheduledForHero: ScheduledDeparture | null =
+    scheduled.upcoming[0] ?? null;
+
+  const polylineMeters = useMemo(
+    () => (staticCtx ? polylineLength(staticCtx.polyline) : null),
+    [staticCtx],
+  );
+
+  // Exact scheduled departure for the live trip, reconstructed from seconds
+  // against today's Malaysia-local midnight. Used for the Current-row caption
+  // so the time shown is the bus's own schedule, not the nearest upcoming
+  // chip (which may belong to a different trip).
+  //
+  // Guard: if the live projected arrival diverges from the matched schedule
+  // by more than TRIP_MATCH_MAX_MIN minutes, the upstream trip_id→stop_times
+  // match is almost certainly wrong (the GTFS-RT doc warns matching can be
+  // flaky). Suppress the time rather than show a phantom "scheduled 13:44".
+  const currentScheduledEpochMs: number | null = useMemo(() => {
+    if (currentScheduledSeconds == null) return null;
+    const parts = toMalaysiaParts(new Date(now));
+    const schedMs = parts.midnightUtcMs + currentScheduledSeconds * 1000;
+    const liveRoundedMin = composition?.minutesToStop;
+    if (liveRoundedMin != null) {
+      const liveEtaMs = now + Math.round(liveRoundedMin) * 60_000;
+      const diffMin = Math.abs(liveEtaMs - schedMs) / 60_000;
+      if (diffMin > TRIP_MATCH_MAX_MIN) return null;
+    }
+    return schedMs;
+  }, [currentScheduledSeconds, now, composition?.minutesToStop]);
+
+  // Pick the next scheduled departure that isn't the same trip we're already
+  // showing as "current" — avoids duplicating 13:14 in both rows.
+  const nextScheduledExcludingCurrent: ScheduledDeparture | null = useMemo(() => {
+    if (scheduled.upcoming.length === 0) return null;
+    const currentId = currentScheduled?.tripId;
+    if (!currentId) return scheduled.upcoming[0] ?? null;
+    return (
+      scheduled.upcoming.find((d) => d.tripId !== currentId) ?? null
+    );
+  }, [scheduled.upcoming, currentScheduled]);
+
+  // Unified arrival timeline: merges live ETAs + scheduled departures,
+  // dedupes live/sched pairs that clearly represent the same trip, sorts
+  // ascending. primaryArrival = [0], secondaryArrival = [1].
+  //
+  // Dedupe rule: a live entry "consumes" the scheduled entry whose tripId
+  // matches, OR the scheduled entry whose epochMs is within ±TRIP_MATCH_MAX_MIN
+  // of the live projected arrival (handles the case where the trip_id was
+  // wrong but schedule/live are obviously the same run).
+  const arrivalTimeline: ArrivalEntry[] = useMemo(() => {
+    const liveEtaMs =
+      current?.minutesToStop != null
+        ? now + current.minutesToStop * 60_000
+        : null;
+    const nextLiveEtaMs =
+      nextBus?.minutesToStop != null
+        ? now + nextBus.minutesToStop * 60_000
+        : null;
+
+    // Decide which scheduled row (if any) the live `current` consumes.
+    let consumedTripId: string | null = null;
+    if (liveEtaMs != null) {
+      // Prefer trip-id match when the time delta is plausible.
+      if (currentTripId && currentScheduledEpochMs != null) {
+        consumedTripId = currentTripId;
+      } else {
+        // Fallback: nearest scheduled within ±TRIP_MATCH_MAX_MIN.
+        let bestDiff = TRIP_MATCH_MAX_MIN * 60_000 + 1;
+        for (const dep of scheduled.upcoming) {
+          const diff = Math.abs(dep.departureEpochMs - liveEtaMs);
+          if (diff < bestDiff) {
+            bestDiff = diff;
+            consumedTripId = dep.tripId;
+          }
+        }
+      }
+    }
+    // The second live bus, likewise, consumes the nearest schedule to *its* ETA.
+    let consumedBySecondaryTripId: string | null = null;
+    if (nextLiveEtaMs != null) {
+      let bestDiff = TRIP_MATCH_MAX_MIN * 60_000 + 1;
+      for (const dep of scheduled.upcoming) {
+        if (dep.tripId === consumedTripId) continue;
+        const diff = Math.abs(dep.departureEpochMs - nextLiveEtaMs);
+        if (diff < bestDiff) {
+          bestDiff = diff;
+          consumedBySecondaryTripId = dep.tripId;
+        }
+      }
+    }
+
+    const out: ArrivalEntry[] = [];
+    if (liveEtaMs != null && current) {
+      const matchedSched = consumedTripId
+        ? scheduled.upcoming.find((d) => d.tripId === consumedTripId) ?? null
+        : null;
+      out.push({
+        kind: "live",
+        epochMs: liveEtaMs,
+        live: current,
+        sched: matchedSched,
+        tripId: consumedTripId ?? currentTripId,
+      });
+    }
+    if (nextLiveEtaMs != null && nextBus) {
+      const matchedSched = consumedBySecondaryTripId
+        ? scheduled.upcoming.find(
+            (d) => d.tripId === consumedBySecondaryTripId,
+          ) ?? null
+        : null;
+      out.push({
+        kind: "live",
+        epochMs: nextLiveEtaMs,
+        live: nextBus,
+        sched: matchedSched,
+        tripId: consumedBySecondaryTripId,
+      });
+    }
+    for (const dep of scheduled.upcoming) {
+      if (dep.tripId === consumedTripId) continue;
+      if (dep.tripId === consumedBySecondaryTripId) continue;
+      out.push({
+        kind: "sched",
+        epochMs: dep.departureEpochMs,
+        live: null,
+        sched: dep,
+        tripId: dep.tripId,
+      });
+    }
+
+    out.sort((a, b) => a.epochMs - b.epochMs);
+    return out;
+  }, [
+    current,
+    nextBus,
+    currentTripId,
+    currentScheduledEpochMs,
+    scheduled.upcoming,
+    now,
+  ]);
+
+  const primaryArrival: ArrivalEntry | null = arrivalTimeline[0] ?? null;
+  const secondaryArrival: ArrivalEntry | null = (() => {
+    if (arrivalTimeline.length < 2) return null;
+    const primary = arrivalTimeline[0];
+    // Ensure the secondary is genuinely a different trip AND strictly later.
+    for (let i = 1; i < arrivalTimeline.length; i++) {
+      const e = arrivalTimeline[i];
+      if (
+        e.epochMs <= primary.epochMs ||
+        (e.tripId && e.tripId === primary.tripId)
+      ) {
+        continue;
+      }
+      return e;
+    }
+    return arrivalTimeline[1] ?? null;
+  })();
+
+  const resolved: ResolvedEta = useMemo(() => {
+    const liveProjectedArrivalEpochMs =
+      roundedMinutes != null ? now + roundedMinutes * 60_000 : null;
+    const todayMidnight = toMalaysiaParts(new Date(now)).midnightUtcMs;
+
+    // Keep the hero in sync with primaryArrival. `resolveEta` unconditionally
+    // prefers live when present, but arrivalTimeline can surface a scheduled
+    // departure ahead of the live bus — e.g. the live vehicle is running very
+    // late or mid-loop (so it's 57 min away via the long way around) while a
+    // fresh scheduled trip starts in 2 min. In that state, the Current card
+    // already shows the scheduled row; hand `resolveEta` the same row so the
+    // hero counts down to the same arrival instead of the far-away live bus.
+    const liveForResolve =
+      primaryArrival?.kind === "live" &&
+      primaryArrival.live?.vehicleId === current?.vehicleId
+        ? current
+        : null;
+    const nextScheduledForResolve =
+      !liveForResolve && primaryArrival?.kind === "sched" && primaryArrival.sched
+        ? primaryArrival.sched
+        : nextScheduledForHero;
+
+    return resolveEta({
+      live: liveForResolve,
+      liveTripScheduledSeconds: liveForResolve ? currentScheduledSeconds : null,
+      liveTripServiceDayMidnightUtcMs: todayMidnight,
+      liveProjectedArrivalEpochMs: liveForResolve
+        ? liveProjectedArrivalEpochMs
+        : null,
+      nextScheduled: nextScheduledForResolve,
+      isLiveStale: isStale,
+      now,
+    });
+  }, [
+    current,
+    currentScheduledSeconds,
+    nextScheduledForHero,
+    isStale,
+    roundedMinutes,
+    now,
+    primaryArrival,
+  ]);
+
   return {
-    minutesToStop: roundedMinutes,
+    minutesToStop: resolved.minutesToStop,
     isStale,
     source: composition?.source ?? null,
     trafficSource: composition?.source === "traffic" ? trafficSource : null,
@@ -285,5 +586,18 @@ export function useEta({
     trafficError,
     current,
     next: nextBus,
+    resolved,
+    etaMode: resolved.mode,
+    scheduledUpcoming: scheduled.upcoming,
+    currentScheduled,
+    currentScheduledEpochMs,
+    nextScheduledExcludingCurrent,
+    primaryArrival,
+    secondaryArrival,
+    firstBusToday: scheduled.firstEpochMs,
+    lastBusToday: scheduled.lastEpochMs,
+    serviceEnded: scheduled.serviceEnded,
+    beforeServiceStart: scheduled.beforeServiceStart,
+    polylineMeters,
   };
 }

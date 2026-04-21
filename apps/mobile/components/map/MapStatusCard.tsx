@@ -11,15 +11,20 @@ import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 
 import { GlassGuard } from '@/components/GlassGuard';
 import { LiveDot } from '@/components/tracker/LiveDot';
-import { useLastUpdatedLabel } from '@/components/tracker/logic';
+import {
+  formatClockHHMM,
+  formatDeltaMin,
+  useLastUpdatedLabel,
+} from '@/components/tracker/logic';
 import { heroStateColor, surfaceColor } from '@/components/tracker/tokens';
 import type { UseEtaResult } from '@/hooks/useEta';
 import { tokens } from '@/theme/tokens';
 
 import { PulsingDots } from './PulsingDots';
+import { ScheduleFallbackBody } from './ScheduleFallbackBody';
 import { formatArrivalClock, formatDistance, formatStopName } from './format';
 
-type CardState = 'live' | 'stale' | 'waiting';
+type CardState = 'live' | 'stale' | 'waiting' | 'schedule';
 
 interface MapStatusCardProps {
   routeCode: string;
@@ -36,19 +41,43 @@ export function MapStatusCard({
 }: MapStatusCardProps) {
   const updated = useLastUpdatedLabel(lastUpdated);
 
+  const nextScheduled = eta.scheduledUpcoming[0] ?? null;
+  const scheduleMinutes =
+    nextScheduled != null
+      ? Math.max(0, Math.round((nextScheduled.departureEpochMs - Date.now()) / 60_000))
+      : null;
+
   const state: CardState =
-    eta.minutesToStop == null
-      ? 'waiting'
-      : eta.isStale
+    eta.current != null && eta.minutesToStop != null
+      ? eta.isStale
         ? 'stale'
-        : 'live';
+        : 'live'
+      : nextScheduled != null && !eta.serviceEnded
+        ? 'schedule'
+        : 'waiting';
 
   const dotColor =
     state === 'live'
       ? heroStateColor.relaxed
       : heroStateColor.waiting;
   const statusLabel =
-    state === 'live' ? 'Live' : state === 'stale' ? 'Stale' : 'Waiting';
+    state === 'live'
+      ? 'Live'
+      : state === 'stale'
+        ? 'Stale'
+        : state === 'schedule'
+          ? 'Scheduled'
+          : 'Waiting';
+  const scheduleSubline =
+    state === 'live' && eta.currentScheduled
+      ? (() => {
+          const clock = formatClockHHMM(
+            eta.currentScheduled.departureEpochMs,
+          );
+          const delta = formatDeltaMin(eta.resolved.delay);
+          return delta ? `Scheduled ${clock} · ${delta}` : `Scheduled ${clock}`;
+        })()
+      : null;
 
   const niceStop = useMemo(() => formatStopName(stopName), [stopName]);
 
@@ -77,6 +106,11 @@ export function MapStatusCard({
         >
           {state === 'waiting' ? (
             <WaitingBody />
+          ) : state === 'schedule' && nextScheduled != null && scheduleMinutes != null ? (
+            <ScheduleFallbackBody
+              minutes={scheduleMinutes}
+              nextAt={nextScheduled.departureEpochMs}
+            />
           ) : (
             <EtaBody
               minutes={eta.minutesToStop ?? 0}
@@ -95,6 +129,11 @@ export function MapStatusCard({
             {updated.label}
           </Text>
         </View>
+        {scheduleSubline ? (
+          <Text style={styles.scheduleSubline} selectable numberOfLines={1}>
+            {scheduleSubline}
+          </Text>
+        ) : null}
       </View>
     </GlassGuard>
   );
@@ -338,5 +377,13 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: PlatformColor('secondaryLabel'),
     flexShrink: 1,
+  },
+  scheduleSubline: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: PlatformColor('tertiaryLabel'),
+    fontVariant: ['tabular-nums'],
+    letterSpacing: 0.1,
+    marginTop: -2,
   },
 });

@@ -83,8 +83,13 @@ export function createMockRealtimeStore(): RealtimeStore {
   let lastPoint: { lat: number; lng: number } | null = null;
   let timer: ReturnType<typeof setInterval> | null = null;
 
-  /** Constant synthetic speed matching ADVANCE_METERS_PER_TICK / TICK_MS (m/s). */
-  const MOCK_SPEED_MPS = ADVANCE_METERS_PER_TICK / (TICK_MS / 1000);
+  /**
+   * Constant synthetic speed in **km/h**, matching ADVANCE_METERS_PER_TICK /
+   * TICK_MS converted from m/s. VehiclePosition.speed is km/h (Prasarana
+   * feed quirk), so the mock emits km/h too.
+   */
+  const MOCK_SPEED_KMH =
+    (ADVANCE_METERS_PER_TICK / (TICK_MS / 1000)) * 3.6;
 
   async function loadRoute(): Promise<void> {
     try {
@@ -143,7 +148,7 @@ export function createMockRealtimeStore(): RealtimeStore {
       lat: pt.lat,
       lng: pt.lng,
       bearing,
-      speed: MOCK_SPEED_MPS,
+      speed: MOCK_SPEED_KMH,
       observedAt: Date.now(),
     };
     lastPoint = pt;

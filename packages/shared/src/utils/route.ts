@@ -152,6 +152,44 @@ export function polylineLength(polyline: readonly LatLng[]): number {
   return total;
 }
 
+/**
+ * Returns the LatLng that lies `distanceMeters` along `polyline` from its
+ * start. With `loop: true`, distances are taken modulo polyline length so a
+ * value past the end wraps back to the beginning. Without `loop`, values are
+ * clamped to the endpoints.
+ */
+export function pointAlongRoute(
+  polyline: readonly LatLng[],
+  distanceMeters: number,
+  opts: { loop?: boolean } = {},
+): LatLng {
+  if (polyline.length < 2) {
+    throw new Error("pointAlongRoute: polyline must have at least 2 points");
+  }
+  const total = polylineLength(polyline);
+  let d = distanceMeters;
+  if (opts.loop && total > 0) {
+    d = ((d % total) + total) % total;
+  } else {
+    if (d <= 0) return polyline[0];
+    if (d >= total) return polyline[polyline.length - 1];
+  }
+  for (let i = 0; i < polyline.length - 1; i++) {
+    const a = polyline[i];
+    const b = polyline[i + 1];
+    const segLen = haversineMeters(a, b);
+    if (d <= segLen) {
+      const t = segLen === 0 ? 0 : d / segLen;
+      return {
+        lat: a.lat + (b.lat - a.lat) * t,
+        lng: a.lng + (b.lng - a.lng) * t,
+      };
+    }
+    d -= segLen;
+  }
+  return polyline[polyline.length - 1];
+}
+
 function clamp(x: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, x));
 }
