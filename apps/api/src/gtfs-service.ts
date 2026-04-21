@@ -1,21 +1,13 @@
-import { createRequire } from "node:module";
 import {
   filterToT816,
   parseGtfsZip,
   type T816Bundle,
-  type TrafficSignal,
 } from "@bus-tracker/shared";
-
-const trafficSignalsData = createRequire(import.meta.url)(
-  "./data/traffic-signals.json",
-) as Record<string, TrafficSignal[]>;
+import { TRAFFIC_SIGNALS } from "./data/traffic-signals.js";
 
 const UPSTREAM_URL =
   "https://api.data.gov.my/gtfs-static/prasarana?category=rapid-bus-mrtfeeder";
 const TTL_MS = 24 * 60 * 60 * 1000;
-
-// Checked in; updated out-of-band by packages/shared/scripts/fetch-traffic-signals.ts.
-const TRAFFIC_SIGNALS = trafficSignalsData;
 
 function withTrafficSignals(bundle: T816Bundle): T816Bundle {
   return { ...bundle, trafficSignals: TRAFFIC_SIGNALS };
