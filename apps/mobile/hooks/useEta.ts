@@ -37,7 +37,11 @@ import { devNow } from "@/utils/devClock";
 export type { ApproachingBus } from "@/components/tracker/logic";
 
 const TRAFFIC_REFRESH_MS = 30_000;
-const STALE_AFTER_MS = 60_000;
+// Max age of the *GTFS Realtime* feed before we fall back to scheduled ETA.
+// With a 30s poll cadence, 75s tolerates one fully-missed poll (~60s) plus
+// ~15s of network jitter — previously 60s, which flipped to SCHEDULED on any
+// single slow tick.
+const STALE_AFTER_MS = 75_000;
 /** Rough bus speed used to project a "next vehicle" ETA when we don't hit /traffic-eta for the second bus. */
 const FALLBACK_BUS_METERS_PER_MINUTE = 20_000 / 60;
 
@@ -120,7 +124,8 @@ export function useEta({
   routeCode: RouteId;
   trafficProvider?: TrafficProvider;
 }): UseEtaResult {
-  const { positions, error: rtError } = useBusPosition({ routeCode });
+  const { positions, lastUpdated: lastLiveFetchAt, error: rtError } =
+    useBusPosition({ routeCode });
 
   const [staticCtx, setStaticCtx] = useState<StaticCtx | null>(null);
   const [staticError, setStaticError] = useState<Error | null>(null);
@@ -312,8 +317,12 @@ export function useEta({
   }, [trafficProvider]);
 
   const error = staticError ?? trafficError ?? rtError;
+  // Live-vs-SCHEDULED is gated on the *realtime feed's* freshness, not on
+  // `lastComputedAt` (which only bumps on a successful traffic-eta response).
+  // Conflating the two meant a slow/failed traffic-eta would flip the Tracker
+  // to SCHEDULED even though GTFS Realtime positions were arriving on schedule.
   const isStale =
-    lastComputedAt == null ? true : now - lastComputedAt > STALE_AFTER_MS;
+    lastLiveFetchAt == null ? true : now - lastLiveFetchAt > STALE_AFTER_MS;
 
   const roundedMinutes =
     composition?.minutesToStop != null

@@ -63,6 +63,11 @@ export {
   type ScheduleDelay,
 } from "./schedule-delay.js";
 export {
+  computeNextPollDelay,
+  parseRetryAfterMs,
+  type NextPollDelayArgs,
+} from "./backoff.js";
+export {
   getMotionStatus,
   SIGNAL_PROXIMITY_METERS,
   SLOW_SPEED_KMH,
