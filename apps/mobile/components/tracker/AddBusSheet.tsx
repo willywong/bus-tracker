@@ -232,9 +232,19 @@ function ResultRow({
   isLast: boolean;
   onPress: () => void;
 }) {
+  const origin = hit.origin ? formatStopName(hit.origin) : null;
+  const destination = hit.destination ? formatStopName(hit.destination) : null;
+  const hasTrip = origin != null && destination != null;
   const showLongName =
     hit.long_name != null &&
-    hit.long_name.trim().toUpperCase() !== hit.code.trim().toUpperCase();
+    hit.long_name.trim().toUpperCase() !== hit.code.trim().toUpperCase() &&
+    !hasTrip;
+
+  const accessibility = hasTrip
+    ? `${hit.code}, ${origin} to ${destination}`
+    : showLongName
+      ? `${hit.code}, ${hit.long_name}`
+      : hit.code;
 
   return (
     <View
@@ -249,24 +259,38 @@ function ResultRow({
         accessibilityRole="button"
         accessibilityLabel={
           isFavorited
-            ? `Select ${hit.code}${showLongName ? ', ' + hit.long_name : ''}, already favorited`
-            : `Add ${hit.code}${showLongName ? ', ' + hit.long_name : ''}`
+            ? `Select ${accessibility}, already favorited`
+            : `Add ${accessibility}`
         }
         style={({ pressed }) => [
           styles.resultRow,
           pressed && styles.rowPressed,
         ]}
       >
-        <View style={styles.routeAvatar}>
-          <SymbolView name="bus.fill" size={16} tintColor="#FFFFFF" />
+        <View style={styles.routePill}>
+          <SymbolView name="bus.fill" size={13} tintColor="#FFFFFF" />
+          <Text style={styles.routePillCode} numberOfLines={1}>
+            {hit.code}
+          </Text>
         </View>
 
         <View style={styles.resultMain}>
-          <Text style={styles.resultCode} numberOfLines={1} selectable>
-            {hit.code}
-          </Text>
-          {showLongName ? (
-            <Text style={styles.resultLong} numberOfLines={2} selectable>
+          {hasTrip ? (
+            <View style={styles.tripLine}>
+              <Text style={styles.tripEndpoint} numberOfLines={1}>
+                {origin}
+              </Text>
+              <SymbolView
+                name="arrow.right"
+                size={10}
+                tintColor={PLATFORM_TERTIARY}
+              />
+              <Text style={styles.tripEndpoint} numberOfLines={1}>
+                {destination}
+              </Text>
+            </View>
+          ) : showLongName ? (
+            <Text style={styles.resultLong} numberOfLines={2}>
               {hit.long_name}
             </Text>
           ) : null}
@@ -288,23 +312,16 @@ function ResultRow({
           ) : null}
         </View>
 
-        <View style={styles.resultTrail}>
-          {isFavorited ? (
-            <View style={styles.addedPill}>
-              <SymbolView
-                name="checkmark"
-                size={10}
-                tintColor={tokens.platform.accent}
-              />
-              <Text style={styles.addedPillLabel}>Added</Text>
-            </View>
-          ) : null}
-          <SymbolView
-            name="chevron.right"
-            size={13}
-            tintColor={PLATFORM_TERTIARY}
-          />
-        </View>
+        {isFavorited ? (
+          <View style={styles.addedPill}>
+            <SymbolView
+              name="checkmark"
+              size={10}
+              tintColor={tokens.platform.accent}
+            />
+            <Text style={styles.addedPillLabel}>Added</Text>
+          </View>
+        ) : null}
       </Pressable>
       {!isLast ? <View style={styles.innerHairline} /> : null}
     </View>
@@ -669,35 +686,43 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 14,
-    paddingVertical: 12,
+    paddingVertical: 11,
     gap: 12,
   },
   rowPressed: {
     opacity: 0.55,
   },
-  routeAvatar: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+  routePill: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 5,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 8,
     backgroundColor: tokens.platform.accent,
   },
+  routePillCode: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    letterSpacing: 0.3,
+  },
   resultMain: { flex: 1, gap: 3 },
-  resultCode: {
-    fontSize: 17,
-    fontWeight: '600',
+  tripLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  tripEndpoint: {
+    flex: 0,
+    flexShrink: 1,
+    fontSize: 14,
+    fontWeight: '500',
     color: PlatformColor('label'),
-    letterSpacing: 0.2,
   },
   resultLong: {
     fontSize: 13,
     color: PlatformColor('secondaryLabel'),
-  },
-  resultTrail: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
   },
   chipRow: {
     flexDirection: 'row',
@@ -738,7 +763,7 @@ const styles = StyleSheet.create({
 
   innerHairline: {
     height: StyleSheet.hairlineWidth,
-    marginLeft: 14 + 38 + 12,
+    marginLeft: 14 + 68 + 12,
     backgroundColor: PLATFORM_SEPARATOR,
   },
 

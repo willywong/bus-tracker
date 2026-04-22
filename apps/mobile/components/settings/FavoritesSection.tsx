@@ -135,6 +135,8 @@ function FavoriteRow({ code, index, count, meta }: FavoriteRowProps) {
     : meta == null
       ? 'Loading…'
       : 'Pick a stop';
+  const longName =
+    meta?.longName && meta.longName.trim() !== code ? meta.longName : null;
 
   const openStopPicker = () => {
     if (stops.length === 0) return;
@@ -180,23 +182,17 @@ function FavoriteRow({ code, index, count, meta }: FavoriteRowProps) {
         >
           <Image systemName="bus.fill" size={18} color="#8E8E93" />
           <Text>{code}</Text>
-          {meta?.longName ? (
+          {longName ? (
             <Text
               modifiers={[
                 foregroundStyle({ type: 'hierarchical', style: 'tertiary' }),
               ]}
             >
-              {meta.longName}
+              {longName}
             </Text>
           ) : null}
           <Spacer />
-          <Text
-            modifiers={[
-              foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
-            ]}
-          >
-            {stopLabel}
-          </Text>
+          <Text>{stopLabel}</Text>
           <Image systemName="ellipsis.circle" size={16} />
         </HStack>
       }

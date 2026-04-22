@@ -89,6 +89,15 @@ test("searchRoutes: empty query returns empty array", () => {
   assert.deepEqual(searchRoutes(parsed, "   "), []);
 });
 
+test("searchRoutes: hits include origin and destination stop names", () => {
+  const parsed = parseGtfsZip(fixture());
+  const hits = searchRoutes(parsed, "T816");
+  const t816 = hits.find((h) => h.code === "T816");
+  assert.ok(t816);
+  assert.equal(t816.origin, "Phileo Damansara MRT");
+  assert.equal(t816.destination, "Mutiara Damansara");
+});
+
 test("searchRoutes: respects limit cap", () => {
   const parsed = parseGtfsZip(fixture());
   const hits = searchRoutes(parsed, "F", 25);

@@ -3,6 +3,10 @@ import type { ParsedGtfs } from "./gtfs-parser.js";
 export interface RouteSearchHit {
   code: string;
   long_name?: string;
+  /** First stop along a representative trip for this route. */
+  origin?: string;
+  /** Last stop along a representative trip for this route. */
+  destination?: string;
   matchedStops?: { stop_id: string; stop_name: string }[];
 }
 
@@ -11,6 +15,8 @@ interface InternalHit {
   code: string;
   long_name?: string;
   rank: number;
+  origin?: string;
+  destination?: string;
   matchedStops?: { stop_id: string; stop_name: string }[];
 }
 
@@ -124,10 +130,67 @@ export function searchRoutes(
 
   const hits = Array.from(byId.values());
   hits.sort((a, b) => (a.rank - b.rank) || a.code.localeCompare(b.code));
+  const top = hits.slice(0, limit);
 
-  return hits.slice(0, limit).map((h) => ({
+  // Enrich with origin/destination. Pick one representative trip per matched
+  // route, then scan stop_times once tracking min/max stop_sequence per trip.
+  if (top.length > 0) {
+    const matchedRouteIds = new Set(top.map((h) => h.route_id));
+    const firstTripByRoute = new Map<string, string>();
+    for (const t of parsed.trips) {
+      if (!matchedRouteIds.has(t.route_id)) continue;
+      if (!firstTripByRoute.has(t.route_id)) {
+        firstTripByRoute.set(t.route_id, t.trip_id);
+      }
+    }
+
+    const tripIds = new Set(firstTripByRoute.values());
+    type Endpoints = {
+      firstSeq: number;
+      firstId: string;
+      lastSeq: number;
+      lastId: string;
+    };
+    const endpointsByTrip = new Map<string, Endpoints>();
+    for (const st of parsed.stopTimes) {
+      if (!tripIds.has(st.trip_id)) continue;
+      const existing = endpointsByTrip.get(st.trip_id);
+      if (!existing) {
+        endpointsByTrip.set(st.trip_id, {
+          firstSeq: st.stop_sequence,
+          firstId: st.stop_id,
+          lastSeq: st.stop_sequence,
+          lastId: st.stop_id,
+        });
+        continue;
+      }
+      if (st.stop_sequence < existing.firstSeq) {
+        existing.firstSeq = st.stop_sequence;
+        existing.firstId = st.stop_id;
+      }
+      if (st.stop_sequence > existing.lastSeq) {
+        existing.lastSeq = st.stop_sequence;
+        existing.lastId = st.stop_id;
+      }
+    }
+
+    for (const h of top) {
+      const tripId = firstTripByRoute.get(h.route_id);
+      if (!tripId) continue;
+      const ep = endpointsByTrip.get(tripId);
+      if (!ep) continue;
+      const originStop = stopById.get(ep.firstId);
+      const destStop = stopById.get(ep.lastId);
+      if (originStop) h.origin = originStop.stop_name;
+      if (destStop) h.destination = destStop.stop_name;
+    }
+  }
+
+  return top.map((h) => ({
     code: h.code,
     long_name: h.long_name,
+    origin: h.origin,
+    destination: h.destination,
     matchedStops: h.matchedStops,
   }));
 }
