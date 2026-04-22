@@ -1,16 +1,21 @@
 import {
+  computeNextPollDelay,
   createOutlierFilter,
   decodeFeed,
   entitiesToPositions,
+  parseRetryAfterMs,
   type TripRouteMap,
   type VehiclePosition,
 } from "@bus-tracker/shared";
 import { AppState, type AppStateStatus } from "react-native";
+import { API_BASE_URL } from "@/config/env";
 import { openDb } from "@/db/database";
 import { getTripToRouteMap } from "@/db/queries";
 
-const ENDPOINT =
-  "https://api.data.gov.my/gtfs-realtime/vehicle-position/prasarana?category=rapid-bus-mrtfeeder";
+// Polls our backend proxy (Edge + Upstash KV, 30s TTL) rather than the
+// provider feed directly, so N clients collapse to ~2 req/min upstream and
+// stay inside the provider's 4 req/min rate limit.
+const ENDPOINT = `${API_BASE_URL}/api/gtfs-realtime`;
 const POLL_INTERVAL_MS = 30_000;
 
 export interface RealtimeSnapshot {
@@ -62,6 +67,20 @@ export interface AppStateLike {
   ): { remove(): void };
 }
 
+/** Thrown when the realtime feed responds with a non-OK status. Carries the
+ *  status and any parsed `Retry-After` so the store can back off intelligently.
+ */
+export class FeedFetchError extends Error {
+  readonly status: number;
+  readonly retryAfterMs: number | null;
+  constructor(status: number, retryAfterMs: number | null) {
+    super(`realtime ${status}`);
+    this.name = "FeedFetchError";
+    this.status = status;
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
 export interface RealtimeDeps {
   fetchFeed: (signal: AbortSignal) => Promise<Uint8Array>;
   loadTripMap: (routeCodes: readonly string[]) => Promise<TripRouteMap>;
@@ -75,7 +94,13 @@ export interface RealtimeDeps {
 const defaultDeps: RealtimeDeps = {
   fetchFeed: async (signal) => {
     const res = await fetch(ENDPOINT, { signal });
-    if (!res.ok) throw new Error(`realtime ${res.status}`);
+    if (!res.ok) {
+      const retryAfterMs = parseRetryAfterMs(
+        res.headers.get("Retry-After"),
+        Date.now(),
+      );
+      throw new FeedFetchError(res.status, retryAfterMs);
+    }
     return new Uint8Array(await res.arrayBuffer());
   },
   loadTripMap: async (routeCodes) => {
@@ -128,6 +153,7 @@ export function createRealtimeStore(
   let cancelTimer: (() => void) | null = null;
   let inflight: AbortController | null = null;
   let appStateSub: { remove(): void } | null = null;
+  let consecutiveFailures = 0;
   const outlier = createOutlierFilter();
   let positionFilter: PositionFilter = (p) => outlier.accept(p);
 
@@ -211,10 +237,12 @@ export function createRealtimeStore(
         }
       }
       commit({ positions: deduped, lastError: null }, true);
+      consecutiveFailures = 0;
     } catch (err) {
       if (ctrl.signal.aborted) return;
       if (isAbortError(err)) return;
       const e = err instanceof Error ? err : new Error(String(err));
+      consecutiveFailures += 1;
       console.warn("[realtime] tick failed:", e.message);
       commit({ lastError: e }, false);
     } finally {
@@ -234,15 +262,30 @@ export function createRealtimeStore(
 
   function scheduleNext() {
     clearTimer();
-    setNextRefreshAt(cfg.now() + cfg.pollIntervalMs);
+    const lastErr = snapshot.lastError;
+    const status = lastErr instanceof FeedFetchError ? lastErr.status : undefined;
+    const retryAfterMs =
+      lastErr instanceof FeedFetchError && lastErr.retryAfterMs != null
+        ? lastErr.retryAfterMs
+        : undefined;
+    const delayMs = computeNextPollDelay({
+      baseMs: cfg.pollIntervalMs,
+      consecutiveFailures,
+      status,
+      retryAfterMs,
+    });
+    setNextRefreshAt(cfg.now() + delayMs);
     cancelTimer = cfg.scheduleTick(() => {
       void tick();
-    }, cfg.pollIntervalMs);
+    }, delayMs);
   }
 
   function onAppStateChange(status: AppStateStatus) {
     if (refCount === 0) return;
     if (status === "active") {
+      // Clear accumulated backoff — a foreground resume is a fresh attempt,
+      // not a continuation of the prior failure streak.
+      consecutiveFailures = 0;
       void tick();
     } else {
       clearTimer();
@@ -320,6 +363,7 @@ export function createRealtimeStore(
         refCount = 0;
         routeCodes = [];
         listeners.clear();
+        consecutiveFailures = 0;
         snapshot = {
           positions: [],
           lastUpdated: null,
