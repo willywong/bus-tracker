@@ -15,13 +15,9 @@ import {
   padding,
   tag,
 } from '@expo/ui/swift-ui/modifiers';
-import { useEffect, useState } from 'react';
 import { View } from 'react-native';
 
-import { formatStopName } from '@/components/map/format';
-import { openDb } from '@/db/database';
-import { getStopsForRoute, type StopRow } from '@/db/queries';
-import { useStaticGtfs } from '@/hooks/useStaticGtfs';
+import { FavoritesSection } from '@/components/settings/FavoritesSection';
 import {
   CLOCK_FORMATS,
   NOTIF_BUFFER_CHOICES_MIN,
@@ -61,38 +57,6 @@ const clockFormatLabel: Record<ClockFormat, string> = {
 
 export default function SettingsScreen() {
   const settings = useSettings();
-  // Re-fires the stops query once the static bundle finishes bootstrapping,
-  // so a fresh install that mounts Settings before the first fetch completes
-  // populates the pickers instead of getting stuck on an empty DB.
-  const gtfs = useStaticGtfs();
-  const [stopsByRoute, setStopsByRoute] = useState<Record<string, StopRow[]>>(
-    {},
-  );
-  const favoritesKey = settings.favoritedRoutes.join(',');
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const db = await openDb();
-        const entries = await Promise.all(
-          settings.favoritedRoutes.map(
-            async (code) => [code, await getStopsForRoute(db, code)] as const,
-          ),
-        );
-        if (cancelled) return;
-        const next: Record<string, StopRow[]> = {};
-        for (const [code, rows] of entries) next[code] = rows;
-        setStopsByRoute(next);
-      } catch (err) {
-        console.warn('[settings] failed to load stops', err);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gtfs.ready, gtfs.result?.generatedAt, favoritesKey]);
 
   if (!settings.ready) {
     return <View style={{ flex: 1 }} />;
@@ -189,65 +153,7 @@ export default function SettingsScreen() {
         </Section>
         */}
 
-        <Section
-          header={<Text>Preferred stops</Text>}
-          footer={
-            <Text>Boarding stop used for ETA on each route.</Text>
-          }
-        >
-          {settings.favoritedRoutes.map((code) => {
-            const routeStops = stopsByRoute[code] ?? [];
-            // Pre-bootstrap, the JOIN returns 0 rows; render a disabled
-            // placeholder so the Form still paints instead of feeding the
-            // SwiftUI Picker zero children with selection=0.
-            if (routeStops.length === 0) {
-              return (
-                <HStack
-                  key={code}
-                  spacing={12}
-                  modifiers={[padding({ vertical: 6 })]}
-                >
-                  <Text>{code}</Text>
-                  <Text
-                    modifiers={[
-                      foregroundStyle({
-                        type: 'hierarchical',
-                        style: 'secondary',
-                      }),
-                    ]}
-                  >
-                    Loading…
-                  </Text>
-                </HStack>
-              );
-            }
-            const selectedStopId = settings.preferredStopByRoute[code];
-            const selection = Math.max(
-              0,
-              routeStops.findIndex((s) => s.stop_id === selectedStopId),
-            );
-            return (
-              <Picker
-                key={code}
-                label={code}
-                selection={selection}
-                onSelectionChange={(i) => {
-                  const idx = typeof i === 'number' ? i : Number(i);
-                  const stop = routeStops[idx];
-                  if (stop) {
-                    settings.setPreferredStopForRoute(code, stop.stop_id);
-                  }
-                }}
-              >
-                {routeStops.map((s, i) => (
-                  <Text key={s.stop_id} modifiers={[tag(i)]}>
-                    {formatStopName(s.stop_name)}
-                  </Text>
-                ))}
-              </Picker>
-            );
-          })}
-        </Section>
+        <FavoritesSection />
 
         {/* Traffic provider — temporarily hidden; HERE is the only provider
             in use. TomTom remains wired through `useSettings` / `useEta` so
