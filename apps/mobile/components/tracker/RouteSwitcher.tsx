@@ -1,4 +1,3 @@
-import type { RouteId } from '@bus-tracker/shared';
 import {
   Button,
   Host,
@@ -13,18 +12,61 @@ import {
   glassEffect,
   padding,
 } from '@expo/ui/swift-ui/modifiers';
+import { Pressable } from 'react-native';
 
 interface RouteSwitcherProps {
-  selected: RouteId;
-  options: readonly RouteId[];
-  onSelect: (code: RouteId) => void;
+  selected: string | null;
+  options: readonly string[];
+  onSelect: (code: string) => void;
+  onAddBus: () => void;
 }
 
 export function RouteSwitcher({
   selected,
   options,
   onSelect,
+  onAddBus,
 }: RouteSwitcherProps) {
+  if (options.length === 0) {
+    return (
+      <Pressable
+        onPress={onAddBus}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel="Add your first bus"
+        style={({ pressed }) => ({
+          alignSelf: 'center',
+          opacity: pressed ? 0.85 : 1,
+        })}
+      >
+        <Host matchContents>
+          <HStack
+            spacing={6}
+            modifiers={[
+              fixedSize(),
+              padding({ horizontal: 14, vertical: 8 }),
+              glassEffect({
+                glass: { variant: 'regular', interactive: true },
+                shape: 'capsule',
+              }),
+            ]}
+          >
+            <Image systemName="plus" size={13} />
+            <Text
+              modifiers={[
+                foregroundStyle({ type: 'hierarchical', style: 'primary' }),
+              ]}
+            >
+              Add bus
+            </Text>
+          </HStack>
+        </Host>
+      </Pressable>
+    );
+  }
+
+  const triggerLabel = selected ?? options[0] ?? 'Bus';
+
   return (
     <Host matchContents style={{ alignSelf: 'center' }}>
       <Menu
@@ -46,7 +88,7 @@ export function RouteSwitcher({
                 foregroundStyle({ type: 'hierarchical', style: 'primary' }),
               ]}
             >
-              {selected}
+              {triggerLabel}
             </Text>
             <Image systemName="chevron.down" size={11} />
           </HStack>
@@ -60,6 +102,12 @@ export function RouteSwitcher({
             onPress={() => onSelect(code)}
           />
         ))}
+        <Button
+          key="__add_bus"
+          systemImage="plus"
+          label="Add bus…"
+          onPress={onAddBus}
+        />
       </Menu>
     </Host>
   );

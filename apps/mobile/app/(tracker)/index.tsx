@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { PlatformColor, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn } from 'react-native-reanimated';
@@ -312,9 +313,10 @@ export default function TrackerScreen() {
     <TrackerCanvas onRefresh={handleRefresh} refreshing={refreshing}>
       <HeroCountdown
         state={heroState}
-        selectedRoute={activeRoute}
+        selectedRoute={settings.preferredRouteCode}
         routeOptions={settings.favoritedRoutes}
         onSelectRoute={settings.setPreferredRouteCode}
+        onAddBus={() => router.push('/add-bus')}
         eyebrow={hero.eyebrow}
         value={hero.value}
         unit={hero.unit}

@@ -1,4 +1,3 @@
-import type { RouteId } from '@bus-tracker/shared';
 import type { ReactNode } from 'react';
 import { PlatformColor, StyleSheet, Text, View } from 'react-native';
 import Animated, {
@@ -25,12 +24,14 @@ interface HeroCountdownProps {
   subtitle: string;
   /** Optional caption below the unit — e.g. "4 min to spare" during a walk. */
   detail?: string | null;
-  /** Currently selected route. */
-  selectedRoute: RouteId;
+  /** Currently selected route. Null when the favorites list is empty. */
+  selectedRoute: string | null;
   /** Routes available in the switcher. */
-  routeOptions: readonly RouteId[];
+  routeOptions: readonly string[];
   /** Called when the user picks a different route. */
-  onSelectRoute: (code: RouteId) => void;
+  onSelectRoute: (code: string) => void;
+  /** Called when the user taps "Add bus" (or the empty-state trigger). */
+  onAddBus: () => void;
   /** Optional trailing content rendered flush-right on the switcher row. */
   trailing?: ReactNode;
 }
@@ -47,6 +48,7 @@ export function HeroCountdown({
   selectedRoute,
   routeOptions,
   onSelectRoute,
+  onAddBus,
   trailing,
 }: HeroCountdownProps) {
   const isEmpty = value === '—';
@@ -65,6 +67,7 @@ export function HeroCountdown({
           selected={selectedRoute}
           options={routeOptions}
           onSelect={onSelectRoute}
+          onAddBus={onAddBus}
         />
         {trailing ? <View style={styles.trailingSlot}>{trailing}</View> : null}
       </View>
