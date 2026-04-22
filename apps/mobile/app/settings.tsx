@@ -108,7 +108,12 @@ export default function SettingsScreen() {
           }
         >
           <Picker
-            label="Clock"
+            label={
+              <HStack spacing={12}>
+                <Image systemName="clock" size={18} color="#8E8E93" />
+                <Text>Clock</Text>
+              </HStack>
+            }
             selection={clockFormatIndex < 0 ? 0 : clockFormatIndex}
             onSelectionChange={(i) => {
               const idx = typeof i === 'number' ? i : Number(i);

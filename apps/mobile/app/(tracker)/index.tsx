@@ -1,10 +1,10 @@
-import { router } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { PlatformColor, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { formatStopName } from '@/components/map/format';
+import { AddBusSheet } from '@/components/tracker/AddBusSheet';
 import { CurrentBusCard } from '@/components/tracker/CurrentBusCard';
 import { EmptyTrackerHero } from '@/components/tracker/EmptyTrackerHero';
 import { HeroCountdown } from '@/components/tracker/HeroCountdown';
@@ -39,18 +39,27 @@ import { refreshAll } from '@/services/refresh';
 
 export default function TrackerScreen() {
   const { ready, favoritedRoutes } = useSettings();
+  const [showAddBus, setShowAddBus] = useState(false);
+  const openAddBus = useCallback(() => setShowAddBus(true), []);
+  const closeAddBus = useCallback(() => setShowAddBus(false), []);
+
   if (!ready) return null;
-  if (favoritedRoutes.length === 0) {
-    return (
-      <TrackerCanvas onRefresh={() => {}} refreshing={false}>
-        <EmptyTrackerHero onAdd={() => router.push('/add-bus')} />
-      </TrackerCanvas>
-    );
-  }
-  return <TrackerActive />;
+
+  return (
+    <>
+      {favoritedRoutes.length === 0 ? (
+        <TrackerCanvas onRefresh={() => {}} refreshing={false}>
+          <EmptyTrackerHero onAdd={openAddBus} />
+        </TrackerCanvas>
+      ) : (
+        <TrackerActive onAddBus={openAddBus} />
+      )}
+      <AddBusSheet visible={showAddBus} onDismiss={closeAddBus} />
+    </>
+  );
 }
 
-function TrackerActive() {
+function TrackerActive({ onAddBus }: { onAddBus: () => void }) {
   const settings = useSettings();
   const push = usePushRegistrationState();
   const activeRoute = settings.preferredRouteCode ?? '';
@@ -330,7 +339,7 @@ function TrackerActive() {
         selectedRoute={settings.preferredRouteCode}
         routeOptions={settings.favoritedRoutes}
         onSelectRoute={settings.setPreferredRouteCode}
-        onAddBus={() => router.push('/add-bus')}
+        onAddBus={onAddBus}
         eyebrow={hero.eyebrow}
         value={hero.value}
         unit={hero.unit}

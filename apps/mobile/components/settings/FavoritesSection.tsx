@@ -71,14 +71,22 @@ export function FavoritesSection() {
 
   if (settings.favoritedRoutes.length === 0) {
     return (
-      <Section header={<Text>Favorite buses</Text>}>
-        <HStack spacing={8} modifiers={[padding({ vertical: 6 })]}>
+      <Section
+        header={<Text>Favorite buses</Text>}
+        footer={
+          <Text>
+            Add favorites from the bus dropdown on Tracker to see them here.
+          </Text>
+        }
+      >
+        <HStack spacing={12} modifiers={[padding({ vertical: 6 })]}>
+          <Image systemName="bus.fill" size={18} color="#8E8E93" />
           <Text
             modifiers={[
               foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
             ]}
           >
-            No favorite buses yet — tap the bus dropdown on Tracker to add one.
+            No favorites yet
           </Text>
         </HStack>
       </Section>
@@ -90,7 +98,7 @@ export function FavoritesSection() {
       header={<Text>Favorite buses</Text>}
       footer={
         <Text>
-          Tap a bus to change its boarding stop, reorder, or remove it.
+          Tap a favorite to change its boarding stop, reorder, or remove it.
         </Text>
       }
     >
@@ -167,9 +175,10 @@ function FavoriteRow({ code, index, count, meta }: FavoriteRowProps) {
     <Menu
       label={
         <HStack
-          spacing={10}
+          spacing={12}
           modifiers={[padding({ vertical: 6 })]}
         >
+          <Image systemName="bus.fill" size={18} color="#8E8E93" />
           <Text>{code}</Text>
           {meta?.longName ? (
             <Text

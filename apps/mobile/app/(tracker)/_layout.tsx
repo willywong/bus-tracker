@@ -12,15 +12,6 @@ export default function TrackerStackLayout() {
       }}
     >
       <Stack.Screen name="index" />
-      <Stack.Screen
-        name="add-a-bus"
-        options={{
-          presentation: 'formSheet',
-          headerShown: true,
-          title: 'Add a Bus',
-          headerLargeTitle: false,
-        }}
-      />
     </Stack>
   );
 }

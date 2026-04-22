@@ -1,12 +1,12 @@
 import type { GtfsStop, RouteSearchHit, T816Bundle } from '@bus-tracker/shared';
 import { SymbolView } from 'expo-symbols';
-import { router, Stack } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   FlatList,
   Keyboard,
+  Modal,
   PlatformColor,
   Pressable,
   ScrollView,
@@ -17,8 +17,6 @@ import {
   type ListRenderItemInfo,
 } from 'react-native';
 
-import { useHeaderHeight } from '@react-navigation/elements';
-
 import { formatStopName } from '@/components/map/format';
 import { surfaceColor } from '@/components/tracker/tokens';
 import { tokens } from '@/theme/tokens';
@@ -26,11 +24,34 @@ import { MAX_FAVORITES, useSettings } from '@/hooks/useSettings';
 import { useRouteSearch } from '@/hooks/useRouteSearch';
 import { fetchRouteBundle } from '@/services/routeBundle';
 
+interface AddBusSheetProps {
+  visible: boolean;
+  onDismiss: () => void;
+}
+
+/**
+ * Inline iOS page-sheet that presents the Add Bus flow without a route change.
+ * Mounts content only when `visible` so step state resets on every open.
+ */
+export function AddBusSheet({ visible, onDismiss }: AddBusSheetProps) {
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={onDismiss}
+      onDismiss={onDismiss}
+    >
+      {visible ? <AddBusSheetBody onDismiss={onDismiss} /> : null}
+    </Modal>
+  );
+}
+
 type Step =
   | { kind: 'search' }
   | { kind: 'pickStop'; route: RouteSearchHit };
 
-export default function AddBusScreen() {
+function AddBusSheetBody({ onDismiss }: { onDismiss: () => void }) {
   const settings = useSettings();
   const [step, setStep] = useState<Step>({ kind: 'search' });
 
@@ -38,7 +59,7 @@ export default function AddBusScreen() {
     Keyboard.dismiss();
     if (settings.favoritedRoutes.includes(hit.code)) {
       settings.setPreferredRouteCode(hit.code);
-      router.back();
+      onDismiss();
       return;
     }
     if (settings.favoritedRoutes.length >= MAX_FAVORITES) {
@@ -62,34 +83,57 @@ export default function AddBusScreen() {
       return;
     }
     settings.setPreferredRouteCode(step.route.code);
-    router.back();
+    onDismiss();
   };
 
   const handleBack = () => setStep({ kind: 'search' });
 
-  const headerHeight = useHeaderHeight();
+  const title = step.kind === 'search' ? 'Add bus' : step.route.code;
 
   return (
-    <View style={[styles.root, { paddingTop: headerHeight }]}>
-      <Stack.Screen
-        options={{
-          title: step.kind === 'search' ? 'Add bus' : step.route.code,
-          headerBackTitle: 'Search',
-          headerLeft:
-            step.kind === 'pickStop'
-              ? () => (
-                  <Pressable
-                    onPress={handleBack}
-                    hitSlop={12}
-                    accessibilityRole="button"
-                    accessibilityLabel="Back to search"
-                  >
-                    <Text style={styles.headerAction}>Back</Text>
-                  </Pressable>
-                )
-              : undefined,
-        }}
-      />
+    <View style={styles.root}>
+      <View style={styles.header}>
+        <View style={styles.headerSide}>
+          {step.kind === 'pickStop' ? (
+            <Pressable
+              onPress={handleBack}
+              hitSlop={12}
+              accessibilityRole="button"
+              accessibilityLabel="Back to search"
+              style={({ pressed }) => [
+                styles.headerButton,
+                pressed && { opacity: 0.55 },
+              ]}
+            >
+              <SymbolView
+                name="chevron.left"
+                size={17}
+                tintColor={tokens.platform.accent}
+              />
+              <Text style={styles.headerButtonText}>Search</Text>
+            </Pressable>
+          ) : null}
+        </View>
+        <Text style={styles.headerTitle} numberOfLines={1}>
+          {title}
+        </Text>
+        <View style={[styles.headerSide, styles.headerSideRight]}>
+          <Pressable
+            onPress={onDismiss}
+            hitSlop={12}
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+            style={({ pressed }) => pressed && { opacity: 0.55 }}
+          >
+            <SymbolView
+              name="xmark.circle.fill"
+              size={26}
+              tintColor={PLATFORM_TERTIARY}
+            />
+          </Pressable>
+        </View>
+      </View>
+
       {step.kind === 'search' ? (
         <SearchStep
           favorited={settings.favoritedRoutes}
@@ -119,7 +163,7 @@ function SearchStep({
 
   const inputRef = useRef<TextInput | null>(null);
   useEffect(() => {
-    const t = setTimeout(() => inputRef.current?.focus(), 120);
+    const t = setTimeout(() => inputRef.current?.focus(), 180);
     return () => clearTimeout(t);
   }, []);
 
@@ -536,10 +580,46 @@ const styles = StyleSheet.create({
     backgroundColor: PlatformColor('systemGroupedBackground'),
   },
   flex: { flex: 1 },
-  headerAction: {
+
+  // Sheet header
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    paddingTop: 16,
+    paddingBottom: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: PLATFORM_SEPARATOR,
+  },
+  headerSide: {
+    position: 'absolute',
+    top: 12,
+    bottom: 8,
+    left: 12,
+    minWidth: 44,
+    justifyContent: 'center',
+  },
+  headerSideRight: {
+    left: undefined,
+    right: 12,
+    alignItems: 'flex-end',
+  },
+  headerTitle: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: PlatformColor('label'),
+    textAlign: 'center',
+    maxWidth: '60%',
+  },
+  headerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  headerButtonText: {
     fontSize: 16,
-    color: PlatformColor('link'),
-    paddingHorizontal: 4,
+    color: tokens.platform.accent,
   },
 
   // Search bar
@@ -548,7 +628,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     marginHorizontal: CARD_MARGIN,
-    marginTop: 16,
+    marginTop: 14,
     marginBottom: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
@@ -658,11 +738,11 @@ const styles = StyleSheet.create({
 
   innerHairline: {
     height: StyleSheet.hairlineWidth,
-    marginLeft: 14 + 38 + 12, // row inset + avatar + gap
+    marginLeft: 14 + 38 + 12,
     backgroundColor: PLATFORM_SEPARATOR,
   },
 
-  // Hint block (empty / loading / error)
+  // Hint block
   hintBlock: {
     alignItems: 'center',
     gap: 10,
@@ -726,7 +806,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
 
-  // Stop row + timeline rail
+  // Stop row + rail
   stopRow: {
     flexDirection: 'row',
     alignItems: 'center',
