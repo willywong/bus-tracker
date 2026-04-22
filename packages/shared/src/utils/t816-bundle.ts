@@ -27,9 +27,9 @@ function matchesCode(
   );
 }
 
-export function filterToT816(
+export function filterToRoutes(
   parsed: ParsedGtfs,
-  codes: readonly string[] = T816_TARGET_CODES,
+  codes: readonly string[],
   now: () => number = Date.now,
 ): T816Bundle {
   const matchedRoutes: BundledRoute[] = [];
@@ -92,3 +92,6 @@ export function filterToT816(
     calendar,
   };
 }
+
+/** @deprecated Use `filterToRoutes` and pass an explicit `codes` array. */
+export const filterToT816 = filterToRoutes;

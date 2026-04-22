@@ -1,5 +1,5 @@
 export type StopId = "HOTEL_LISA_DE_INN" | "PJ210";
-export type RouteId = "T816" | "T815" | "T786" | "PJ01" | "PJ02";
+export type RouteId = string;
 
 export interface Stop {
   id: StopId;

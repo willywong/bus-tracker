@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { strToU8, zipSync } from "fflate";
 import { parseGtfsZip } from "../gtfs-parser.js";
-import { filterToT816 } from "../t816-bundle.js";
+import { T816_TARGET_CODES, filterToRoutes } from "../t816-bundle.js";
 
 function realisticFixture(): Uint8Array {
   return zipSync({
@@ -59,9 +59,9 @@ function shapeRows(shapeId: string, n: number): string {
   return out;
 }
 
-test("filterToT816 reduces full GTFS to T816 + alt routes only", () => {
+test("filterToRoutes reduces full GTFS to T816 + alt routes only", () => {
   const parsed = parseGtfsZip(realisticFixture());
-  const bundle = filterToT816(parsed);
+  const bundle = filterToRoutes(parsed, T816_TARGET_CODES);
 
   assert.equal(bundle.routes.length, 4, "T816, T786, PJ01, PJ02");
   assert.deepEqual(
@@ -94,9 +94,9 @@ test("filterToT816 reduces full GTFS to T816 + alt routes only", () => {
   assert.equal(typeof bundle.generatedAt, "number");
 });
 
-test("filterToT816 is tolerant when a code is missing", () => {
+test("filterToRoutes is tolerant when a code is missing", () => {
   const parsed = parseGtfsZip(realisticFixture());
-  const bundle = filterToT816(parsed, ["T816", "T999"]);
+  const bundle = filterToRoutes(parsed, ["T816", "T999"]);
   assert.equal(bundle.routes.length, 1);
   assert.equal(bundle.routes[0].code, "T816");
 });
