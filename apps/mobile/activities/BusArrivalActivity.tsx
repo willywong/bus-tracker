@@ -43,6 +43,8 @@ export type BusActivityProps = {
   distanceToStopMeters: number | null;
   /** True when the latest realtime update is older than the stale threshold (~90s). */
   isStale: boolean;
+  /** Contextual proximity — 'arriving' = <300 m or ≤1 min; 'arrived' = docked at stop (latched ~45s). */
+  arrivalStatus: 'en-route' | 'arriving' | 'arrived';
 };
 
 /**
@@ -121,6 +123,26 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props) => {
     }
   }
 
+  // Arrival-status pill (inline). Only when a live trip is ticking — not in
+  // pre-service. Arrived = green, Arriving = amber.
+  const isArrived = !isPreService && props.arrivalStatus === 'arrived';
+  const isArriving = !isPreService && props.arrivalStatus === 'arriving';
+  let arrivalPillText: string | null = null;
+  let arrivalPillHex: string | null = null;
+  let arrivalPillIcon:
+    | 'checkmark.circle.fill'
+    | 'figure.walk'
+    | null = null;
+  if (isArrived) {
+    arrivalPillText = 'ARRIVED';
+    arrivalPillHex = onTimeGreen;
+    arrivalPillIcon = 'checkmark.circle.fill';
+  } else if (isArriving) {
+    arrivalPillText = 'ARRIVING';
+    arrivalPillHex = lateAmber;
+    arrivalPillIcon = 'figure.walk';
+  }
+
   // Arrival clock — KL timezone, 12-hour.
   const arrivalDate = new Date(props.arrivalEpochMs);
   const arrivalClock = arrivalDate.toLocaleTimeString('en-US', {
@@ -137,7 +159,7 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props) => {
   // Must be defined inside the 'widget' function; module-scope would be
   // undefined at widget runtime.
   const pill = (
-    systemImage: 'dot.radiowaves.left.and.right' | 'clock.fill' | 'exclamationmark.circle.fill' | 'bus.fill' | 'location.fill' | 'clock.arrow.circlepath' | 'sunrise.fill',
+    systemImage: 'dot.radiowaves.left.and.right' | 'clock.fill' | 'exclamationmark.circle.fill' | 'bus.fill' | 'location.fill' | 'clock.arrow.circlepath' | 'sunrise.fill' | 'checkmark.circle.fill' | 'figure.walk',
     title: string,
     tint: string,
   ) => (
@@ -181,16 +203,28 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props) => {
       />
     </HStack>
   );
+  const compactTrailingText = isPreService
+    ? arrivalClock
+    : isArrived
+      ? 'Here'
+      : isArriving
+        ? 'Soon'
+        : minutesCompact;
+  const compactTrailingColor = isArrived
+    ? onTimeGreen
+    : isArriving
+      ? lateAmber
+      : accent;
   const compactTrailing = (
     <HStack spacing={0} modifiers={[padding({ trailing: 4 })]}>
       <Text
         modifiers={[
           font({ size: 15, weight: 'semibold', design: 'rounded' }),
           monospacedDigit(),
-          foregroundStyle(accent),
+          foregroundStyle(compactTrailingColor),
         ]}
       >
-        {isPreService ? arrivalClock : minutesCompact}
+        {compactTrailingText}
       </Text>
     </HStack>
   );
@@ -254,33 +288,75 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props) => {
     </VStack>
   ) : (
     <VStack spacing={10} modifiers={[padding({ horizontal: 12, top: 2, bottom: 6 })]}>
-      <HStack spacing={6} alignment="firstTextBaseline">
-        <Text
-          modifiers={[
-            font({ size: 20, weight: 'semibold', design: 'rounded' }),
-          ]}
-        >
-          Arrives in
-        </Text>
-        <Text
-          modifiers={[
-            font({ size: 20, weight: 'semibold', design: 'rounded' }),
-            monospacedDigit(),
-            foregroundStyle(accent),
-          ]}
-        >
-          {`${minutes} min`}
-        </Text>
-        <Text
-          modifiers={[
-            font({ size: 14, weight: 'regular', design: 'rounded' }),
-            foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
-          ]}
-        >
-          {`at ${arrivalClock}`}
-        </Text>
-        <Spacer />
-      </HStack>
+      {isArrived ? (
+        <HStack spacing={6} alignment="firstTextBaseline">
+          <Text
+            modifiers={[
+              font({ size: 20, weight: 'semibold', design: 'rounded' }),
+              foregroundStyle(onTimeGreen),
+            ]}
+          >
+            Arrived
+          </Text>
+          <Text
+            modifiers={[
+              font({ size: 14, weight: 'regular', design: 'rounded' }),
+              foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
+            ]}
+          >
+            at your stop
+          </Text>
+          <Spacer />
+        </HStack>
+      ) : isArriving ? (
+        <HStack spacing={6} alignment="firstTextBaseline">
+          <Text
+            modifiers={[
+              font({ size: 20, weight: 'semibold', design: 'rounded' }),
+              foregroundStyle(lateAmber),
+            ]}
+          >
+            Arriving…
+          </Text>
+          <Text
+            modifiers={[
+              font({ size: 14, weight: 'regular', design: 'rounded' }),
+              foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
+            ]}
+          >
+            {`~ ${arrivalClock}`}
+          </Text>
+          <Spacer />
+        </HStack>
+      ) : (
+        <HStack spacing={6} alignment="firstTextBaseline">
+          <Text
+            modifiers={[
+              font({ size: 20, weight: 'semibold', design: 'rounded' }),
+            ]}
+          >
+            Arrives in
+          </Text>
+          <Text
+            modifiers={[
+              font({ size: 20, weight: 'semibold', design: 'rounded' }),
+              monospacedDigit(),
+              foregroundStyle(accent),
+            ]}
+          >
+            {`${minutes} min`}
+          </Text>
+          <Text
+            modifiers={[
+              font({ size: 14, weight: 'regular', design: 'rounded' }),
+              foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
+            ]}
+          >
+            {`at ${arrivalClock}`}
+          </Text>
+          <Spacer />
+        </HStack>
+      )}
 
       <VStack spacing={4}>
         <HStack spacing={8}>
@@ -295,7 +371,7 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props) => {
             modifiers={[labelsHidden()]}
           />
           <Image
-            systemName="mappin.circle.fill"
+            systemName="signpost.right.fill"
             size={15}
             modifiers={[foregroundStyle(pinRed)]}
           />
@@ -323,6 +399,9 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props) => {
 
       <HStack spacing={6}>
         {pill(statusIcon, statusLabel, statusAccent)}
+        {arrivalPillText && arrivalPillHex && arrivalPillIcon
+          ? pill(arrivalPillIcon, arrivalPillText, arrivalPillHex)
+          : null}
         {props.busPlate ? pill('bus.fill', props.busPlate, staleGray) : null}
         {distanceText ? pill('location.fill', distanceText, staleGray) : null}
         {delayText && delayHex
@@ -391,8 +470,8 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props) => {
     </VStack>
   ) : (
     <VStack
-      spacing={10}
-      modifiers={[padding({ horizontal: 16, vertical: 14 })]}
+      spacing={8}
+      modifiers={[padding({ horizontal: 16, vertical: 12 })]}
     >
       <HStack spacing={6}>
         <Image
@@ -419,29 +498,103 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props) => {
         </Text>
       </HStack>
 
-      <HStack
-        spacing={6}
-        alignment="firstTextBaseline"
-        modifiers={[padding({ top: 2, bottom: 2 })]}
-      >
-        <Text
-          modifiers={[
-            font({ size: 44, weight: 'bold', design: 'rounded' }),
-            monospacedDigit(),
-          ]}
+      {isArrived ? (
+        <HStack
+          spacing={8}
+          alignment="firstTextBaseline"
+          modifiers={[padding({ top: 2, bottom: 2 })]}
         >
-          {String(minutes)}
-        </Text>
-        <Text
-          modifiers={[
-            font({ size: 17, weight: 'medium', design: 'rounded' }),
-            foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
-          ]}
+          <Text
+            modifiers={[
+              font({ size: 34, weight: 'bold', design: 'rounded' }),
+              foregroundStyle(onTimeGreen),
+            ]}
+          >
+            Arrived
+          </Text>
+          <Text
+            modifiers={[
+              font({ size: 15, weight: 'medium', design: 'rounded' }),
+              foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
+            ]}
+          >
+            at your stop
+          </Text>
+          <Spacer />
+          <Text
+            modifiers={[
+              font({ size: 13, weight: 'regular' }),
+              foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
+            ]}
+          >
+            {props.stopName}
+          </Text>
+        </HStack>
+      ) : isArriving ? (
+        <HStack
+          spacing={8}
+          alignment="firstTextBaseline"
+          modifiers={[padding({ top: 2, bottom: 2 })]}
         >
-          min away
-        </Text>
-        <Spacer />
-      </HStack>
+          <Text
+            modifiers={[
+              font({ size: 34, weight: 'bold', design: 'rounded' }),
+              foregroundStyle(lateAmber),
+            ]}
+          >
+            Arriving…
+          </Text>
+          <Text
+            modifiers={[
+              font({ size: 15, weight: 'medium', design: 'rounded' }),
+              foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
+            ]}
+          >
+            near your stop
+          </Text>
+          <Spacer />
+          <Text
+            modifiers={[
+              font({ size: 13, weight: 'regular' }),
+              foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
+            ]}
+          >
+            {props.stopName}
+          </Text>
+        </HStack>
+      ) : (
+        <HStack
+          spacing={6}
+          alignment="firstTextBaseline"
+          modifiers={[padding({ top: 2, bottom: 2 })]}
+        >
+          <Text
+            modifiers={[
+              font({ size: 44, weight: 'bold', design: 'rounded' }),
+              monospacedDigit(),
+            ]}
+          >
+            {String(minutes)}
+          </Text>
+          <Text
+            modifiers={[
+              font({ size: 17, weight: 'medium', design: 'rounded' }),
+              foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
+            ]}
+          >
+            min away
+          </Text>
+          <Spacer />
+          <Text
+            modifiers={[
+              font({ size: 13, weight: 'regular' }),
+              foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
+            ]}
+          >
+            {props.stopName}
+          </Text>
+        </HStack>
+      )}
 
       <HStack spacing={10}>
         <Image
@@ -455,33 +608,16 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props) => {
           modifiers={[labelsHidden()]}
         />
         <Image
-          systemName="mappin.circle.fill"
+          systemName="signpost.right.fill"
           size={17}
           modifiers={[foregroundStyle(pinRed)]}
         />
       </HStack>
 
       <HStack spacing={6}>
-        <Text
-          modifiers={[
-            font({ size: 12, weight: 'semibold', design: 'rounded' }),
-            foregroundStyle(accent),
-          ]}
-        >
-          {props.routeCode}
-        </Text>
-        <Spacer />
-        <Text
-          modifiers={[
-            font({ size: 13, weight: 'regular' }),
-            foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
-          ]}
-        >
-          {props.stopName}
-        </Text>
-      </HStack>
-
-      <HStack spacing={6}>
+        {arrivalPillText && arrivalPillHex && arrivalPillIcon
+          ? pill(arrivalPillIcon, arrivalPillText, arrivalPillHex)
+          : null}
         {props.busPlate ? pill('bus.fill', props.busPlate, staleGray) : null}
         {distanceText ? pill('location.fill', distanceText, staleGray) : null}
         {delayText && delayHex

@@ -6,12 +6,15 @@ import {
   type ScheduleDelay,
 } from '@bus-tracker/shared';
 import type { ScheduledDeparture } from '@/db/queries';
+import { devNow } from '@/utils/devClock';
 
 export interface ApproachingBus {
   minutesToStop: number | null;
   vehicleId: string;
   forwardMeters: number;
   source: EtaSource | null;
+  /** Vehicle speed in km/h (Prasarana feed publishes km/h despite GTFS-RT spec). Null when unknown. */
+  speedKmh: number | null;
 }
 
 export type EtaMode = 'live' | 'schedule' | 'none';
@@ -334,4 +337,128 @@ export function resolveHeroState(args: {
   }
   if (args.leaveIn <= LEAVE_NOW_WINDOW_MINUTES) return 'leaveNow';
   return 'relaxed';
+}
+
+// ---------------------------------------------------------------------------
+// Arrival status — contextual "Arriving…" / "Arrived" labels derived from the
+// precise along-polyline distance + rounded ETA minutes + vehicle speed. Lets
+// every surface (Live Activity, hero, card, map, callout) speak with one voice
+// about whether the bus is imminent or at the stop.
+// ---------------------------------------------------------------------------
+
+export type ArrivalStatus = 'en-route' | 'arriving' | 'arrived';
+
+/** Within this many meters + slow speed, the bus is considered docked at the stop. */
+export const ARRIVED_METERS = 40;
+/** Max speed (km/h) to count as "actually stopped" vs driving through a nearby point. */
+export const ARRIVED_MAX_SPEED_KMH = 8;
+/** Within this many meters, or ≤ ARRIVING_MINUTES, the bus is on final approach. */
+export const ARRIVING_METERS = 300;
+/** Minutes-until threshold that flips the status to `arriving`. */
+export const ARRIVING_MINUTES = 1;
+/** How long `"Arrived"` stays visible after the bus starts moving again. */
+export const ARRIVED_LATCH_MS = 45_000;
+
+export interface ArrivalStatusInput {
+  minutesToStop: number | null;
+  /** Exact along-polyline distance to stop, in meters. Null when no live vehicle. */
+  forwardMeters: number | null;
+  speedKmh: number | null;
+  isStale: boolean;
+  mode: EtaMode;
+}
+
+/**
+ * Pure classifier. Returns `en-route` unless we have a fresh live signal — we
+ * never claim "Arriving" or "Arrived" from schedule-only data or a stale feed.
+ */
+export function getArrivalStatus(input: ArrivalStatusInput): ArrivalStatus {
+  if (input.mode !== 'live' || input.isStale) return 'en-route';
+
+  const meters = input.forwardMeters;
+  const mins = input.minutesToStop;
+  const speed = input.speedKmh;
+
+  // Arrived: docked at the stop. Require both proximity AND low speed so we
+  // don't fire on a bus driving through an adjacent polyline point.
+  if (
+    meters != null &&
+    meters < ARRIVED_METERS &&
+    (speed == null || speed < ARRIVED_MAX_SPEED_KMH)
+  ) {
+    return 'arrived';
+  }
+
+  // Arriving: visibly close by distance OR time. The OR-clause catches the
+  // stuck-in-traffic case (close in minutes but further in meters) and the
+  // missing-forwardMeters fallback.
+  if (
+    (meters != null && meters < ARRIVING_METERS) ||
+    (mins != null && mins <= ARRIVING_MINUTES)
+  ) {
+    return 'arriving';
+  }
+
+  return 'en-route';
+}
+
+/**
+ * Latches the `'arrived'` status for ARRIVED_LATCH_MS so the Live Activity and
+ * in-app surfaces can keep the label visible for ~45s after the bus begins
+ * moving away. Resets when the tracked vehicle changes (next trip rolled in).
+ */
+export function useArrivalStatus(input: {
+  vehicleId: string | null;
+  minutesToStop: number | null;
+  forwardMeters: number | null;
+  speedKmh: number | null;
+  isStale: boolean;
+  mode: EtaMode;
+}): { status: ArrivalStatus } {
+  const raw = getArrivalStatus({
+    minutesToStop: input.minutesToStop,
+    forwardMeters: input.forwardMeters,
+    speedKmh: input.speedKmh,
+    isStale: input.isStale,
+    mode: input.mode,
+  });
+
+  const [latch, setLatch] = useState<
+    { vehicleId: string | null; since: number } | null
+  >(null);
+
+  // Start / restart the latch whenever we see a fresh 'arrived'.
+  useEffect(() => {
+    if (raw !== 'arrived') return;
+    setLatch((prev) =>
+      prev && prev.vehicleId === input.vehicleId
+        ? prev
+        : { vehicleId: input.vehicleId, since: devNow() },
+    );
+  }, [raw, input.vehicleId]);
+
+  // Clear the latch when the tracked vehicle rolls over to a different trip.
+  useEffect(() => {
+    setLatch((prev) =>
+      prev && prev.vehicleId !== input.vehicleId ? null : prev,
+    );
+  }, [input.vehicleId]);
+
+  // Expire the latch after ARRIVED_LATCH_MS — a single timeout per latch is
+  // enough; no interval ticks needed.
+  useEffect(() => {
+    if (!latch) return;
+    const remaining = ARRIVED_LATCH_MS - (devNow() - latch.since);
+    if (remaining <= 0) {
+      setLatch(null);
+      return;
+    }
+    const t = setTimeout(() => setLatch(null), remaining);
+    return () => clearTimeout(t);
+  }, [latch]);
+
+  if (latch && devNow() - latch.since < ARRIVED_LATCH_MS) {
+    return { status: 'arrived' };
+  }
+  return { status: raw };
 }

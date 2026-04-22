@@ -9,6 +9,7 @@ import { StyleSheet, View, type ColorValue } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, {
   AnimatedRegion,
+  Circle,
   Marker,
   MarkerAnimated,
   Polyline,
@@ -20,11 +21,11 @@ import { BusCallout } from '@/components/map/BusCallout';
 import { MapLegendButton } from '@/components/map/MapLegendButton';
 import { MapStatusCard } from '@/components/map/MapStatusCard';
 import { MapStatusCardSkeleton } from '@/components/map/MapStatusCardSkeleton';
+import { RecenterRouteButton } from '@/components/map/RecenterRouteButton';
 import { RecenterStopButton } from '@/components/map/RecenterStopButton';
 import { ScheduledBusCallout } from '@/components/map/ScheduledBusCallout';
 import { ScheduledBusMarker } from '@/components/map/ScheduledBusMarker';
 import { StopCallout } from '@/components/map/StopCallout';
-import { TrafficSignalMarker } from '@/components/map/TrafficSignalMarker';
 import { openDb } from '@/db/database';
 import {
   getRoutePolyline,
@@ -87,6 +88,8 @@ export default function MapScreen() {
   const settings = useSettings();
   useLocationPermission();
   const [staticData, setStaticData] = useState<StaticData | null>(null);
+  const [mapRegion, setMapRegion] = useState<Region | null>(null);
+  const [mapSize, setMapSize] = useState({ width: 0, height: 0 });
   const { positions, lastUpdated, nextRefreshAt, isRefreshing } =
     useBusPosition({
       routeCode: settings.preferredRouteCode,
@@ -156,6 +159,12 @@ export default function MapScreen() {
       },
       450,
     );
+  }, [staticData]);
+
+  const handleRecenterRoute = useCallback(() => {
+    const region = staticData?.region;
+    if (!region) return;
+    mapRef.current?.animateToRegion(region, 550);
   }, [staticData]);
 
   // Per-bus scheduled arrival (for BusCallout). Keyed by vehicleId. We look up
@@ -258,6 +267,21 @@ export default function MapScreen() {
     }
   }, [positions]);
 
+  // Pick a meter-radius for the traffic-signal circles that keeps them
+  // visually ~10 px in diameter regardless of zoom level.
+  const signalRadiusMeters = useMemo(() => {
+    const r = mapRegion ?? staticData?.region;
+    if (!r || mapSize.width === 0) return 8;
+    const metersPerDegLng = 111_320 * Math.cos((r.latitude * Math.PI) / 180);
+    const mpp = (r.longitudeDelta * metersPerDegLng) / mapSize.width;
+    return Math.max(2, 5 * mpp);
+  }, [
+    mapRegion?.latitude,
+    mapRegion?.longitudeDelta,
+    mapSize.width,
+    staticData?.region,
+  ]);
+
   if (!staticData) {
     return (
       <View style={styles.root}>
@@ -279,6 +303,8 @@ export default function MapScreen() {
         showsUserLocation
         showsMyLocationButton={false}
         showsTraffic
+        onRegionChange={setMapRegion}
+        onLayout={(e) => setMapSize(e.nativeEvent.layout)}
       >
         {staticData.polyline.length >= 2 && (
           <Polyline
@@ -288,9 +314,14 @@ export default function MapScreen() {
           />
         )}
         {staticData.trafficSignals.map((s) => (
-          <TrafficSignalMarker
+          <Circle
             key={s.osm_id}
-            coordinate={{ latitude: s.lat, longitude: s.lng }}
+            center={{ latitude: s.lat, longitude: s.lng }}
+            radius={signalRadiusMeters}
+            fillColor={SIGNAL_RED_FILL}
+            strokeColor={SIGNAL_RED_STROKE}
+            strokeWidth={1}
+            zIndex={0}
           />
         ))}
         <Marker
@@ -298,9 +329,19 @@ export default function MapScreen() {
             latitude: staticData.stop.stop_lat,
             longitude: staticData.stop.stop_lon,
           }}
-          pinColor="green"
+          flat
+          anchor={{ x: 0.5, y: 0.5 }}
           calloutAnchor={{ x: 0.5, y: 0 }}
+          tracksViewChanges={false}
         >
+          <View style={styles.stopMarker}>
+            <SymbolView
+              name="signpost.right.fill"
+              size={16}
+              tintColor="#FFFFFF"
+              resizeMode="scaleAspectFit"
+            />
+          </View>
           <StopCallout
             stopName={staticData.stop.stop_name}
             eta={eta}
@@ -389,6 +430,7 @@ export default function MapScreen() {
       >
         <View style={styles.fabStack}>
           <RecenterStopButton onPress={handleRecenterStop} />
+          <RecenterRouteButton onPress={handleRecenterRoute} />
           <MapLegendButton />
         </View>
       </SafeAreaView>
@@ -398,6 +440,8 @@ export default function MapScreen() {
 
 const busColor = tokens.color.accent as ColorValue;
 const bgColor = tokens.color.bg as ColorValue;
+const SIGNAL_RED_FILL = 'rgba(208, 2, 27, 1)';
+const SIGNAL_RED_STROKE = 'rgba(255, 255, 255, 0.9)';
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: bgColor },
@@ -425,6 +469,17 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#FFFFFF',
     backgroundColor: busColor,
+    alignItems: 'center',
+    justifyContent: 'center',
+    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.25)',
+  },
+  stopMarker: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    backgroundColor: '#2BA84A',
     alignItems: 'center',
     justifyContent: 'center',
     boxShadow: '0 2px 8px rgba(0, 0, 0, 0.25)',

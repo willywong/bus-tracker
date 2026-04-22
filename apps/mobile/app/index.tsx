@@ -55,6 +55,7 @@ export default function TrackerScreen() {
     firstBusToday,
     lastBusToday,
     polylineMeters,
+    arrivalStatus,
   } = eta;
   const { lastUpdated, positions, nextRefreshAt, isRefreshing } =
     useBusPosition({
@@ -79,6 +80,7 @@ export default function TrackerScreen() {
     stopName,
     primaryArrival,
     resolved,
+    arrivalStatus,
     isStale: updated.isStale,
     beforeServiceStart,
     firstBusToday,
@@ -227,6 +229,26 @@ export default function TrackerScreen() {
         detail: null,
       };
     }
+    // Arrival status override — once the bus is at/near the user's stop, the
+    // user's "Leave in X min" countdown is no longer the most informative
+    // headline. Arrived wins; Arriving wins when the user should already be
+    // at the stop (leaveIn == 0).
+    if (arrivalStatus === 'arrived') {
+      return {
+        eyebrow: 'Bus arrived',
+        value: 'Now',
+        unit: 'at your stop',
+        detail: null,
+      };
+    }
+    if (arrivalStatus === 'arriving' && leaveIn != null && leaveIn <= 0) {
+      return {
+        eyebrow: 'Bus arriving',
+        value: 'Soon',
+        unit: 'at your stop',
+        detail: null,
+      };
+    }
     if (isWaitingForNext) {
       return {
         eyebrow: 'Wait for next bus',
@@ -281,6 +303,7 @@ export default function TrackerScreen() {
     beforeServiceStart,
     firstBusToday,
     serviceEnded,
+    arrivalStatus,
   ]);
 
   const subtitle = stopName ? `to ${formatStopName(stopName)}` : 'to your stop';
@@ -351,6 +374,7 @@ export default function TrackerScreen() {
           isRefreshing={isRefreshing}
           polylineMeters={polylineMeters}
           trafficSignals={trafficSignals}
+          arrivalStatus={arrivalStatus}
           nextEntry={secondaryArrival}
           nextLivePosition={
             secondaryArrival?.live?.vehicleId

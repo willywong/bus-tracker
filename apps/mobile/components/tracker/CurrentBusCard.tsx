@@ -27,6 +27,7 @@ import {
   formatVehicleObservedAge,
   useLastUpdatedLabel,
   useRefreshCountdownSeconds,
+  type ArrivalStatus,
   type DelayTone,
 } from '@/components/tracker/logic';
 import {
@@ -57,6 +58,8 @@ interface CurrentBusCardProps {
   polylineMeters: number | null;
   /** Traffic signals on the active route; used to interpret a stationary bus as "at a red light". */
   trafficSignals: readonly TrafficSignalRow[];
+  /** Contextual proximity — drives the "ARRIVING" / "ARRIVED" eyebrow + status-row label. */
+  arrivalStatus: ArrivalStatus;
   /** The bus immediately after `entry`. Rendered as a small footer section when present. */
   nextEntry?: ArrivalEntry | null;
   /** Live telemetry for the next-bus entry (used for the "live · 55 km/h" tag). */
@@ -73,27 +76,35 @@ export function CurrentBusCard({
   isRefreshing,
   polylineMeters,
   trafficSignals,
+  arrivalStatus,
   nextEntry,
   nextLivePosition,
 }: CurrentBusCardProps) {
   const live = entry.live;
   const sched = entry.sched;
   const isLive = entry.kind === 'live' && live != null;
+  const isArrived = arrivalStatus === 'arrived';
+  const isArriving = arrivalStatus === 'arriving';
 
   const minutes =
     isLive && live?.minutesToStop != null
       ? live.minutesToStop
       : Math.max(0, Math.round((entry.epochMs - Date.now()) / 60_000));
 
-  const eyebrow =
-    isLive && minutes <= 0 ? 'ARRIVING NOW' : 'ARRIVING IN';
+  const eyebrow = isArrived
+    ? 'ARRIVED'
+    : isArriving
+      ? 'ARRIVING'
+      : isLive && minutes <= 0
+        ? 'ARRIVING NOW'
+        : 'ARRIVING IN';
 
   const projectedClock = formatClockHHMM(entry.epochMs);
   // Inline headline shown next to the big minutes value — only when the
   // schedule compare row isn't already displaying the same clock time. Hides
-  // on "arriving now" where the eyebrow already says everything.
+  // on "arriving now" / "arrived" where the eyebrow already says everything.
   const inlineClockLabel =
-    minutes <= 0
+    minutes <= 0 || isArrived
       ? null
       : isLive
         ? `Arrives ${projectedClock}`
@@ -212,6 +223,7 @@ export function CurrentBusCard({
           lastUpdated={lastUpdated}
           nextRefreshAt={nextRefreshAt}
           isRefreshing={isRefreshing}
+          arrivalStatus={arrivalStatus}
         />
       </View>
 
@@ -236,21 +248,40 @@ export function CurrentBusCard({
         </View>
         <View style={styles.arrivalRow}>
           <View style={styles.valueBlock}>
-            <Animated.Text
-              key={`${minutes}-${entry.kind}`}
-              entering={SlideInDown.duration(260).easing(
-                Easing.out(Easing.cubic),
-              )}
-              exiting={SlideOutUp.duration(180).easing(Easing.in(Easing.cubic))}
-              style={styles.value}
-              selectable
-              allowFontScaling={false}
-            >
-              {minutes}
-            </Animated.Text>
-            <Text style={styles.unit} selectable>
-              min
-            </Text>
+            {isArrived ? (
+              <Animated.Text
+                key="arrived"
+                entering={SlideInDown.duration(260).easing(
+                  Easing.out(Easing.cubic),
+                )}
+                style={[styles.value, styles.valueArrived]}
+                selectable
+                allowFontScaling={false}
+              >
+                Now
+              </Animated.Text>
+            ) : (
+              <>
+                <Animated.Text
+                  key={`${minutes}-${entry.kind}`}
+                  entering={SlideInDown.duration(260).easing(
+                    Easing.out(Easing.cubic),
+                  )}
+                  exiting={SlideOutUp.duration(180).easing(Easing.in(Easing.cubic))}
+                  style={[styles.value, isArriving ? styles.valueArriving : null]}
+                  selectable
+                  allowFontScaling={false}
+                >
+                  {minutes}
+                </Animated.Text>
+                <Text
+                  style={[styles.unit, isArriving ? styles.valueArriving : null]}
+                  selectable
+                >
+                  min
+                </Text>
+              </>
+            )}
           </View>
 
           {hasCompareRow && delayLabel ? (
@@ -648,7 +679,7 @@ function ApproachRail({
         </Animated.View>
       </View>
       <SymbolView
-        name="mappin.circle.fill"
+        name="signpost.right.fill"
         size={22}
         tintColor={sourceColor.live}
         resizeMode="scaleAspectFit"
@@ -667,12 +698,14 @@ function StatusRow({
   lastUpdated,
   nextRefreshAt,
   isRefreshing,
+  arrivalStatus,
 }: {
   isLive: boolean;
   isStale: boolean;
   lastUpdated: number | null;
   nextRefreshAt: number | null;
   isRefreshing: boolean;
+  arrivalStatus: ArrivalStatus;
 }) {
   const updated = useLastUpdatedLabel(lastUpdated);
   const countdown = useRefreshCountdownSeconds(nextRefreshAt);
@@ -686,37 +719,56 @@ function StatusRow({
   const refreshLabel =
     countdown != null && countdown > 0 ? `refresh in ${countdown}s` : null;
 
-  const tone: 'live' | 'stale' | 'neutral' = effectivelyRefreshing
-    ? 'live'
-    : isLive
-      ? isStale
-        ? 'stale'
-        : 'live'
-      : 'neutral';
+  const isArrived = arrivalStatus === 'arrived';
+  const isArriving = arrivalStatus === 'arriving';
+
+  const tone: 'live' | 'stale' | 'neutral' | 'arrived' | 'arriving' = isArrived
+    ? 'arrived'
+    : isArriving
+      ? 'arriving'
+      : effectivelyRefreshing
+        ? 'live'
+        : isLive
+          ? isStale
+            ? 'stale'
+            : 'live'
+          : 'neutral';
 
   const dotColor =
-    tone === 'live'
-      ? sourceColor.live
-      : tone === 'stale'
-        ? sourceColor.stale
-        : (PlatformColor('tertiaryLabel') as unknown as string);
-  const dotStatic = tone !== 'live';
+    tone === 'arrived'
+      ? '#30D158'
+      : tone === 'arriving'
+        ? '#FF9F0A'
+        : tone === 'live'
+          ? sourceColor.live
+          : tone === 'stale'
+            ? sourceColor.stale
+            : (PlatformColor('tertiaryLabel') as unknown as string);
+  const dotStatic = tone !== 'live' && tone !== 'arriving';
   const labelColor =
-    tone === 'live'
-      ? sourceColor.live
-      : tone === 'stale'
-        ? sourceColor.stale
-        : (PlatformColor('secondaryLabel') as unknown as string);
+    tone === 'arrived'
+      ? '#30D158'
+      : tone === 'arriving'
+        ? '#FF9F0A'
+        : tone === 'live'
+          ? sourceColor.live
+          : tone === 'stale'
+            ? sourceColor.stale
+            : (PlatformColor('secondaryLabel') as unknown as string);
 
-  const primary = effectivelyRefreshing
-    ? 'Refreshing…'
-    : isLive
-      ? isStale
-        ? 'Stale'
-        : 'Live'
-      : lastUpdated == null
-        ? 'Waiting for live data'
-        : 'Timetable';
+  const primary = isArrived
+    ? 'Arrived'
+    : isArriving
+      ? 'Arriving'
+      : effectivelyRefreshing
+        ? 'Refreshing…'
+        : isLive
+          ? isStale
+            ? 'Stale'
+            : 'Live'
+          : lastUpdated == null
+            ? 'Waiting for live data'
+            : 'Timetable';
 
   const secondary = effectivelyRefreshing
     ? null
@@ -813,6 +865,14 @@ const styles = StyleSheet.create({
     color: PlatformColor('label'),
     fontVariant: ['tabular-nums'],
     letterSpacing: -1,
+  },
+  valueArrived: {
+    color: '#30D158',
+    fontSize: 30,
+    letterSpacing: -0.6,
+  },
+  valueArriving: {
+    color: '#FF9F0A',
   },
   unit: {
     fontSize: 13,

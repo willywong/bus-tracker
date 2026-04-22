@@ -26,7 +26,9 @@ import { useScheduledDepartures } from "@/hooks/useScheduledDepartures";
 import { fetchTrafficEta, type TrafficProvider } from "@/services/trafficEta";
 import {
   resolveEta,
+  useArrivalStatus,
   type ApproachingBus,
+  type ArrivalStatus,
   type EtaMode,
   type ResolvedEta,
 } from "@/components/tracker/logic";
@@ -38,6 +40,10 @@ const TRAFFIC_REFRESH_MS = 30_000;
 const STALE_AFTER_MS = 60_000;
 /** Rough bus speed used to project a "next vehicle" ETA when we don't hit /traffic-eta for the second bus. */
 const FALLBACK_BUS_METERS_PER_MINUTE = 20_000 / 60;
+
+function toFiniteOrNull(v: number | null | undefined): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
 
 /** Max |live-projected-arrival - trip-scheduled-departure| we trust before declaring the trip-id match unreliable. */
 export const TRIP_MATCH_MAX_MIN = 15;
@@ -95,6 +101,8 @@ export interface UseEtaResult {
   beforeServiceStart: boolean;
   /** Total length (meters) of the active route's polyline. Null until the static cache loads. */
   polylineMeters: number | null;
+  /** Hybrid distance+time+speed classifier for the primary arrival. Latches `'arrived'` for ~45s. */
+  arrivalStatus: ArrivalStatus;
 }
 
 interface StaticCtx {
@@ -237,6 +245,7 @@ export function useEta({
       vehicleId: picked.vehicle.vehicleId,
       forwardMeters: picked.evaluation.forwardMeters,
       source: null,
+      speedKmh: toFiniteOrNull(picked.vehicle.speed),
     };
   }, [staticCtx, positions, composition?.vehicleId]);
 
@@ -311,6 +320,12 @@ export function useEta({
       ? Math.round(composition.minutesToStop)
       : null;
 
+  const currentSpeedKmh: number | null = useMemo(() => {
+    if (composition?.vehicleId == null) return null;
+    const hit = positions.find((p) => p.vehicleId === composition.vehicleId);
+    return toFiniteOrNull(hit?.speed);
+  }, [composition?.vehicleId, positions]);
+
   const current: ApproachingBus | null =
     composition?.vehicleId != null && composition.forwardMeters != null
       ? {
@@ -318,6 +333,7 @@ export function useEta({
           vehicleId: composition.vehicleId,
           forwardMeters: composition.forwardMeters,
           source: composition.source,
+          speedKmh: currentSpeedKmh,
         }
       : null;
 
@@ -576,6 +592,20 @@ export function useEta({
     primaryArrival,
   ]);
 
+  // Arrival status — derived from the primary arrival's live telemetry. Uses
+  // the live entry even when `resolveEta` preferred schedule (so the classifier
+  // still has forwardMeters/speed to work with), but gates on `resolved.mode`
+  // inside the helper so schedule-only arrivals never report arriving/arrived.
+  const primaryLive = primaryArrival?.live ?? null;
+  const { status: arrivalStatus } = useArrivalStatus({
+    vehicleId: primaryLive?.vehicleId ?? null,
+    minutesToStop: resolved.minutesToStop,
+    forwardMeters: primaryLive?.forwardMeters ?? null,
+    speedKmh: primaryLive?.speedKmh ?? null,
+    isStale,
+    mode: resolved.mode,
+  });
+
   return {
     minutesToStop: resolved.minutesToStop,
     isStale,
@@ -600,5 +630,6 @@ export function useEta({
     serviceEnded: scheduled.serviceEnded,
     beforeServiceStart: scheduled.beforeServiceStart,
     polylineMeters,
+    arrivalStatus,
   };
 }

@@ -6,7 +6,7 @@ import {
   bearingToCardinal,
   formatArrivalClock,
 } from '@/components/map/format';
-import type { ApproachingBus } from '@/components/tracker/logic';
+import type { ApproachingBus, ArrivalStatus } from '@/components/tracker/logic';
 import {
   formatClockHHMM,
   formatDeltaMin,
@@ -23,6 +23,8 @@ interface ApproachingBusRowProps {
   /** Delay vs schedule for the live trip (only meaningful when `live` is present). */
   delay: ScheduleDelay | null;
   isStale: boolean;
+  /** Optional contextual proximity — flips the caption to "Arriving" / "Arrived" and the value to a word. */
+  arrivalStatus?: ArrivalStatus;
 }
 
 export function ApproachingBusRow({
@@ -32,11 +34,18 @@ export function ApproachingBusRow({
   scheduledAt,
   delay,
   isStale,
+  arrivalStatus,
 }: ApproachingBusRowProps) {
   const hasLive = live?.minutesToStop != null;
   const resolvedLabel =
     label ?? (hasLive ? 'Current' : scheduledAt != null ? 'Next' : 'Buses');
-  const value = formatValue(live, scheduledAt);
+  const value = formatValue(live, scheduledAt, arrivalStatus);
+  const valueTone =
+    arrivalStatus === 'arrived'
+      ? styles.valueArrived
+      : arrivalStatus === 'arriving'
+        ? styles.valueArriving
+        : null;
 
   return (
     <View
@@ -58,12 +67,12 @@ export function ApproachingBusRow({
             />
           )}
           <Text style={styles.captionText} selectable numberOfLines={2}>
-            {buildCaption(hasLive, live, livePosition, scheduledAt, delay, isStale)}
+            {buildCaption(hasLive, live, livePosition, scheduledAt, delay, isStale, arrivalStatus)}
           </Text>
         </View>
       </View>
       <Text
-        style={[styles.value, !hasLive && styles.valueMuted]}
+        style={[styles.value, !hasLive && styles.valueMuted, valueTone]}
         selectable
         allowFontScaling={false}
       >
@@ -76,7 +85,10 @@ export function ApproachingBusRow({
 function formatValue(
   live: ApproachingBus | null,
   scheduledAt: number | null,
+  arrivalStatus: ArrivalStatus | undefined,
 ): string {
+  if (arrivalStatus === 'arrived') return 'Now';
+  if (arrivalStatus === 'arriving') return 'Soon';
   if (live?.minutesToStop != null) return `${live.minutesToStop} min`;
   if (scheduledAt != null) {
     const mins = Math.max(0, Math.round((scheduledAt - Date.now()) / 60_000));
@@ -92,10 +104,13 @@ function buildCaption(
   scheduledAt: number | null,
   delay: ScheduleDelay | null,
   isStale: boolean,
+  arrivalStatus: ArrivalStatus | undefined,
 ): string {
   if (hasLive && live) {
     const parts: string[] = [];
-    if (live.minutesToStop != null) {
+    if (arrivalStatus === 'arrived') parts.push('At your stop');
+    else if (arrivalStatus === 'arriving') parts.push('Arriving soon');
+    else if (live.minutesToStop != null) {
       if (live.minutesToStop <= 0) parts.push('Arriving now');
       else {
         const clock = formatArrivalClock(live.minutesToStop);
@@ -185,5 +200,11 @@ const styles = StyleSheet.create({
   },
   valueMuted: {
     color: PlatformColor('secondaryLabel'),
+  },
+  valueArrived: {
+    color: '#30D158',
+  },
+  valueArriving: {
+    color: '#FF9F0A',
   },
 });

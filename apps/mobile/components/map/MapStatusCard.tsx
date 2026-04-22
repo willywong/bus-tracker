@@ -35,7 +35,9 @@ type CardState =
   | 'waiting'
   | 'schedule'
   | 'service-ended'
-  | 'before-service';
+  | 'before-service'
+  | 'arriving'
+  | 'arrived';
 
 interface MapStatusCardProps {
   routeCode: string;
@@ -83,9 +85,13 @@ export function MapStatusCard({
 
   const state: CardState =
     eta.current != null && eta.minutesToStop != null
-      ? eta.isStale
-        ? 'stale'
-        : 'live'
+      ? eta.arrivalStatus === 'arrived'
+        ? 'arrived'
+        : eta.arrivalStatus === 'arriving'
+          ? 'arriving'
+          : eta.isStale
+            ? 'stale'
+            : 'live'
       : eta.serviceEnded
         ? 'service-ended'
         : eta.beforeServiceStart
@@ -95,31 +101,45 @@ export function MapStatusCard({
             : 'waiting';
 
   const dotColor =
-    state === 'live'
-      ? heroStateColor.relaxed
-      : state === 'service-ended' || state === 'before-service'
-        ? (PlatformColor('tertiaryLabel') as unknown as string)
-        : heroStateColor.waiting;
+    state === 'arrived'
+      ? '#30D158'
+      : state === 'arriving'
+        ? '#FF9F0A'
+        : state === 'live'
+          ? heroStateColor.relaxed
+          : state === 'service-ended' || state === 'before-service'
+            ? (PlatformColor('tertiaryLabel') as unknown as string)
+            : heroStateColor.waiting;
   const statusLabel =
-    state === 'live'
-      ? 'Live'
-      : state === 'stale'
-        ? 'Stale'
-        : state === 'schedule'
-          ? 'Scheduled'
-          : state === 'service-ended'
-            ? 'Off duty'
-            : state === 'before-service'
-              ? 'Pre-service'
-              : 'Waiting';
+    state === 'arrived'
+      ? 'Arrived'
+      : state === 'arriving'
+        ? 'Arriving'
+        : state === 'live'
+          ? 'Live'
+          : state === 'stale'
+            ? 'Stale'
+            : state === 'schedule'
+              ? 'Scheduled'
+              : state === 'service-ended'
+                ? 'Off duty'
+                : state === 'before-service'
+                  ? 'Pre-service'
+                  : 'Waiting';
   const scheduleClock =
-    state === 'live' && eta.currentScheduled
+    (state === 'live' || state === 'arriving') && eta.currentScheduled
       ? formatClockHHMM(eta.currentScheduled.departureEpochMs)
       : null;
   const delayLabel =
-    state === 'live' ? formatDelayLabel(eta.resolved.delay) : null;
+    state === 'live' || state === 'arriving'
+      ? formatDelayLabel(eta.resolved.delay)
+      : null;
 
-  const showTelemetry = state === 'live' || state === 'stale';
+  const showTelemetry =
+    state === 'live' ||
+    state === 'stale' ||
+    state === 'arriving' ||
+    state === 'arrived';
   const showMetaRow = state !== 'service-ended' && state !== 'before-service';
 
   const niceStop = useMemo(() => formatStopName(stopName), [stopName]);
@@ -164,6 +184,18 @@ export function MapStatusCard({
               minutes={scheduleMinutes}
               nextAt={nextScheduled.departureEpochMs}
             />
+          ) : state === 'arrived' ? (
+            <ArrivalBody tone="arrived" />
+          ) : state === 'arriving' ? (
+            <>
+              <ArrivalBody tone="arriving" />
+              {scheduleClock ? (
+                <ScheduleStack
+                  schedClock={scheduleClock}
+                  delayLabel={delayLabel}
+                />
+              ) : null}
+            </>
           ) : (
             <>
               <EtaBody
@@ -409,6 +441,32 @@ function EtaBody({
   );
 }
 
+function ArrivalBody({ tone }: { tone: 'arriving' | 'arrived' }) {
+  const color = tone === 'arrived' ? '#30D158' : '#FF9F0A';
+  const eyebrow = tone === 'arrived' ? 'Bus arrived' : 'Bus arriving';
+  const title = tone === 'arrived' ? 'Now' : 'Soon';
+  const subtitle = tone === 'arrived' ? 'at your stop' : 'near your stop';
+  return (
+    <View style={styles.heroCol}>
+      <Text style={styles.eyebrow} selectable numberOfLines={1}>
+        {eyebrow}
+      </Text>
+      <View style={styles.numberRow}>
+        <Text
+          style={[styles.arrivalTitle, { color }]}
+          selectable
+          allowFontScaling={false}
+        >
+          {title}
+        </Text>
+        <Text style={styles.unit} selectable>
+          {subtitle}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
 function TrafficErrorBadge() {
   return (
     <View style={styles.trafficBadge}>
@@ -527,6 +585,12 @@ const styles = StyleSheet.create({
     fontWeight: '300',
     fontVariant: ['tabular-nums'],
     letterSpacing: -1.2,
+  },
+  arrivalTitle: {
+    fontSize: 34,
+    lineHeight: 40,
+    fontWeight: '700',
+    letterSpacing: -0.8,
   },
   unit: {
     fontSize: 15,

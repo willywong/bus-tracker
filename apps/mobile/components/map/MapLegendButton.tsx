@@ -129,7 +129,7 @@ function StopGlyph() {
   return (
     <View style={styles.stopCircle}>
       <SymbolView
-        name="mappin"
+        name="signpost.right.fill"
         size={13}
         tintColor="#FFFFFF"
         weight="bold"

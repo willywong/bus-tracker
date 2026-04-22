@@ -7,7 +7,10 @@ import BusArrivalActivity, {
 } from '@/activities/BusArrivalActivity';
 import { formatStopName } from '@/components/map/format';
 import type { ArrivalEntry } from '@/hooks/useEta';
-import type { ResolvedEta } from '@/components/tracker/logic';
+import type {
+  ArrivalStatus,
+  ResolvedEta,
+} from '@/components/tracker/logic';
 import { devNow } from '@/utils/devClock';
 
 type Instance = ReturnType<typeof BusArrivalActivity.start>;
@@ -31,6 +34,8 @@ interface UseBusLiveActivityArgs {
   stopName: string | null;
   primaryArrival: ArrivalEntry | null;
   resolved: ResolvedEta;
+  /** Contextual proximity status — drives the Live Activity's "ARRIVING" / "ARRIVED" pill and keeps the activity alive through the 45s arrived-latch. */
+  arrivalStatus: ArrivalStatus;
   /** True when the latest realtime ping is older than the stale threshold. */
   isStale?: boolean;
   /** True when today's service hasn't started yet. */
@@ -51,6 +56,7 @@ export function useBusLiveActivity({
   stopName,
   primaryArrival,
   resolved,
+  arrivalStatus,
   isStale = false,
   beforeServiceStart = false,
   firstBusToday = null,
@@ -96,6 +102,7 @@ export function useBusLiveActivity({
         source: 'schedule',
         distanceToStopMeters: null,
         isStale: false,
+        arrivalStatus: 'en-route',
       };
 
       const inst = instanceRef.current;
@@ -123,8 +130,15 @@ export function useBusLiveActivity({
     const minutes = resolved.minutesToStop ?? primaryArrival?.live?.minutesToStop ?? null;
     const arrivalEpoch = primaryArrival?.epochMs ?? null;
 
-    // End once the bus has arrived or we lose a usable ETA (and no pre-service fallback).
-    if (primaryArrival == null || arrivalEpoch == null || minutes == null || minutes <= 0) {
+    // End once we lose a usable ETA OR the bus is en-route past the stop
+    // (minutes ≤ 0 AND no longer arriving/arrived — the latch has expired or
+    // the next trip has rolled in). Keeping the activity alive while status is
+    // 'arriving' or 'arrived' preserves the ~45s "Arrived" linger.
+    const shouldEnd =
+      primaryArrival == null ||
+      arrivalEpoch == null ||
+      (arrivalStatus === 'en-route' && (minutes == null || minutes <= 0));
+    if (shouldEnd) {
       const inst = instanceRef.current;
       if (inst) {
         void inst.end('default', lastPropsRef.current ?? undefined, new Date());
@@ -153,6 +167,7 @@ export function useBusLiveActivity({
       distanceToStopMeters:
         forwardMeters != null && Number.isFinite(forwardMeters) ? forwardMeters : null,
       isStale,
+      arrivalStatus,
     };
 
     const inst = instanceRef.current;
@@ -183,6 +198,7 @@ export function useBusLiveActivity({
     isStale,
     beforeServiceStart,
     firstBusToday,
+    arrivalStatus,
   ]);
 
   // Final cleanup on unmount.

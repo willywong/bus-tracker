@@ -14,6 +14,7 @@ This folder contains the step-by-step build plan for the T816 Bus Tracker iOS ap
 9. `08-notifications/` — Expo Push "Leave now" alerts via serverless cron
 10. `09-device-install/` — Xcode free-signing runbook
 11. `10-polish/` — perf, error states, a11y, final README
+12. `11-multi-bus-search/` — user-curated favorite bus list + Add Bus search modal
 
 ## File shape (every task file)
 - **Context** — what prior steps delivered (carried forward each hand-off)
