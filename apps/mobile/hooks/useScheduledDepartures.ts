@@ -82,6 +82,15 @@ export function useScheduledDepartures(
         if (cancelled) return;
         setState({ upcoming, bounds, ready: true, error: null });
       } catch (err) {
+        console.error(
+          '[scheduledDepartures] load failed',
+          'routeCode=', routeCode,
+          'stopId=', stopId,
+          'name=', (err as { name?: string })?.name,
+          'message=', (err as { message?: string })?.message,
+          'stack=', (err as { stack?: string })?.stack,
+          'raw=', err,
+        );
         if (cancelled) return;
         setState((prev) => ({
           ...prev,

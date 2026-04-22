@@ -73,7 +73,10 @@ export function StopCallout({ stopName, eta, schedule }: StopCalloutProps) {
               <Text style={styles.scheduleLabel}>Scheduled</Text>
               <View style={styles.scheduleTimes}>
                 {scheduleList.map((d) => (
-                  <Text key={d.tripId} style={styles.scheduleClock}>
+                  <Text
+                    key={`${d.tripId}-${d.stopSequence}`}
+                    style={styles.scheduleClock}
+                  >
                     {formatClockHHMM(d.departureEpochMs)}
                   </Text>
                 ))}

@@ -1,30 +1,11 @@
-import { useEffect } from 'react';
-import {
-  DynamicColorIOS,
-  StyleSheet,
-  View,
-  type ViewStyle,
-  type StyleProp,
-} from 'react-native';
-import Animated, {
-  Easing,
-  useAnimatedStyle,
-  useSharedValue,
-  withDelay,
-  withRepeat,
-  withTiming,
-} from 'react-native-reanimated';
+import { DynamicColorIOS, StyleSheet, View } from 'react-native';
 
 import { GlassGuard } from '@/components/GlassGuard';
+import { ShimmerBar } from '@/components/shared/Skeleton';
 
 const SCRIM_COLOR = DynamicColorIOS({
   light: 'rgba(255, 255, 255, 0.5)',
   dark: 'rgba(0, 0, 0, 0.45)',
-});
-
-const BAR_COLOR = DynamicColorIOS({
-  light: 'rgba(0, 0, 0, 0.10)',
-  dark: 'rgba(255, 255, 255, 0.14)',
 });
 
 export function MapStatusCardSkeleton() {
@@ -54,35 +35,6 @@ export function MapStatusCardSkeleton() {
         </View>
       </View>
     </GlassGuard>
-  );
-}
-
-function ShimmerBar({
-  style,
-  delay,
-}: {
-  style: StyleProp<ViewStyle>;
-  delay: number;
-}) {
-  const opacity = useSharedValue(0.5);
-
-  useEffect(() => {
-    opacity.value = withDelay(
-      delay,
-      withRepeat(
-        withTiming(1, { duration: 900, easing: Easing.inOut(Easing.quad) }),
-        -1,
-        true,
-      ),
-    );
-  }, [opacity, delay]);
-
-  const animated = useAnimatedStyle(() => ({ opacity: opacity.value }));
-
-  return (
-    <Animated.View
-      style={[{ backgroundColor: BAR_COLOR }, style, animated]}
-    />
   );
 }
 

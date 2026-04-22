@@ -6,6 +6,7 @@ import {
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View, type ColorValue } from 'react-native';
+import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, {
   AnimatedRegion,
@@ -18,11 +19,14 @@ import MapView, {
 } from 'react-native-maps';
 
 import { BusCallout } from '@/components/map/BusCallout';
+import { GlassDemoSheet } from '@/components/tracker/GlassDemoSheet';
+import { MapChooseBusCard } from '@/components/map/MapChooseBusCard';
 import { MapLegendButton } from '@/components/map/MapLegendButton';
 import { MapStatusCard } from '@/components/map/MapStatusCard';
 import { MapStatusCardSkeleton } from '@/components/map/MapStatusCardSkeleton';
 import { RecenterRouteButton } from '@/components/map/RecenterRouteButton';
 import { RecenterStopButton } from '@/components/map/RecenterStopButton';
+import { RouteSwitcher } from '@/components/tracker/RouteSwitcher';
 import { ScheduledBusCallout } from '@/components/map/ScheduledBusCallout';
 import { ScheduledBusMarker } from '@/components/map/ScheduledBusMarker';
 import { StopCallout } from '@/components/map/StopCallout';
@@ -40,6 +44,7 @@ import {
 import { useBusPosition } from '@/hooks/useBusPosition';
 import { useEta } from '@/hooks/useEta';
 import { useLocationPermission } from '@/hooks/useLocationPermission';
+import { useRouteTransition } from '@/hooks/useRouteTransition';
 import { useScheduledBusPosition } from '@/hooks/useScheduledBusPosition';
 import { useSettings } from '@/hooks/useSettings';
 import { useStaticGtfs } from '@/hooks/useStaticGtfs';
@@ -90,6 +95,10 @@ export default function MapScreen() {
   const [staticData, setStaticData] = useState<StaticData | null>(null);
   const [mapRegion, setMapRegion] = useState<Region | null>(null);
   const [mapSize, setMapSize] = useState({ width: 0, height: 0 });
+  const [showAddBus, setShowAddBus] = useState(false);
+  const openAddBus = useCallback(() => setShowAddBus(true), []);
+  const closeAddBus = useCallback(() => setShowAddBus(false), []);
+  const hasFavorites = settings.favoritedRoutes.length > 0;
   const activeRoute = settings.preferredRouteCode ?? '';
   const { positions, lastUpdated, nextRefreshAt, isRefreshing } =
     useBusPosition({
@@ -99,6 +108,11 @@ export default function MapScreen() {
     stopId: settings.preferredStopId,
     routeCode: activeRoute,
     trafficProvider: settings.trafficProvider,
+  });
+  const isTransitioning = useRouteTransition({
+    preferredRouteCode: settings.preferredRouteCode,
+    preferredStopId: settings.preferredStopId,
+    lastComputedAt: eta.lastComputedAt,
   });
 
   useEffect(() => {
@@ -137,13 +151,31 @@ export default function MapScreen() {
           trafficSignals,
         });
       } catch (err) {
-        console.warn('[map] static data load failed', err);
+        console.error(
+          '[map] static data load failed',
+          'routeCode=', settings.preferredRouteCode,
+          'stopId=', settings.preferredStopId,
+          'name=', (err as { name?: string })?.name,
+          'message=', (err as { message?: string })?.message,
+          'stack=', (err as { stack?: string })?.stack,
+          'raw=', err,
+        );
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [gtfs.ready, settings.preferredStopId, settings.preferredRouteCode]);
+    // `gtfs.result` is listed so the effect re-runs once `useStaticGtfs`
+    // finishes bootstrapping a newly favorited route into SQLite. Without
+    // this, adding a second bus flips `preferredRouteCode` before the new
+    // route's polyline row exists — the effect runs with stale DB data and
+    // the map keeps showing the old route until the next mount.
+  }, [
+    gtfs.ready,
+    gtfs.result,
+    settings.preferredStopId,
+    settings.preferredRouteCode,
+  ]);
 
   const regionsRef = useRef(new Map<string, AnimatedRegion>());
   const mapRef = useRef<MapView>(null);
@@ -195,8 +227,16 @@ export default function MapScreen() {
         if (!cancelled) {
           setTripSeconds(Object.fromEntries(entries));
         }
-      } catch {
-        // silent fail — calling side treats missing entries as "no schedule".
+      } catch (err) {
+        console.error(
+          '[map] tripSeconds load failed',
+          'stopId=', settings.preferredStopId,
+          'tripIds=', tripIds,
+          'name=', (err as { name?: string })?.name,
+          'message=', (err as { message?: string })?.message,
+          'stack=', (err as { stack?: string })?.stack,
+          'raw=', err,
+        );
       }
     })();
     return () => {
@@ -265,9 +305,39 @@ export default function MapScreen() {
       }
     }
     for (const id of Array.from(regions.keys())) {
-      if (!seen.has(id)) regions.delete(id);
+      if (seen.has(id)) continue;
+      // Stop any in-flight native timing animation before dropping the ref.
+      // Leaving an animation queued on the native UI thread while the
+      // MarkerAnimated unmounts causes Fabric's view-recycle assertion to
+      // fire (SIGABRT inside _enqueueComponentViewWithComponentHandle).
+      const r = regions.get(id) as unknown as {
+        stopAnimation?: () => void;
+      };
+      try {
+        r?.stopAnimation?.();
+      } catch {
+        // stopAnimation is best-effort; no-op if the RN version lacks it.
+      }
+      regions.delete(id);
     }
   }, [positions]);
+
+  // Clear all regions when the active route changes. Keeps route-A vehicles
+  // from lingering in the ref map across route switches, which can otherwise
+  // make the next render show stale markers for a frame and stress Fabric's
+  // mount recycler.
+  useEffect(() => {
+    const regions = regionsRef.current;
+    for (const id of Array.from(regions.keys())) {
+      const r = regions.get(id) as unknown as { stopAnimation?: () => void };
+      try {
+        r?.stopAnimation?.();
+      } catch {
+        /* no-op */
+      }
+      regions.delete(id);
+    }
+  }, [activeRoute]);
 
   // Pick a meter-radius for the traffic-signal circles that keeps them
   // visually ~10 px in diameter regardless of zoom level.
@@ -289,11 +359,26 @@ export default function MapScreen() {
       <View style={styles.root}>
         <View style={styles.map} />
         <View style={styles.overlay} pointerEvents="box-none">
-          <MapStatusCardSkeleton />
+          {hasFavorites ? (
+            <MapStatusCardSkeleton />
+          ) : (
+            <MapChooseBusCard onAddBus={openAddBus} />
+          )}
         </View>
+        <GlassDemoSheet isPresented={showAddBus} onDismiss={closeAddBus} />
       </View>
     );
   }
+
+  // `staticData` is loaded async, so when the user switches routes it briefly
+  // still holds the PREVIOUS route's polyline / circles / stop. If we render
+  // those against the live MapView and then in-place-update their props when
+  // staticData catches up, react-native-maps @ 1.27.2 under Fabric crashes
+  // (Polyline coordinates + Circle list rapid prop updates are fragile).
+  // Skipping the route-specific children while staticData is stale lets
+  // everything unmount together, then mount together on the next commit.
+  const staticFresh =
+    staticData.stop.stop_id === settings.preferredStopId;
 
   return (
     <View style={styles.root}>
@@ -308,49 +393,53 @@ export default function MapScreen() {
         onRegionChange={setMapRegion}
         onLayout={(e) => setMapSize(e.nativeEvent.layout)}
       >
-        {staticData.polyline.length >= 2 && (
+        {staticFresh && staticData.polyline.length >= 2 && (
           <Polyline
             coordinates={staticData.polyline}
             strokeColor={tokens.color.accent as unknown as string}
             strokeWidth={4}
           />
         )}
-        {staticData.trafficSignals.map((s) => (
-          <Circle
-            key={s.osm_id}
-            center={{ latitude: s.lat, longitude: s.lng }}
-            radius={signalRadiusMeters}
-            fillColor={SIGNAL_RED_FILL}
-            strokeColor={SIGNAL_RED_STROKE}
-            strokeWidth={1}
-            zIndex={0}
-          />
-        ))}
-        <Marker
-          coordinate={{
-            latitude: staticData.stop.stop_lat,
-            longitude: staticData.stop.stop_lon,
-          }}
-          flat
-          anchor={{ x: 0.5, y: 0.5 }}
-          calloutAnchor={{ x: 0.5, y: 0 }}
-          tracksViewChanges={false}
-        >
-          <View style={styles.stopMarker}>
-            <SymbolView
-              name="signpost.right.fill"
-              size={16}
-              tintColor="#FFFFFF"
-              resizeMode="scaleAspectFit"
+        {staticFresh
+          ? staticData.trafficSignals.map((s) => (
+              <Circle
+                key={s.osm_id}
+                center={{ latitude: s.lat, longitude: s.lng }}
+                radius={signalRadiusMeters}
+                fillColor={SIGNAL_RED_FILL}
+                strokeColor={SIGNAL_RED_STROKE}
+                strokeWidth={1}
+                zIndex={0}
+              />
+            ))
+          : null}
+        {staticFresh ? (
+          <Marker
+            coordinate={{
+              latitude: staticData.stop.stop_lat,
+              longitude: staticData.stop.stop_lon,
+            }}
+            flat
+            anchor={{ x: 0.5, y: 0.5 }}
+            calloutAnchor={{ x: 0.5, y: 0 }}
+            tracksViewChanges={false}
+          >
+            <View style={styles.stopMarker}>
+              <SymbolView
+                name="signpost.right.fill"
+                size={16}
+                tintColor="#FFFFFF"
+                resizeMode="scaleAspectFit"
+              />
+            </View>
+            <StopCallout
+              stopName={staticData.stop.stop_name}
+              eta={eta}
+              schedule={eta.scheduledUpcoming}
             />
-          </View>
-          <StopCallout
-            stopName={staticData.stop.stop_name}
-            eta={eta}
-            schedule={eta.scheduledUpcoming}
-          />
-        </Marker>
-        {ghostScheduled && ghostPosition.coord ? (
+          </Marker>
+        ) : null}
+        {staticFresh && ghostScheduled && ghostPosition.coord ? (
           <ScheduledBusMarker
             coordinate={{
               latitude: ghostPosition.coord.lat,
@@ -413,18 +502,50 @@ export default function MapScreen() {
         })}
       </MapView>
       <View style={styles.overlay} pointerEvents="box-none">
-        <MapStatusCard
-          routeCode={activeRoute}
-          eta={eta}
-          stopName={staticData.stop.stop_name}
-          lastUpdated={lastUpdated}
-          livePosition={positions.find(
-            (p) => p.vehicleId === eta.current?.vehicleId,
-          )}
-          nextRefreshAt={nextRefreshAt}
-          isRefreshing={isRefreshing}
-        />
+        {!hasFavorites ? (
+          <MapChooseBusCard onAddBus={openAddBus} />
+        ) : isTransitioning ? (
+          <Animated.View
+            key="status-skel"
+            entering={FadeIn.duration(180)}
+            exiting={FadeOut.duration(180)}
+          >
+            <MapStatusCardSkeleton />
+          </Animated.View>
+        ) : (
+          <Animated.View
+            key="status-real"
+            entering={FadeIn.duration(180)}
+            exiting={FadeOut.duration(180)}
+          >
+            <MapStatusCard
+              routeCode={activeRoute}
+              eta={eta}
+              stopName={staticData.stop.stop_name}
+              lastUpdated={lastUpdated}
+              livePosition={positions.find(
+                (p) => p.vehicleId === eta.current?.vehicleId,
+              )}
+              nextRefreshAt={nextRefreshAt}
+              isRefreshing={isRefreshing}
+            />
+          </Animated.View>
+        )}
       </View>
+      {hasFavorites ? (
+        <SafeAreaView
+          edges={['top']}
+          style={styles.fabTopLeft}
+          pointerEvents="box-none"
+        >
+          <RouteSwitcher
+            selected={settings.preferredRouteCode}
+            options={settings.favoritedRoutes}
+            onSelect={settings.setPreferredRouteCode}
+            onAddBus={openAddBus}
+          />
+        </SafeAreaView>
+      ) : null}
       <SafeAreaView
         edges={['top']}
         style={styles.fabTopRight}
@@ -436,6 +557,7 @@ export default function MapScreen() {
           <MapLegendButton />
         </View>
       </SafeAreaView>
+      <GlassDemoSheet isPresented={showAddBus} onDismiss={closeAddBus} />
     </View>
   );
 }
@@ -458,7 +580,17 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 0,
     right: 16,
+    paddingTop: 12,
     alignItems: 'flex-end',
+  },
+  fabTopLeft: {
+    position: 'absolute',
+    top: 0,
+    left: 16,
+    paddingTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
   },
   fabStack: {
     alignItems: 'flex-end',

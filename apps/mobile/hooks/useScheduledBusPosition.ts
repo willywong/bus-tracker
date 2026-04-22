@@ -55,7 +55,14 @@ export function useScheduledBusPosition({
         const rows = await getStopTimesForTrip(db, tripId);
         if (!cancelled) setStopTimes(rows);
       } catch (err) {
-        console.warn('[scheduledBusPosition] stop_times load failed', err);
+        console.error(
+          '[scheduledBusPosition] stop_times load failed',
+          'tripId=', tripId,
+          'name=', (err as { name?: string })?.name,
+          'message=', (err as { message?: string })?.message,
+          'stack=', (err as { stack?: string })?.stack,
+          'raw=', err,
+        );
         if (!cancelled) setStopTimes(null);
       }
     })();

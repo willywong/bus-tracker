@@ -3,6 +3,21 @@ import { getClockUse24h } from '@/components/tracker/logic';
 const SMALL_WORDS = new Set(['la', 'el', 'da', 'do', 'di', 'du']);
 
 /**
+ * Acronyms that must always render fully upper-cased. These are Malaysian
+ * transit-system names (and one proper-noun neighbourhood abbreviation) that
+ * wouldn't be caught by {@link isAlphaNumCode} because they contain no digits.
+ */
+const ACRONYMS = new Set([
+  'mrt',
+  'lrt',
+  'ktm',
+  'brt',
+  'erl',
+  'klia',
+  'ttdi',
+]);
+
+/**
  * Display-name overrides for stops whose official/proper-noun spelling
  * doesn't fall out of generic title-casing. Keys are the raw GTFS
  * `stop_name` lowercased, trimmed, and whitespace-collapsed. Values are the
@@ -61,6 +76,7 @@ export function formatStopName(raw: string | null | undefined): string {
     .map((token, i) => {
       if (/^\s+$/.test(token)) return token;
       if (isAlphaNumCode(token)) return token.toUpperCase();
+      if (ACRONYMS.has(token)) return token.toUpperCase();
       if (i > 0 && SMALL_WORDS.has(token)) return token;
       return token.charAt(0).toUpperCase() + token.slice(1);
     })

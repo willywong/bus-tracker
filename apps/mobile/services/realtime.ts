@@ -187,12 +187,30 @@ export function createRealtimeStore(
       const feed = decodeFeed(bytes);
       const raw = entitiesToPositions(feed, tripMap, cfg.now());
       const filtered = positionFilter(raw);
+      // Dedup by vehicleId — keep the latest-observed entry per id. The GTFS-RT
+      // fallback chain in entitiesToPositions drops to trip_id when all vehicle
+      // identifiers are missing, which can produce sibling collisions on the
+      // `<MarkerAnimated key={p.vehicleId}>` map layer and crash Fabric during
+      // unmount. Defensive — noop when ids are already unique.
+      const byId = new Map<string, (typeof filtered)[number]>();
+      for (const p of filtered) {
+        const prev = byId.get(p.vehicleId);
+        if (!prev || p.observedAt >= prev.observedAt) byId.set(p.vehicleId, p);
+      }
+      const deduped = Array.from(byId.values());
       if (__DEV__()) {
         console.log(
-          `[realtime] ${filtered.length} positions (raw=${raw.length})`,
+          `[realtime] ${deduped.length} positions (filtered=${filtered.length}, raw=${raw.length})`,
         );
+        if (deduped.length !== filtered.length) {
+          console.warn(
+            '[realtime] dropped',
+            filtered.length - deduped.length,
+            'duplicate vehicleId entries',
+          );
+        }
       }
-      commit({ positions: filtered, lastError: null }, true);
+      commit({ positions: deduped, lastError: null }, true);
     } catch (err) {
       if (ctrl.signal.aborted) return;
       if (isAbortError(err)) return;

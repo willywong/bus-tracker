@@ -7,6 +7,13 @@ export interface RouteSearchHit {
   origin?: string;
   /** Last stop along a representative trip for this route. */
   destination?: string;
+  /**
+   * Stop near the middle of a representative trip. Useful for circular routes
+   * where origin and destination collapse to the same stop — the UI can fall
+   * back to "via {midpoint}" instead of a confusing "to {same origin}".
+   * Only populated when the midpoint is distinct from origin and destination.
+   */
+  midpoint?: string;
   matchedStops?: { stop_id: string; stop_name: string }[];
 }
 
@@ -17,6 +24,7 @@ interface InternalHit {
   rank: number;
   origin?: string;
   destination?: string;
+  midpoint?: string;
   matchedStops?: { stop_id: string; stop_name: string }[];
 }
 
@@ -145,44 +153,45 @@ export function searchRoutes(
     }
 
     const tripIds = new Set(firstTripByRoute.values());
-    type Endpoints = {
-      firstSeq: number;
-      firstId: string;
-      lastSeq: number;
-      lastId: string;
-    };
-    const endpointsByTrip = new Map<string, Endpoints>();
+    // Collect every stop of each representative trip so we can derive both
+    // endpoints and a midpoint. Retaining all stops (rather than only min/max)
+    // costs O(stopTimes) memory but gives us the "via" hint for loop routes.
+    const stopsByTrip = new Map<string, Array<{ seq: number; id: string }>>();
     for (const st of parsed.stopTimes) {
       if (!tripIds.has(st.trip_id)) continue;
-      const existing = endpointsByTrip.get(st.trip_id);
-      if (!existing) {
-        endpointsByTrip.set(st.trip_id, {
-          firstSeq: st.stop_sequence,
-          firstId: st.stop_id,
-          lastSeq: st.stop_sequence,
-          lastId: st.stop_id,
-        });
-        continue;
+      let arr = stopsByTrip.get(st.trip_id);
+      if (!arr) {
+        arr = [];
+        stopsByTrip.set(st.trip_id, arr);
       }
-      if (st.stop_sequence < existing.firstSeq) {
-        existing.firstSeq = st.stop_sequence;
-        existing.firstId = st.stop_id;
-      }
-      if (st.stop_sequence > existing.lastSeq) {
-        existing.lastSeq = st.stop_sequence;
-        existing.lastId = st.stop_id;
-      }
+      arr.push({ seq: st.stop_sequence, id: st.stop_id });
     }
 
     for (const h of top) {
       const tripId = firstTripByRoute.get(h.route_id);
       if (!tripId) continue;
-      const ep = endpointsByTrip.get(tripId);
-      if (!ep) continue;
-      const originStop = stopById.get(ep.firstId);
-      const destStop = stopById.get(ep.lastId);
-      if (originStop) h.origin = originStop.stop_name;
-      if (destStop) h.destination = destStop.stop_name;
+      const stops = stopsByTrip.get(tripId);
+      if (!stops || stops.length === 0) continue;
+      stops.sort((a, b) => a.seq - b.seq);
+
+      const firstStop = stopById.get(stops[0].id);
+      const lastStop = stopById.get(stops[stops.length - 1].id);
+      if (firstStop) h.origin = firstStop.stop_name;
+      if (lastStop) h.destination = lastStop.stop_name;
+
+      // Expose a midpoint only when it adds information — distinct from both
+      // endpoints and the trip has enough stops for "middle" to mean something.
+      if (stops.length >= 3) {
+        const midStop = stopById.get(stops[Math.floor(stops.length / 2)].id);
+        const midName = midStop?.stop_name;
+        if (
+          midName &&
+          midName !== firstStop?.stop_name &&
+          midName !== lastStop?.stop_name
+        ) {
+          h.midpoint = midName;
+        }
+      }
     }
   }
 
@@ -191,6 +200,7 @@ export function searchRoutes(
     long_name: h.long_name,
     origin: h.origin,
     destination: h.destination,
+    midpoint: h.midpoint,
     matchedStops: h.matchedStops,
   }));
 }

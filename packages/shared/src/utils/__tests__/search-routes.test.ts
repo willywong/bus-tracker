@@ -19,21 +19,30 @@ function fixture(): Uint8Array {
     "route_id,service_id,trip_id,shape_id,direction_id\n" +
     "R_T816,WK,T816-1,SH816,0\n" +
     "R_T815,WK,T815-1,SH815,0\n" +
-    "R_T786,WK,T786-1,SH786,0\n";
+    "R_T786,WK,T786-1,SH786,0\n" +
+    "R_PJ01,WK,PJ01-1,SH_PJ01,0\n";
 
   const stopsCsv =
     "stop_id,stop_name,stop_lat,stop_lon\n" +
     "S1,Phileo Damansara MRT,3.1,101.6\n" +
     "S2,Mutiara Damansara,3.11,101.61\n" +
     "S3,Kota Damansara,3.12,101.62\n" +
-    "S4,Subang Parade,3.05,101.58\n";
+    "S4,Subang Parade,3.05,101.58\n" +
+    "S5,MRT Sungai Buloh,3.2,101.5\n" +
+    "S6,Kepong Baru,3.21,101.51\n" +
+    "S7,Bandar Sri Damansara,3.22,101.52\n";
 
   const stopTimesCsv =
     "trip_id,stop_id,stop_sequence,arrival_time,departure_time\n" +
     "T816-1,S1,1,07:00:00,07:00:00\n" +
     "T816-1,S2,2,07:10:00,07:10:00\n" +
     "T815-1,S3,1,07:00:00,07:00:00\n" +
-    "T786-1,S4,1,07:00:00,07:00:00\n";
+    "T786-1,S4,1,07:00:00,07:00:00\n" +
+    // PJ01: a loop that starts and ends at MRT Sungai Buloh
+    "PJ01-1,S5,1,07:00:00,07:00:00\n" +
+    "PJ01-1,S6,2,07:05:00,07:05:00\n" +
+    "PJ01-1,S7,3,07:10:00,07:10:00\n" +
+    "PJ01-1,S5,4,07:20:00,07:20:00\n";
 
   const calendarCsv =
     "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
@@ -96,6 +105,26 @@ test("searchRoutes: hits include origin and destination stop names", () => {
   assert.ok(t816);
   assert.equal(t816.origin, "Phileo Damansara MRT");
   assert.equal(t816.destination, "Mutiara Damansara");
+});
+
+test("searchRoutes: circular route exposes midpoint distinct from endpoints", () => {
+  const parsed = parseGtfsZip(fixture());
+  const hits = searchRoutes(parsed, "PJ01");
+  const pj01 = hits.find((h) => h.code === "PJ01");
+  assert.ok(pj01, "PJ01 should match by code");
+  assert.equal(pj01.origin, "MRT Sungai Buloh");
+  assert.equal(pj01.destination, "MRT Sungai Buloh");
+  // Stops are [S5, S6, S7, S5] so floor(4/2) = index 2 → S7
+  assert.equal(pj01.midpoint, "Bandar Sri Damansara");
+});
+
+test("searchRoutes: non-circular route omits midpoint when too short", () => {
+  const parsed = parseGtfsZip(fixture());
+  const hits = searchRoutes(parsed, "T816");
+  const t816 = hits.find((h) => h.code === "T816");
+  assert.ok(t816);
+  // T816 trip has only 2 stops, so midpoint is omitted (needs >= 3).
+  assert.equal(t816.midpoint, undefined);
 });
 
 test("searchRoutes: respects limit cap", () => {

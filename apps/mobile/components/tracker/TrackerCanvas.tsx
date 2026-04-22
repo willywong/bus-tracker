@@ -49,6 +49,7 @@ const styles = StyleSheet.create({
     backgroundColor: surfaceColor.canvas,
   },
   content: {
+    flexGrow: 1,
     paddingHorizontal: trackerSpacing.screenH,
     paddingBottom: 48,
   },

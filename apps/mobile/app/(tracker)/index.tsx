@@ -1,16 +1,19 @@
 import { SymbolView } from 'expo-symbols';
 import { PlatformColor, StyleSheet, Text, View } from 'react-native';
-import Animated, { FadeIn } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { formatStopName } from '@/components/map/format';
-import { AddBusSheet } from '@/components/tracker/AddBusSheet';
 import { CurrentBusCard } from '@/components/tracker/CurrentBusCard';
+import { CurrentBusCardSkeleton } from '@/components/tracker/CurrentBusCardSkeleton';
 import { EmptyTrackerHero } from '@/components/tracker/EmptyTrackerHero';
+import { GlassDemoSheet } from '@/components/tracker/GlassDemoSheet';
 import { HeroCountdown } from '@/components/tracker/HeroCountdown';
+import { HeroCountdownSkeleton } from '@/components/tracker/HeroCountdownSkeleton';
 import { NotifDeniedChip } from '@/components/tracker/NotifDeniedChip';
 import { ServiceEdgeRow } from '@/components/tracker/ServiceEdgeRow';
 import { TimetableStrip } from '@/components/tracker/TimetableStrip';
+import { TimetableStripSkeleton } from '@/components/tracker/TimetableStripSkeleton';
 import { TrackButton } from '@/components/tracker/TrackButton';
 import { TrackerCanvas } from '@/components/tracker/TrackerCanvas';
 import { WalkCta } from '@/components/tracker/WalkCta';
@@ -31,6 +34,7 @@ import {
 import { useBusLiveActivity } from '@/hooks/useBusLiveActivity';
 import { useBusPosition } from '@/hooks/useBusPosition';
 import { useEta } from '@/hooks/useEta';
+import { useRouteTransition } from '@/hooks/useRouteTransition';
 import { usePushRegistrationState } from '@/hooks/PushRegistrationContext';
 import { devNow } from '@/utils/devClock';
 import { useSettings } from '@/hooks/useSettings';
@@ -54,7 +58,7 @@ export default function TrackerScreen() {
       ) : (
         <TrackerActive onAddBus={openAddBus} />
       )}
-      <AddBusSheet visible={showAddBus} onDismiss={closeAddBus} />
+      <GlassDemoSheet isPresented={showAddBus} onDismiss={closeAddBus} />
     </>
   );
 }
@@ -81,7 +85,13 @@ function TrackerActive({ onAddBus }: { onAddBus: () => void }) {
     lastBusToday,
     polylineMeters,
     arrivalStatus,
+    lastComputedAt,
   } = eta;
+  const isTransitioning = useRouteTransition({
+    preferredRouteCode: settings.preferredRouteCode,
+    preferredStopId: settings.preferredStopId,
+    lastComputedAt,
+  });
   const { lastUpdated, positions, nextRefreshAt, isRefreshing } =
     useBusPosition({
       routeCode: settings.preferredRouteCode ?? undefined,
@@ -141,7 +151,14 @@ function TrackerActive({ onAddBus }: { onAddBus: () => void }) {
         );
         setStopName(match?.stop_name ?? null);
       } catch (err) {
-        console.warn('[tracker] failed to load stop name', err);
+        console.error(
+          '[tracker] failed to load stop name',
+          'stopId=', settings.preferredStopId,
+          'name=', (err as { name?: string })?.name,
+          'message=', (err as { message?: string })?.message,
+          'stack=', (err as { stack?: string })?.stack,
+          'raw=', err,
+        );
       }
     })();
     return () => {
@@ -159,7 +176,14 @@ function TrackerActive({ onAddBus }: { onAddBus: () => void }) {
           : [];
         if (!cancelled) setTrafficSignals(signals);
       } catch (err) {
-        console.warn('[tracker] failed to load traffic signals', err);
+        console.error(
+          '[tracker] failed to load traffic signals',
+          'routeCode=', settings.preferredRouteCode,
+          'name=', (err as { name?: string })?.name,
+          'message=', (err as { message?: string })?.message,
+          'stack=', (err as { stack?: string })?.stack,
+          'raw=', err,
+        );
       }
     })();
     return () => {
@@ -334,41 +358,64 @@ function TrackerActive({ onAddBus }: { onAddBus: () => void }) {
 
   return (
     <TrackerCanvas onRefresh={handleRefresh} refreshing={refreshing}>
-      <HeroCountdown
-        state={heroState}
-        selectedRoute={settings.preferredRouteCode}
-        routeOptions={settings.favoritedRoutes}
-        onSelectRoute={settings.setPreferredRouteCode}
-        onAddBus={onAddBus}
-        eyebrow={hero.eyebrow}
-        value={hero.value}
-        unit={hero.unit}
-        subtitle={subtitle}
-        detail={hero.detail}
-        trailing={
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            {primaryArrival != null ||
-            (beforeServiceStart && firstBusToday != null) ? (
-              <TrackButton
-                isTracking={isTracking}
-                onToggle={setIsTracking}
-              />
-            ) : null}
-            {!serviceEnded ? (
-              <WalkCta
-                isWalking={walk.isWalking}
-                isLeaveNow={isLeaveNow}
-                onStart={() => {
-                  void walk.start();
-                }}
-                onCancel={() => {
-                  void walk.cancel();
-                }}
-              />
-            ) : null}
-          </View>
-        }
-      />
+      {isTransitioning ? (
+        <Animated.View
+          key="hero-skel"
+          entering={FadeIn.duration(180)}
+          exiting={FadeOut.duration(180)}
+        >
+          <HeroCountdownSkeleton
+            selectedRoute={settings.preferredRouteCode}
+            routeOptions={settings.favoritedRoutes}
+            onSelectRoute={settings.setPreferredRouteCode}
+            onAddBus={onAddBus}
+          />
+        </Animated.View>
+      ) : (
+        <Animated.View
+          key="hero-real"
+          entering={FadeIn.duration(180)}
+          exiting={FadeOut.duration(180)}
+        >
+          <HeroCountdown
+            state={heroState}
+            selectedRoute={settings.preferredRouteCode}
+            routeOptions={settings.favoritedRoutes}
+            onSelectRoute={settings.setPreferredRouteCode}
+            onAddBus={onAddBus}
+            eyebrow={hero.eyebrow}
+            value={hero.value}
+            unit={hero.unit}
+            subtitle={subtitle}
+            detail={hero.detail}
+            trailing={
+              <View
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
+              >
+                {primaryArrival != null ||
+                (beforeServiceStart && firstBusToday != null) ? (
+                  <TrackButton
+                    isTracking={isTracking}
+                    onToggle={setIsTracking}
+                  />
+                ) : null}
+                {!serviceEnded ? (
+                  <WalkCta
+                    isWalking={walk.isWalking}
+                    isLeaveNow={isLeaveNow}
+                    onStart={() => {
+                      void walk.start();
+                    }}
+                    onCancel={() => {
+                      void walk.cancel();
+                    }}
+                  />
+                ) : null}
+              </View>
+            }
+          />
+        </Animated.View>
+      )}
 
       {push.permission === 'denied' ? (
         <Animated.View
@@ -380,46 +427,82 @@ function TrackerActive({ onAddBus }: { onAddBus: () => void }) {
       ) : null}
 
       <SectionLabel>Buses</SectionLabel>
-      {serviceEnded ? (
-        <ServiceEdgeRow variant="after-last" lastEpochMs={lastBusToday} />
-      ) : beforeServiceStart ? (
-        <ServiceEdgeRow variant="before-first" firstEpochMs={firstBusToday} />
-      ) : primaryArrival == null ? (
-        <EmptyBusesRow />
+      {isTransitioning ? (
+        <Animated.View
+          key="buses-skel"
+          entering={FadeIn.duration(180)}
+          exiting={FadeOut.duration(180)}
+        >
+          <CurrentBusCardSkeleton />
+        </Animated.View>
       ) : (
-        <CurrentBusCard
-          entry={primaryArrival}
-          livePosition={positions.find(
-            (p) => p.vehicleId === primaryArrival.live?.vehicleId,
+        <Animated.View
+          key="buses-real"
+          entering={FadeIn.duration(180)}
+          exiting={FadeOut.duration(180)}
+        >
+          {serviceEnded ? (
+            <ServiceEdgeRow variant="after-last" lastEpochMs={lastBusToday} />
+          ) : beforeServiceStart ? (
+            <ServiceEdgeRow
+              variant="before-first"
+              firstEpochMs={firstBusToday}
+            />
+          ) : primaryArrival == null ? (
+            <EmptyBusesRow />
+          ) : (
+            <CurrentBusCard
+              entry={primaryArrival}
+              livePosition={positions.find(
+                (p) => p.vehicleId === primaryArrival.live?.vehicleId,
+              )}
+              delay={primaryArrival.kind === 'live' ? resolved.delay : null}
+              isStale={updated.isStale}
+              lastUpdated={lastUpdated}
+              nextRefreshAt={nextRefreshAt}
+              isRefreshing={isRefreshing}
+              polylineMeters={polylineMeters}
+              trafficSignals={trafficSignals}
+              arrivalStatus={arrivalStatus}
+              nextEntry={secondaryArrival}
+              nextLivePosition={
+                secondaryArrival?.live?.vehicleId
+                  ? positions.find(
+                      (p) =>
+                        p.vehicleId === secondaryArrival.live?.vehicleId,
+                    )
+                  : undefined
+              }
+            />
           )}
-          delay={primaryArrival.kind === 'live' ? resolved.delay : null}
-          isStale={updated.isStale}
-          lastUpdated={lastUpdated}
-          nextRefreshAt={nextRefreshAt}
-          isRefreshing={isRefreshing}
-          polylineMeters={polylineMeters}
-          trafficSignals={trafficSignals}
-          arrivalStatus={arrivalStatus}
-          nextEntry={secondaryArrival}
-          nextLivePosition={
-            secondaryArrival?.live?.vehicleId
-              ? positions.find(
-                  (p) => p.vehicleId === secondaryArrival.live?.vehicleId,
-                )
-              : undefined
-          }
-        />
+        </Animated.View>
       )}
 
-      {scheduledUpcoming.length > 0 && !serviceEnded ? (
+      {(isTransitioning || scheduledUpcoming.length > 0) && !serviceEnded ? (
         <>
           <View style={{ height: 16 }} />
           <SectionLabel>Timetable</SectionLabel>
-          <TimetableStrip
-            departures={scheduledUpcoming}
-            anchorTripId={currentScheduled?.tripId ?? null}
-            now={now}
-          />
+          {isTransitioning ? (
+            <Animated.View
+              key="tt-skel"
+              entering={FadeIn.duration(180)}
+              exiting={FadeOut.duration(180)}
+            >
+              <TimetableStripSkeleton />
+            </Animated.View>
+          ) : (
+            <Animated.View
+              key="tt-real"
+              entering={FadeIn.duration(180)}
+              exiting={FadeOut.duration(180)}
+            >
+              <TimetableStrip
+                departures={scheduledUpcoming}
+                anchorTripId={currentScheduled?.tripId ?? null}
+                now={now}
+              />
+            </Animated.View>
+          )}
         </>
       ) : null}
 
@@ -487,3 +570,4 @@ const emptyStyles = StyleSheet.create({
     color: PlatformColor('secondaryLabel'),
   },
 });
+
