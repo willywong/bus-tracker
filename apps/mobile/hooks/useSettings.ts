@@ -1,4 +1,3 @@
-import type { RouteId } from '@bus-tracker/shared';
 import * as SecureStore from 'expo-secure-store';
 import {
   createContext,
@@ -26,28 +25,15 @@ export const CLOCK_FORMATS: readonly ClockFormat[] = ['24h', '12h'];
 
 export const NOTIF_BUFFER_CHOICES_MIN: readonly number[] = [0, 1, 2, 3, 5];
 
-/** Routes exposed in the in-app switcher. Order = user-facing order. */
-export const AVAILABLE_ROUTE_CODES: readonly RouteId[] = ['T816', 'T815'];
-
-/**
- * Default boarding stop per route. Routes in AVAILABLE_ROUTE_CODES should have
- * an entry — these IDs are real stop_ids the GTFS bundle ships with, so a
- * fresh install resolves to a working stop on first launch without the user
- * having to open Settings. Partial because RouteId includes routes
- * (T786/PJ01/PJ02) that aren't yet exposed in the in-app switcher.
- */
-const STOP_DEFAULTS_BY_ROUTE: Partial<Record<RouteId, string>> = {
-  T816: '12000759', // HOTEL LISA DE INN
-  T815: '12000750', // MRT PHILEO DAMANSARA PINTU A
-};
-
-const DEFAULT_PREFERRED_ROUTE_CODE: RouteId = 'T816';
-
 export interface Settings {
   walkMinutes: number;
   notifBufferMin: number;
-  preferredStopByRoute: Partial<Record<RouteId, string>>;
-  preferredRouteCode: RouteId;
+  /** Ordered list of favorited route codes. Drives the switcher and the realtime poll. */
+  favoritedRoutes: string[];
+  /** Per-route boarding stop id. Keys are entries of `favoritedRoutes`. */
+  preferredStopByRoute: Record<string, string>;
+  /** Currently active route. Null when the favorites list is empty. */
+  preferredRouteCode: string | null;
   trafficProvider: TrafficProvider;
   /** Quiet hours start, minute-of-day (0–1439). */
   quietStartMin: number;
@@ -60,8 +46,9 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   walkMinutes: 10,
   notifBufferMin: 1,
-  preferredStopByRoute: { ...STOP_DEFAULTS_BY_ROUTE },
-  preferredRouteCode: DEFAULT_PREFERRED_ROUTE_CODE,
+  favoritedRoutes: [],
+  preferredStopByRoute: {},
+  preferredRouteCode: null,
   trafficProvider: 'here',
   quietStartMin: 22 * 60,
   quietEndMin: 6 * 60,
@@ -71,28 +58,32 @@ export const DEFAULT_SETTINGS: Settings = {
 export interface SettingsApi extends Settings {
   ready: boolean;
   /**
-   * Boarding stop for the *currently active* route. Derived from
-   * `preferredStopByRoute[preferredRouteCode]` — kept on the API so existing
-   * consumers (`useEta`, push registration) don't need to know about the map.
+   * Boarding stop for the *currently active* route, or '' when no favorites
+   * are configured. Derived from `preferredStopByRoute[preferredRouteCode]`.
    */
   preferredStopId: string;
   setWalkMinutes: (v: number) => void;
   setNotifBufferMin: (v: number) => void;
-  /** Sets the boarding stop for the currently active route. */
+  /** Sets the boarding stop for the currently active route. No-op when none is active. */
   setPreferredStopId: (v: string) => void;
-  setPreferredStopForRoute: (routeCode: RouteId, stopId: string) => void;
-  setPreferredRouteCode: (v: RouteId) => void;
+  setPreferredStopForRoute: (routeCode: string, stopId: string) => void;
+  setPreferredRouteCode: (v: string | null) => void;
   setTrafficProvider: (v: TrafficProvider) => void;
   setQuietStartMin: (v: number) => void;
   setQuietEndMin: (v: number) => void;
   setClockFormat: (v: ClockFormat) => void;
+  /** Adds `code` to the favorites list with a default stop. No-op if already favorited. */
+  addFavorite: (code: string, stopId: string) => void;
+  /** Removes `code` from favorites and its stop mapping. Picks a new active route if the removed one was active. */
+  removeFavorite: (code: string) => void;
+  /** Reorders the favorites list. The new list must contain exactly the same codes. */
+  reorderFavorites: (nextOrder: string[]) => void;
 }
 
 const STORAGE_KEYS = {
   walkMinutes: 'bt.walkMinutes',
   notifBufferMin: 'bt.notifBufferMin',
-  /** @deprecated Migrated into preferredStopByRoute on first load post-upgrade. */
-  preferredStopId: 'bt.preferredStopId',
+  favoritedRoutes: 'bt.favoritedRoutes',
   preferredStopByRoute: 'bt.preferredStopByRoute',
   preferredRouteCode: 'bt.preferredRouteCode',
   trafficProvider: 'bt.trafficProvider',
@@ -118,10 +109,12 @@ function parseProviderOr(
     : fallback;
 }
 
-function parseRouteOr(value: string | null, fallback: RouteId): RouteId {
-  return value && AVAILABLE_ROUTE_CODES.includes(value as RouteId)
-    ? (value as RouteId)
-    : fallback;
+function parseRouteOr(
+  value: string | null,
+  knownFavorites: readonly string[],
+): string | null {
+  if (!value) return null;
+  return knownFavorites.includes(value) ? value : null;
 }
 
 function parseClockFormatOr(
@@ -133,49 +126,47 @@ function parseClockFormatOr(
     : fallback;
 }
 
-function parseStopByRoute(
-  raw: string | null,
-): Partial<Record<RouteId, string>> | null {
-  if (!raw) return null;
+function parseFavoritedRoutes(raw: string | null): string[] {
+  if (!raw) return [];
   try {
     const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== 'object') return null;
-    const out: Partial<Record<RouteId, string>> = {};
+    if (!Array.isArray(parsed)) return [];
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const v of parsed) {
+      if (typeof v !== 'string' || v.length === 0) continue;
+      if (seen.has(v)) continue;
+      seen.add(v);
+      out.push(v);
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+function parseStopByRoute(raw: string | null): Record<string, string> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object') return {};
+    const out: Record<string, string> = {};
     for (const [k, v] of Object.entries(parsed)) {
-      if (AVAILABLE_ROUTE_CODES.includes(k as RouteId) && typeof v === 'string') {
-        out[k as RouteId] = v;
+      if (typeof k === 'string' && k.length > 0 && typeof v === 'string') {
+        out[k] = v;
       }
     }
     return out;
   } catch {
-    return null;
+    return {};
   }
-}
-
-function resolveStopByRoute(
-  stored: Partial<Record<RouteId, string>> | null,
-  legacyStop: string | null,
-  legacyRoute: RouteId,
-): { value: Partial<Record<RouteId, string>>; migrated: boolean } {
-  if (stored) {
-    return {
-      value: { ...STOP_DEFAULTS_BY_ROUTE, ...stored },
-      migrated: false,
-    };
-  }
-  // No new-shape value yet. Seed defaults, then overlay the legacy single
-  // `bt.preferredStopId` onto the route it was set under (if any). Persisting
-  // is done by the caller so we can do it once on the load path.
-  const seeded = { ...STOP_DEFAULTS_BY_ROUTE };
-  if (legacyStop) seeded[legacyRoute] = legacyStop;
-  return { value: seeded, migrated: legacyStop !== null };
 }
 
 async function loadFromStore(): Promise<Settings> {
   const [
     walk,
     buffer,
-    legacyStop,
+    favoritesRaw,
     stopByRouteRaw,
     route,
     provider,
@@ -185,7 +176,7 @@ async function loadFromStore(): Promise<Settings> {
   ] = await Promise.all([
     SecureStore.getItemAsync(STORAGE_KEYS.walkMinutes),
     SecureStore.getItemAsync(STORAGE_KEYS.notifBufferMin),
-    SecureStore.getItemAsync(STORAGE_KEYS.preferredStopId),
+    SecureStore.getItemAsync(STORAGE_KEYS.favoritedRoutes),
     SecureStore.getItemAsync(STORAGE_KEYS.preferredStopByRoute),
     SecureStore.getItemAsync(STORAGE_KEYS.preferredRouteCode),
     SecureStore.getItemAsync(STORAGE_KEYS.trafficProvider),
@@ -194,25 +185,14 @@ async function loadFromStore(): Promise<Settings> {
     SecureStore.getItemAsync(STORAGE_KEYS.clockFormat),
   ]);
 
-  const preferredRouteCode = parseRouteOr(
-    route,
-    DEFAULT_SETTINGS.preferredRouteCode,
-  );
-  const { value: preferredStopByRoute, migrated } = resolveStopByRoute(
-    parseStopByRoute(stopByRouteRaw),
-    legacyStop,
-    preferredRouteCode,
-  );
-  if (migrated) {
-    writeValue(
-      STORAGE_KEYS.preferredStopByRoute,
-      JSON.stringify(preferredStopByRoute),
-    );
-  }
+  const favoritedRoutes = parseFavoritedRoutes(favoritesRaw);
+  const preferredStopByRoute = parseStopByRoute(stopByRouteRaw);
+  const preferredRouteCode = parseRouteOr(route, favoritedRoutes);
 
   return {
     walkMinutes: parseIntOr(walk, DEFAULT_SETTINGS.walkMinutes),
     notifBufferMin: parseIntOr(buffer, DEFAULT_SETTINGS.notifBufferMin),
+    favoritedRoutes,
     preferredStopByRoute,
     preferredRouteCode,
     trafficProvider: parseProviderOr(
@@ -231,11 +211,15 @@ function writeValue(key: string, value: string): void {
   });
 }
 
+function deleteValue(key: string): void {
+  SecureStore.deleteItemAsync(key).catch((err) => {
+    console.warn(`[settings] failed to delete ${key}`, err);
+  });
+}
+
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<Settings>(DEFAULT_SETTINGS);
   const [ready, setReady] = useState(false);
-  // Track whether initial load has finished so we don't overwrite the stored
-  // value with the default on mount.
   const loadedRef = useRef(false);
 
   useEffect(() => {
@@ -278,7 +262,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const setPreferredStopForRoute = useCallback(
-    (routeCode: RouteId, stopId: string) => {
+    (routeCode: string, stopId: string) => {
       setState((prev) => {
         if (prev.preferredStopByRoute[routeCode] === stopId) return prev;
         const next = { ...prev.preferredStopByRoute, [routeCode]: stopId };
@@ -292,29 +276,26 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  // Legacy alias: writes to the currently active route's slot. Kept so any
-  // straggler caller from the single-stop era still works.
-  const setPreferredStopId = useCallback(
-    (v: string) => {
-      setState((prev) => {
-        const route = prev.preferredRouteCode;
-        if (prev.preferredStopByRoute[route] === v) return prev;
-        const next = { ...prev.preferredStopByRoute, [route]: v };
-        writeValue(
-          STORAGE_KEYS.preferredStopByRoute,
-          JSON.stringify(next),
-        );
-        return { ...prev, preferredStopByRoute: next };
-      });
-    },
-    [],
-  );
-
-  const setPreferredRouteCode = useCallback((v: RouteId) => {
+  // Legacy alias: writes to the currently active route's slot. No-op when
+  // no route is active (empty favorites list).
+  const setPreferredStopId = useCallback((v: string) => {
     setState((prev) => {
-      if (prev.preferredRouteCode === v) return prev;
-      writeValue(STORAGE_KEYS.preferredRouteCode, v);
-      return { ...prev, preferredRouteCode: v };
+      const route = prev.preferredRouteCode;
+      if (!route) return prev;
+      if (prev.preferredStopByRoute[route] === v) return prev;
+      const next = { ...prev.preferredStopByRoute, [route]: v };
+      writeValue(STORAGE_KEYS.preferredStopByRoute, JSON.stringify(next));
+      return { ...prev, preferredStopByRoute: next };
+    });
+  }, []);
+
+  const setPreferredRouteCode = useCallback((v: string | null) => {
+    setState((prev) => {
+      const next = v && prev.favoritedRoutes.includes(v) ? v : null;
+      if (prev.preferredRouteCode === next) return prev;
+      if (next == null) deleteValue(STORAGE_KEYS.preferredRouteCode);
+      else writeValue(STORAGE_KEYS.preferredRouteCode, next);
+      return { ...prev, preferredRouteCode: next };
     });
   }, []);
 
@@ -350,6 +331,68 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const addFavorite = useCallback((code: string, stopId: string) => {
+    setState((prev) => {
+      if (prev.favoritedRoutes.includes(code)) return prev;
+      const nextFavorites = [...prev.favoritedRoutes, code];
+      const nextStops = { ...prev.preferredStopByRoute, [code]: stopId };
+      const nextActive = prev.preferredRouteCode ?? code;
+      writeValue(STORAGE_KEYS.favoritedRoutes, JSON.stringify(nextFavorites));
+      writeValue(
+        STORAGE_KEYS.preferredStopByRoute,
+        JSON.stringify(nextStops),
+      );
+      if (nextActive !== prev.preferredRouteCode) {
+        writeValue(STORAGE_KEYS.preferredRouteCode, nextActive);
+      }
+      return {
+        ...prev,
+        favoritedRoutes: nextFavorites,
+        preferredStopByRoute: nextStops,
+        preferredRouteCode: nextActive,
+      };
+    });
+  }, []);
+
+  const removeFavorite = useCallback((code: string) => {
+    setState((prev) => {
+      if (!prev.favoritedRoutes.includes(code)) return prev;
+      const nextFavorites = prev.favoritedRoutes.filter((c) => c !== code);
+      const nextStops = { ...prev.preferredStopByRoute };
+      delete nextStops[code];
+      const nextActive =
+        prev.preferredRouteCode === code
+          ? nextFavorites[0] ?? null
+          : prev.preferredRouteCode;
+      writeValue(STORAGE_KEYS.favoritedRoutes, JSON.stringify(nextFavorites));
+      writeValue(
+        STORAGE_KEYS.preferredStopByRoute,
+        JSON.stringify(nextStops),
+      );
+      if (nextActive !== prev.preferredRouteCode) {
+        if (nextActive == null) deleteValue(STORAGE_KEYS.preferredRouteCode);
+        else writeValue(STORAGE_KEYS.preferredRouteCode, nextActive);
+      }
+      return {
+        ...prev,
+        favoritedRoutes: nextFavorites,
+        preferredStopByRoute: nextStops,
+        preferredRouteCode: nextActive,
+      };
+    });
+  }, []);
+
+  const reorderFavorites = useCallback((nextOrder: string[]) => {
+    setState((prev) => {
+      if (nextOrder.length !== prev.favoritedRoutes.length) return prev;
+      const current = new Set(prev.favoritedRoutes);
+      for (const c of nextOrder) if (!current.has(c)) return prev;
+      if (nextOrder.every((c, i) => c === prev.favoritedRoutes[i])) return prev;
+      writeValue(STORAGE_KEYS.favoritedRoutes, JSON.stringify(nextOrder));
+      return { ...prev, favoritedRoutes: nextOrder };
+    });
+  }, []);
+
   // Sync the module-level clock preference used by pure formatters
   // (`formatClockHHMM`, `formatArrivalClock`) whenever the stored setting
   // changes. Runs on initial load and on any user toggle.
@@ -360,14 +403,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const api: SettingsApi = {
     ...state,
     ready,
-    // `parseRouteOr` guarantees preferredRouteCode ∈ AVAILABLE_ROUTE_CODES,
-    // and STOP_DEFAULTS_BY_ROUTE covers every code in that list — so the
-    // empty-string fallback is unreachable in practice. We keep it to satisfy
-    // the type narrowing through `Partial<Record<RouteId, string>>`.
     preferredStopId:
-      state.preferredStopByRoute[state.preferredRouteCode] ??
-      STOP_DEFAULTS_BY_ROUTE[state.preferredRouteCode] ??
-      '',
+      state.preferredRouteCode != null
+        ? state.preferredStopByRoute[state.preferredRouteCode] ?? ''
+        : '',
     setWalkMinutes,
     setNotifBufferMin,
     setPreferredStopId,
@@ -377,6 +416,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     setQuietStartMin,
     setQuietEndMin,
     setClockFormat,
+    addFavorite,
+    removeFavorite,
+    reorderFavorites,
   };
 
   return createElement(SettingsContext.Provider, { value: api }, children);

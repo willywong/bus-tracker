@@ -31,16 +31,17 @@ import { useBusPosition } from '@/hooks/useBusPosition';
 import { useEta } from '@/hooks/useEta';
 import { usePushRegistrationState } from '@/hooks/PushRegistrationContext';
 import { devNow } from '@/utils/devClock';
-import { AVAILABLE_ROUTE_CODES, useSettings } from '@/hooks/useSettings';
+import { useSettings } from '@/hooks/useSettings';
 import { useWalkTimer } from '@/hooks/useWalkTimer';
 import { refreshAll } from '@/services/refresh';
 
 export default function TrackerScreen() {
   const settings = useSettings();
   const push = usePushRegistrationState();
+  const activeRoute = settings.preferredRouteCode ?? '';
   const eta = useEta({
     stopId: settings.preferredStopId,
-    routeCode: settings.preferredRouteCode,
+    routeCode: activeRoute,
     trafficProvider: settings.trafficProvider,
   });
   const {
@@ -59,7 +60,7 @@ export default function TrackerScreen() {
   } = eta;
   const { lastUpdated, positions, nextRefreshAt, isRefreshing } =
     useBusPosition({
-      routeCode: settings.preferredRouteCode,
+      routeCode: settings.preferredRouteCode ?? undefined,
     });
   const updated = useLastUpdatedLabel(lastUpdated);
   const walk = useWalkTimer(settings.walkMinutes);
@@ -76,7 +77,7 @@ export default function TrackerScreen() {
   }, [settings.preferredRouteCode, settings.preferredStopId]);
 
   useBusLiveActivity({
-    routeCode: settings.preferredRouteCode,
+    routeCode: activeRoute,
     stopName,
     primaryArrival,
     resolved,
@@ -95,14 +96,14 @@ export default function TrackerScreen() {
   const handleRefresh = useCallback(() => {
     if (refreshing) return;
     setRefreshing(true);
-    void refreshAll()
+    void refreshAll({ routes: settings.favoritedRoutes })
       .catch((err) => {
         console.warn('[tracker] refresh failed', err);
       })
       .finally(() => {
         setRefreshing(false);
       });
-  }, [refreshing]);
+  }, [refreshing, settings.favoritedRoutes]);
 
   useEffect(() => {
     let cancelled = false;
@@ -129,10 +130,9 @@ export default function TrackerScreen() {
     (async () => {
       try {
         const db = await openDb();
-        const signals = await getTrafficSignals(
-          db,
-          settings.preferredRouteCode,
-        );
+        const signals = settings.preferredRouteCode
+          ? await getTrafficSignals(db, settings.preferredRouteCode)
+          : [];
         if (!cancelled) setTrafficSignals(signals);
       } catch (err) {
         console.warn('[tracker] failed to load traffic signals', err);
@@ -312,8 +312,8 @@ export default function TrackerScreen() {
     <TrackerCanvas onRefresh={handleRefresh} refreshing={refreshing}>
       <HeroCountdown
         state={heroState}
-        selectedRoute={settings.preferredRouteCode}
-        routeOptions={AVAILABLE_ROUTE_CODES}
+        selectedRoute={activeRoute}
+        routeOptions={settings.favoritedRoutes}
         onSelectRoute={settings.setPreferredRouteCode}
         eyebrow={hero.eyebrow}
         value={hero.value}

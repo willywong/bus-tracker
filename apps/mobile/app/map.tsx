@@ -90,13 +90,14 @@ export default function MapScreen() {
   const [staticData, setStaticData] = useState<StaticData | null>(null);
   const [mapRegion, setMapRegion] = useState<Region | null>(null);
   const [mapSize, setMapSize] = useState({ width: 0, height: 0 });
+  const activeRoute = settings.preferredRouteCode ?? '';
   const { positions, lastUpdated, nextRefreshAt, isRefreshing } =
     useBusPosition({
-      routeCode: settings.preferredRouteCode,
+      routeCode: settings.preferredRouteCode ?? undefined,
     });
   const eta = useEta({
     stopId: settings.preferredStopId,
-    routeCode: settings.preferredRouteCode,
+    routeCode: activeRoute,
     trafficProvider: settings.trafficProvider,
   });
 
@@ -107,9 +108,10 @@ export default function MapScreen() {
       try {
         const db = await openDb();
         const [routes, stops] = await Promise.all([getRoutes(db), getStops(db)]);
-        const route =
-          routes.find((r) => r.code === settings.preferredRouteCode) ??
-          routes[0];
+        const route = settings.preferredRouteCode
+          ? routes.find((r) => r.code === settings.preferredRouteCode) ??
+            routes[0]
+          : routes[0];
         if (!route) return;
         const stop =
           stops.find((s) => s.stop_id === settings.preferredStopId) ?? stops[0];
@@ -412,7 +414,7 @@ export default function MapScreen() {
       </MapView>
       <View style={styles.overlay} pointerEvents="box-none">
         <MapStatusCard
-          routeCode={settings.preferredRouteCode}
+          routeCode={activeRoute}
           eta={eta}
           stopName={staticData.stop.stop_name}
           lastUpdated={lastUpdated}

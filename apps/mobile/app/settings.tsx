@@ -18,14 +18,11 @@ import {
 import { useEffect, useState } from 'react';
 import { View } from 'react-native';
 
-import type { RouteId } from '@bus-tracker/shared';
-
 import { formatStopName } from '@/components/map/format';
 import { openDb } from '@/db/database';
 import { getStopsForRoute, type StopRow } from '@/db/queries';
 import { useStaticGtfs } from '@/hooks/useStaticGtfs';
 import {
-  AVAILABLE_ROUTE_CODES,
   CLOCK_FORMATS,
   NOTIF_BUFFER_CHOICES_MIN,
   TRAFFIC_PROVIDERS,
@@ -68,9 +65,10 @@ export default function SettingsScreen() {
   // so a fresh install that mounts Settings before the first fetch completes
   // populates the pickers instead of getting stuck on an empty DB.
   const gtfs = useStaticGtfs();
-  const [stopsByRoute, setStopsByRoute] = useState<
-    Partial<Record<RouteId, StopRow[]>>
-  >({});
+  const [stopsByRoute, setStopsByRoute] = useState<Record<string, StopRow[]>>(
+    {},
+  );
+  const favoritesKey = settings.favoritedRoutes.join(',');
 
   useEffect(() => {
     let cancelled = false;
@@ -78,12 +76,12 @@ export default function SettingsScreen() {
       try {
         const db = await openDb();
         const entries = await Promise.all(
-          AVAILABLE_ROUTE_CODES.map(
+          settings.favoritedRoutes.map(
             async (code) => [code, await getStopsForRoute(db, code)] as const,
           ),
         );
         if (cancelled) return;
-        const next: Partial<Record<RouteId, StopRow[]>> = {};
+        const next: Record<string, StopRow[]> = {};
         for (const [code, rows] of entries) next[code] = rows;
         setStopsByRoute(next);
       } catch (err) {
@@ -93,7 +91,8 @@ export default function SettingsScreen() {
     return () => {
       cancelled = true;
     };
-  }, [gtfs.ready, gtfs.result?.generatedAt]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gtfs.ready, gtfs.result?.generatedAt, favoritesKey]);
 
   if (!settings.ready) {
     return <View style={{ flex: 1 }} />;
@@ -196,7 +195,7 @@ export default function SettingsScreen() {
             <Text>Boarding stop used for ETA on each route.</Text>
           }
         >
-          {AVAILABLE_ROUTE_CODES.map((code) => {
+          {settings.favoritedRoutes.map((code) => {
             const routeStops = stopsByRoute[code] ?? [];
             // Pre-bootstrap, the JOIN returns 0 rows; render a disabled
             // placeholder so the Form still paints instead of feeding the
