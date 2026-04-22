@@ -9,7 +9,7 @@ import {
   Keyboard,
   PlatformColor,
   Pressable,
-  SectionList,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -18,7 +18,8 @@ import {
 } from 'react-native';
 
 import { formatStopName } from '@/components/map/format';
-import { surfaceColor, trackerSpacing } from '@/components/tracker/tokens';
+import { surfaceColor } from '@/components/tracker/tokens';
+import { tokens } from '@/theme/tokens';
 import { MAX_FAVORITES, useSettings } from '@/hooks/useSettings';
 import { useRouteSearch } from '@/hooks/useRouteSearch';
 import { fetchRouteBundle } from '@/services/routeBundle';
@@ -33,7 +34,6 @@ export default function AddBusScreen() {
 
   const handleSelectRoute = (hit: RouteSearchHit) => {
     Keyboard.dismiss();
-    // Already favorited: just activate and dismiss. No second step.
     if (settings.favoritedRoutes.includes(hit.code)) {
       settings.setPreferredRouteCode(hit.code);
       router.back();
@@ -52,23 +52,18 @@ export default function AddBusScreen() {
   const handlePickStop = (stop: GtfsStop) => {
     if (step.kind !== 'pickStop') return;
     const result = settings.addFavorite(step.route.code, stop.stop_id);
-    if (!result.ok) {
-      if (result.reason === 'cap-reached') {
-        Alert.alert(
-          'Favorite limit reached',
-          `You've reached ${MAX_FAVORITES} favorite buses. Remove one in Settings to add a new bus.`,
-        );
-        return;
-      }
-      // 'already-favorited' — just activate and dismiss.
+    if (!result.ok && result.reason === 'cap-reached') {
+      Alert.alert(
+        'Favorite limit reached',
+        `You've reached ${MAX_FAVORITES} favorite buses. Remove one in Settings to add a new bus.`,
+      );
+      return;
     }
     settings.setPreferredRouteCode(step.route.code);
     router.back();
   };
 
-  const handleBack = () => {
-    setStep({ kind: 'search' });
-  };
+  const handleBack = () => setStep({ kind: 'search' });
 
   return (
     <View style={styles.root}>
@@ -119,18 +114,19 @@ function SearchStep({
   const trimmed = query.trim();
 
   const inputRef = useRef<TextInput | null>(null);
-  // iOS sheets eat autoFocus unless it fires a frame after mount.
   useEffect(() => {
     const t = setTimeout(() => inputRef.current?.focus(), 120);
     return () => clearTimeout(t);
   }, []);
+
+  const resultCount = search.results.length;
 
   return (
     <View style={styles.flex}>
       <View style={styles.searchBar}>
         <SymbolView
           name="magnifyingglass"
-          size={17}
+          size={16}
           tintColor={PLATFORM_SECONDARY}
         />
         <TextInput
@@ -138,7 +134,7 @@ function SearchStep({
           value={query}
           onChangeText={setQuery}
           placeholder="Route code or stop name"
-          placeholderTextColor={PLATFORM_SECONDARY}
+          placeholderTextColor={PLATFORM_TERTIARY}
           returnKeyType="search"
           autoCorrect={false}
           autoCapitalize="characters"
@@ -152,12 +148,14 @@ function SearchStep({
         data={search.results}
         keyExtractor={(item) => item.code}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         contentContainerStyle={styles.listContent}
-        ItemSeparatorComponent={HairlineSeparator}
-        renderItem={({ item }: ListRenderItemInfo<RouteSearchHit>) => (
+        renderItem={({ item, index }: ListRenderItemInfo<RouteSearchHit>) => (
           <ResultRow
             hit={item}
             isFavorited={favorited.includes(item.code)}
+            isFirst={index === 0}
+            isLast={index === resultCount - 1}
             onPress={() => onSelect(item)}
           />
         )}
@@ -176,63 +174,92 @@ function SearchStep({
 function ResultRow({
   hit,
   isFavorited,
+  isFirst,
+  isLast,
   onPress,
 }: {
   hit: RouteSearchHit;
   isFavorited: boolean;
+  isFirst: boolean;
+  isLast: boolean;
   onPress: () => void;
 }) {
+  const showLongName =
+    hit.long_name != null &&
+    hit.long_name.trim().toUpperCase() !== hit.code.trim().toUpperCase();
+
   return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={
-        isFavorited
-          ? `Select ${hit.code}${hit.long_name ? ', ' + hit.long_name : ''}, already favorited`
-          : `Add ${hit.code}${hit.long_name ? ', ' + hit.long_name : ''}`
-      }
-      style={({ pressed }) => [
-        styles.row,
-        pressed && styles.rowPressed,
+    <View
+      style={[
+        styles.cardSlice,
+        isFirst && styles.cardTop,
+        isLast && styles.cardBottom,
       ]}
     >
-      <View style={styles.rowMain}>
-        <Text style={styles.code} selectable>
-          {hit.code}
-        </Text>
-        {hit.long_name ? (
-          <Text style={styles.longName} numberOfLines={2} selectable>
-            {hit.long_name}
+      <Pressable
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel={
+          isFavorited
+            ? `Select ${hit.code}${showLongName ? ', ' + hit.long_name : ''}, already favorited`
+            : `Add ${hit.code}${showLongName ? ', ' + hit.long_name : ''}`
+        }
+        style={({ pressed }) => [
+          styles.resultRow,
+          pressed && styles.rowPressed,
+        ]}
+      >
+        <View style={styles.routeAvatar}>
+          <SymbolView name="bus.fill" size={16} tintColor="#FFFFFF" />
+        </View>
+
+        <View style={styles.resultMain}>
+          <Text style={styles.resultCode} numberOfLines={1} selectable>
+            {hit.code}
           </Text>
-        ) : null}
-        {hit.matchedStops && hit.matchedStops.length > 0 ? (
-          <View style={styles.chipRow}>
-            {hit.matchedStops.slice(0, 2).map((s) => (
-              <View key={s.stop_id} style={styles.chip}>
-                <SymbolView
-                  name="mappin.circle"
-                  size={11}
-                  tintColor={PLATFORM_SECONDARY}
-                />
-                <Text style={styles.chipLabel} numberOfLines={1}>
-                  {formatStopName(s.stop_name)}
-                </Text>
-              </View>
-            ))}
-          </View>
-        ) : null}
-      </View>
-      <View style={styles.rowTrail}>
-        {isFavorited ? (
-          <Text style={styles.favoritedBadge}>Favorited</Text>
-        ) : null}
-        <SymbolView
-          name="chevron.right"
-          size={13}
-          tintColor={PLATFORM_TERTIARY}
-        />
-      </View>
-    </Pressable>
+          {showLongName ? (
+            <Text style={styles.resultLong} numberOfLines={2} selectable>
+              {hit.long_name}
+            </Text>
+          ) : null}
+          {hit.matchedStops && hit.matchedStops.length > 0 ? (
+            <View style={styles.chipRow}>
+              {hit.matchedStops.slice(0, 2).map((s) => (
+                <View key={s.stop_id} style={styles.chip}>
+                  <SymbolView
+                    name="mappin"
+                    size={9}
+                    tintColor={PLATFORM_SECONDARY}
+                  />
+                  <Text style={styles.chipLabel} numberOfLines={1}>
+                    {formatStopName(s.stop_name)}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+        </View>
+
+        <View style={styles.resultTrail}>
+          {isFavorited ? (
+            <View style={styles.addedPill}>
+              <SymbolView
+                name="checkmark"
+                size={10}
+                tintColor={tokens.platform.accent}
+              />
+              <Text style={styles.addedPillLabel}>Added</Text>
+            </View>
+          ) : null}
+          <SymbolView
+            name="chevron.right"
+            size={13}
+            tintColor={PLATFORM_TERTIARY}
+          />
+        </View>
+      </Pressable>
+      {!isLast ? <View style={styles.innerHairline} /> : null}
+    </View>
   );
 }
 
@@ -256,6 +283,11 @@ function EmptyHint({
   if (error) {
     return (
       <View style={styles.hintBlock}>
+        <SymbolView
+          name="wifi.slash"
+          size={28}
+          tintColor={PLATFORM_TERTIARY}
+        />
         <Text style={styles.hintText}>
           Couldn't reach server — try again.
         </Text>
@@ -265,8 +297,13 @@ function EmptyHint({
   if (query.length === 0) {
     return (
       <View style={styles.hintBlock}>
+        <SymbolView
+          name="bus.fill"
+          size={28}
+          tintColor={PLATFORM_TERTIARY}
+        />
         <Text style={styles.hintText}>
-          Search routes by code or stop name.
+          Search for a bus by code or stop name.
         </Text>
       </View>
     );
@@ -281,11 +318,6 @@ function EmptyHint({
 // ---------------------------------------------------------------------------
 // Step 2 — stop picker
 // ---------------------------------------------------------------------------
-
-interface StopSection {
-  title: string;
-  data: GtfsStop[];
-}
 
 function StopPickerStep({
   route,
@@ -319,117 +351,180 @@ function StopPickerStep({
     };
   }, [route.code]);
 
-  const sections: StopSection[] = useMemo(() => {
-    if (!bundle) return [];
+  const { matched, rest } = useMemo(() => {
+    if (!bundle) return { matched: [] as GtfsStop[], rest: [] as GtfsStop[] };
     const matchedIds = new Set(
       (route.matchedStops ?? []).map((s) => s.stop_id),
     );
-    const matched: GtfsStop[] = [];
-    const rest: GtfsStop[] = [];
+    const m: GtfsStop[] = [];
+    const r: GtfsStop[] = [];
     for (const s of bundle.stops) {
-      (matchedIds.has(s.stop_id) ? matched : rest).push(s);
+      (matchedIds.has(s.stop_id) ? m : r).push(s);
     }
-    const sortByName = (a: GtfsStop, b: GtfsStop) =>
+    const byName = (a: GtfsStop, b: GtfsStop) =>
       a.stop_name.localeCompare(b.stop_name);
-    matched.sort(sortByName);
-    rest.sort(sortByName);
-    const out: StopSection[] = [];
-    if (matched.length > 0) out.push({ title: 'Matched', data: matched });
-    if (rest.length > 0) out.push({ title: 'All stops', data: rest });
-    return out;
+    m.sort(byName);
+    r.sort(byName);
+    return { matched: m, rest: r };
   }, [bundle, route.matchedStops]);
 
-  if (error) {
-    return (
-      <View style={styles.hintBlock}>
-        <Text style={styles.hintText}>
-          Couldn't load stops — {error.message}
-        </Text>
-      </View>
-    );
-  }
-
-  if (!bundle) {
-    return (
-      <View style={styles.hintBlock}>
-        <ActivityIndicator size="small" />
-        <Text style={styles.hintText}>Loading stops…</Text>
-      </View>
-    );
-  }
+  const showSubtitle =
+    route.long_name != null &&
+    route.long_name.trim().toUpperCase() !== route.code.trim().toUpperCase();
 
   return (
-    <View style={styles.flex}>
+    <ScrollView
+      style={styles.flex}
+      contentContainerStyle={styles.stopsContent}
+      keyboardShouldPersistTaps="handled"
+    >
       <View style={styles.routeHeader}>
-        <Text style={styles.routeHeaderCode}>{route.code}</Text>
-        {route.long_name ? (
-          <Text style={styles.routeHeaderName} numberOfLines={2}>
-            {route.long_name}
-          </Text>
-        ) : null}
-      </View>
-      <SectionList<GtfsStop, StopSection>
-        sections={sections}
-        keyExtractor={(item) => item.stop_id}
-        ItemSeparatorComponent={HairlineSeparator}
-        contentContainerStyle={styles.listContent}
-        renderSectionHeader={({ section }) => (
-          <Text style={styles.sectionHeader}>{section.title}</Text>
-        )}
-        renderItem={({ item, section }) => (
-          <Pressable
-            onPress={() => onPickStop(item)}
-            accessibilityRole="button"
-            accessibilityLabel={`Pick stop ${formatStopName(item.stop_name)}`}
-            style={({ pressed }) => [
-              styles.stopRow,
-              pressed && styles.rowPressed,
-            ]}
-          >
-            <SymbolView
-              name={
-                section.title === 'Matched'
-                  ? 'mappin.circle.fill'
-                  : 'mappin.circle'
-              }
-              size={20}
-              tintColor={
-                section.title === 'Matched'
-                  ? tokensAccent()
-                  : PLATFORM_SECONDARY
-              }
-            />
-            <Text style={styles.stopName} numberOfLines={2} selectable>
-              {formatStopName(item.stop_name)}
+        <View style={styles.routeHeaderAvatar}>
+          <SymbolView name="bus.fill" size={22} tintColor="#FFFFFF" />
+        </View>
+        <View style={styles.routeHeaderText}>
+          <Text style={styles.routeHeaderCode}>{route.code}</Text>
+          {showSubtitle ? (
+            <Text style={styles.routeHeaderName} numberOfLines={2}>
+              {route.long_name}
             </Text>
-          </Pressable>
-        )}
-        stickySectionHeadersEnabled={false}
-      />
+          ) : null}
+        </View>
+      </View>
+
+      {error ? (
+        <View style={styles.hintBlock}>
+          <SymbolView
+            name="exclamationmark.triangle"
+            size={24}
+            tintColor={PLATFORM_TERTIARY}
+          />
+          <Text style={styles.hintText}>
+            Couldn't load stops — {error.message}
+          </Text>
+        </View>
+      ) : !bundle ? (
+        <View style={styles.hintBlock}>
+          <ActivityIndicator size="small" />
+          <Text style={styles.hintText}>Loading stops…</Text>
+        </View>
+      ) : (
+        <>
+          {matched.length > 0 ? (
+            <StopSection
+              title="Matched stops"
+              stops={matched}
+              variant="matched"
+              onPick={onPickStop}
+            />
+          ) : null}
+          {rest.length > 0 ? (
+            <StopSection
+              title={matched.length > 0 ? 'All stops' : 'Stops'}
+              stops={rest}
+              variant="default"
+              onPick={onPickStop}
+            />
+          ) : null}
+        </>
+      )}
+    </ScrollView>
+  );
+}
+
+function StopSection({
+  title,
+  stops,
+  variant,
+  onPick,
+}: {
+  title: string;
+  stops: GtfsStop[];
+  variant: 'matched' | 'default';
+  onPick: (stop: GtfsStop) => void;
+}) {
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionHeader}>{title}</Text>
+      <View style={styles.card}>
+        {stops.map((s, i) => (
+          <StopRow
+            key={s.stop_id}
+            stop={s}
+            variant={variant}
+            isFirst={i === 0}
+            isLast={i === stops.length - 1}
+            onPress={() => onPick(s)}
+          />
+        ))}
+      </View>
     </View>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Shared
-// ---------------------------------------------------------------------------
+function StopRow({
+  stop,
+  variant,
+  isFirst,
+  isLast,
+  onPress,
+}: {
+  stop: GtfsStop;
+  variant: 'matched' | 'default';
+  isFirst: boolean;
+  isLast: boolean;
+  onPress: () => void;
+}) {
+  const dotColor =
+    variant === 'matched' ? tokens.platform.accent : PLATFORM_SEPARATOR_STRONG;
 
-function HairlineSeparator() {
-  return <View style={styles.hairline} />;
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Pick stop ${formatStopName(stop.stop_name)}`}
+      style={({ pressed }) => [styles.stopRow, pressed && styles.rowPressed]}
+    >
+      <View style={styles.rail}>
+        {!isFirst ? (
+          <View style={[styles.railLine, styles.railLineUpper]} />
+        ) : null}
+        {!isLast ? (
+          <View style={[styles.railLine, styles.railLineLower]} />
+        ) : null}
+        <View
+          style={[
+            styles.railDot,
+            variant === 'matched' && styles.railDotMatched,
+            { backgroundColor: dotColor },
+          ]}
+        />
+      </View>
+      <Text style={styles.stopName} numberOfLines={2} selectable>
+        {formatStopName(stop.stop_name)}
+      </Text>
+      <SymbolView
+        name="chevron.right"
+        size={12}
+        tintColor={PLATFORM_TERTIARY}
+      />
+    </Pressable>
+  );
 }
 
-// Read the accent once — avoids spreading `tokens` import into this big file
-// and keeps the SF Symbol tint matching the app palette.
-function tokensAccent(): string {
-  // Lazy-required to sidestep a potential cycle with theme/tokens in a sheet.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { tokens } = require('@/theme/tokens');
-  return tokens.color.accent as string;
-}
+// ---------------------------------------------------------------------------
+// Styles + constants
+// ---------------------------------------------------------------------------
 
-// PlatformColor doesn't survive JS operations like spreading, so keep direct references.
 const PLATFORM_SECONDARY = PlatformColor('secondaryLabel');
 const PLATFORM_TERTIARY = PlatformColor('tertiaryLabel');
+const PLATFORM_SEPARATOR = PlatformColor('separator');
+const PLATFORM_SEPARATOR_STRONG = PlatformColor('opaqueSeparator');
+const CARD_RADIUS = 14;
+const CARD_MARGIN = 16;
+const RAIL_WIDTH = 34;
+const RAIL_CENTER = RAIL_WIDTH / 2;
+const RAIL_LINE_WIDTH = 2;
 
 const styles = StyleSheet.create({
   root: {
@@ -442,18 +537,20 @@ const styles = StyleSheet.create({
     color: PlatformColor('link'),
     paddingHorizontal: 4,
   },
+
+  // Search bar
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginHorizontal: 16,
+    marginHorizontal: CARD_MARGIN,
     marginTop: 12,
-    marginBottom: 8,
+    marginBottom: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderRadius: 12,
     backgroundColor: surfaceColor.grouped,
-    borderColor: surfaceColor.hairline,
+    borderColor: PLATFORM_SEPARATOR,
     borderWidth: StyleSheet.hairlineWidth,
   },
   searchInput: {
@@ -462,90 +559,139 @@ const styles = StyleSheet.create({
     color: PlatformColor('label'),
     paddingVertical: 2,
   },
+
+  // Search results list
   listContent: {
     paddingBottom: 48,
   },
-  row: {
+
+  // Card slices — stack of rows collectively rendering one rounded card
+  cardSlice: {
+    marginHorizontal: CARD_MARGIN,
+    backgroundColor: surfaceColor.grouped,
+    overflow: 'hidden',
+  },
+  cardTop: {
+    borderTopLeftRadius: CARD_RADIUS,
+    borderTopRightRadius: CARD_RADIUS,
+  },
+  cardBottom: {
+    borderBottomLeftRadius: CARD_RADIUS,
+    borderBottomRightRadius: CARD_RADIUS,
+  },
+
+  // Search result row
+  resultRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: trackerSpacing.rowH,
+    paddingHorizontal: 14,
     paddingVertical: 12,
-    gap: 10,
-    backgroundColor: surfaceColor.grouped,
+    gap: 12,
   },
   rowPressed: {
-    opacity: 0.6,
+    opacity: 0.55,
   },
-  rowMain: { flex: 1, gap: 4 },
-  rowTrail: {
-    flexDirection: 'row',
+  routeAvatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     alignItems: 'center',
-    gap: 8,
+    justifyContent: 'center',
+    backgroundColor: tokens.platform.accent,
   },
-  code: {
+  resultMain: { flex: 1, gap: 3 },
+  resultCode: {
     fontSize: 17,
     fontWeight: '600',
     color: PlatformColor('label'),
-    fontVariant: ['tabular-nums'],
     letterSpacing: 0.2,
   },
-  longName: {
+  resultLong: {
     fontSize: 13,
     color: PlatformColor('secondaryLabel'),
+  },
+  resultTrail: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   chipRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 6,
-    marginTop: 2,
+    marginTop: 4,
   },
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    paddingHorizontal: 8,
+    paddingHorizontal: 7,
     paddingVertical: 3,
-    borderRadius: 10,
+    borderRadius: 8,
     backgroundColor: surfaceColor.inset,
   },
   chipLabel: {
     fontSize: 11,
     fontWeight: '500',
     color: PlatformColor('secondaryLabel'),
-    maxWidth: 180,
+    maxWidth: 160,
   },
-  favoritedBadge: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: PlatformColor('secondaryLabel'),
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+  addedPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 10,
     backgroundColor: surfaceColor.inset,
   },
-  hairline: {
-    height: StyleSheet.hairlineWidth,
-    marginLeft: trackerSpacing.rowH,
-    backgroundColor: surfaceColor.hairline,
+  addedPillLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: tokens.platform.accent,
+    letterSpacing: 0.3,
   },
+
+  innerHairline: {
+    height: StyleSheet.hairlineWidth,
+    marginLeft: 14 + 38 + 12, // row inset + avatar + gap
+    backgroundColor: PLATFORM_SEPARATOR,
+  },
+
+  // Hint block (empty / loading / error)
   hintBlock: {
     alignItems: 'center',
-    gap: 8,
-    padding: 32,
+    gap: 10,
+    paddingHorizontal: 32,
+    paddingVertical: 48,
   },
   hintText: {
     fontSize: 14,
     color: PlatformColor('secondaryLabel'),
     textAlign: 'center',
   },
-  routeHeader: {
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 16,
-    gap: 4,
+
+  // Stop picker
+  stopsContent: {
+    paddingBottom: 48,
   },
+  routeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 8,
+  },
+  routeHeaderAvatar: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: tokens.platform.accent,
+  },
+  routeHeaderText: { flex: 1, gap: 2 },
   routeHeaderCode: {
     fontSize: 28,
     fontWeight: '700',
@@ -553,8 +699,12 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
   routeHeaderName: {
-    fontSize: 13,
+    fontSize: 14,
     color: PlatformColor('secondaryLabel'),
+  },
+
+  section: {
+    marginTop: 16,
   },
   sectionHeader: {
     fontSize: 12,
@@ -562,17 +712,56 @@ const styles = StyleSheet.create({
     color: PlatformColor('secondaryLabel'),
     textTransform: 'uppercase',
     letterSpacing: 0.8,
-    marginTop: 18,
     marginBottom: 6,
-    marginLeft: 20,
+    marginHorizontal: CARD_MARGIN + 8,
   },
+  card: {
+    marginHorizontal: CARD_MARGIN,
+    backgroundColor: surfaceColor.grouped,
+    borderRadius: CARD_RADIUS,
+    overflow: 'hidden',
+  },
+
+  // Stop row + timeline rail
   stopRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: trackerSpacing.rowH,
-    paddingVertical: 14,
-    gap: 12,
-    backgroundColor: surfaceColor.grouped,
+    paddingRight: 14,
+    paddingVertical: 12,
+    minHeight: 52,
+    gap: 8,
+  },
+  rail: {
+    width: RAIL_WIDTH,
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  railLine: {
+    position: 'absolute',
+    left: RAIL_CENTER - RAIL_LINE_WIDTH / 2,
+    width: RAIL_LINE_WIDTH,
+    backgroundColor: PLATFORM_SEPARATOR_STRONG,
+  },
+  railLineUpper: {
+    top: 0,
+    height: '50%',
+  },
+  railLineLower: {
+    top: '50%',
+    bottom: 0,
+  },
+  railDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    borderWidth: 2,
+    borderColor: surfaceColor.grouped,
+  },
+  railDotMatched: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
   },
   stopName: {
     flex: 1,
