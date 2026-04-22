@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { formatStopName } from '@/components/map/format';
 import { CurrentBusCard } from '@/components/tracker/CurrentBusCard';
+import { EmptyTrackerHero } from '@/components/tracker/EmptyTrackerHero';
 import { HeroCountdown } from '@/components/tracker/HeroCountdown';
 import { NotifDeniedChip } from '@/components/tracker/NotifDeniedChip';
 import { ServiceEdgeRow } from '@/components/tracker/ServiceEdgeRow';
@@ -37,6 +38,19 @@ import { useWalkTimer } from '@/hooks/useWalkTimer';
 import { refreshAll } from '@/services/refresh';
 
 export default function TrackerScreen() {
+  const { ready, favoritedRoutes } = useSettings();
+  if (!ready) return null;
+  if (favoritedRoutes.length === 0) {
+    return (
+      <TrackerCanvas onRefresh={() => {}} refreshing={false}>
+        <EmptyTrackerHero onAdd={() => router.push('/add-bus')} />
+      </TrackerCanvas>
+    );
+  }
+  return <TrackerActive />;
+}
+
+function TrackerActive() {
   const settings = useSettings();
   const push = usePushRegistrationState();
   const activeRoute = settings.preferredRouteCode ?? '';

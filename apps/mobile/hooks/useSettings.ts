@@ -25,6 +25,12 @@ export const CLOCK_FORMATS: readonly ClockFormat[] = ['24h', '12h'];
 
 export const NOTIF_BUFFER_CHOICES_MIN: readonly number[] = [0, 1, 2, 3, 5];
 
+export const MAX_FAVORITES = 10;
+
+export type AddFavoriteResult =
+  | { ok: true }
+  | { ok: false; reason: 'already-favorited' | 'cap-reached' };
+
 export interface Settings {
   walkMinutes: number;
   notifBufferMin: number;
@@ -72,8 +78,12 @@ export interface SettingsApi extends Settings {
   setQuietStartMin: (v: number) => void;
   setQuietEndMin: (v: number) => void;
   setClockFormat: (v: ClockFormat) => void;
-  /** Adds `code` to the favorites list with a default stop. No-op if already favorited. */
-  addFavorite: (code: string, stopId: string) => void;
+  /**
+   * Adds `code` to the favorites list with a default stop. Returns
+   * `{ ok: false }` with a reason when blocked (already favorited, or cap
+   * reached) so callers can surface UI feedback.
+   */
+  addFavorite: (code: string, stopId: string) => AddFavoriteResult;
   /** Removes `code` from favorites and its stop mapping. Picks a new active route if the removed one was active. */
   removeFavorite: (code: string) => void;
   /** Reorders the favorites list. The new list must contain exactly the same codes. */
@@ -331,28 +341,40 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const addFavorite = useCallback((code: string, stopId: string) => {
-    setState((prev) => {
-      if (prev.favoritedRoutes.includes(code)) return prev;
-      const nextFavorites = [...prev.favoritedRoutes, code];
-      const nextStops = { ...prev.preferredStopByRoute, [code]: stopId };
-      const nextActive = prev.preferredRouteCode ?? code;
-      writeValue(STORAGE_KEYS.favoritedRoutes, JSON.stringify(nextFavorites));
-      writeValue(
-        STORAGE_KEYS.preferredStopByRoute,
-        JSON.stringify(nextStops),
-      );
-      if (nextActive !== prev.preferredRouteCode) {
-        writeValue(STORAGE_KEYS.preferredRouteCode, nextActive);
-      }
-      return {
-        ...prev,
-        favoritedRoutes: nextFavorites,
-        preferredStopByRoute: nextStops,
-        preferredRouteCode: nextActive,
-      };
-    });
-  }, []);
+  const addFavorite = useCallback(
+    (code: string, stopId: string): AddFavoriteResult => {
+      let result: AddFavoriteResult = { ok: true };
+      setState((prev) => {
+        if (prev.favoritedRoutes.includes(code)) {
+          result = { ok: false, reason: 'already-favorited' };
+          return prev;
+        }
+        if (prev.favoritedRoutes.length >= MAX_FAVORITES) {
+          result = { ok: false, reason: 'cap-reached' };
+          return prev;
+        }
+        const nextFavorites = [...prev.favoritedRoutes, code];
+        const nextStops = { ...prev.preferredStopByRoute, [code]: stopId };
+        const nextActive = prev.preferredRouteCode ?? code;
+        writeValue(STORAGE_KEYS.favoritedRoutes, JSON.stringify(nextFavorites));
+        writeValue(
+          STORAGE_KEYS.preferredStopByRoute,
+          JSON.stringify(nextStops),
+        );
+        if (nextActive !== prev.preferredRouteCode) {
+          writeValue(STORAGE_KEYS.preferredRouteCode, nextActive);
+        }
+        return {
+          ...prev,
+          favoritedRoutes: nextFavorites,
+          preferredStopByRoute: nextStops,
+          preferredRouteCode: nextActive,
+        };
+      });
+      return result;
+    },
+    [],
+  );
 
   const removeFavorite = useCallback((code: string) => {
     setState((prev) => {

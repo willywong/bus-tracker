@@ -4,6 +4,7 @@ import { router, Stack } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Keyboard,
   PlatformColor,
@@ -18,7 +19,7 @@ import {
 
 import { formatStopName } from '@/components/map/format';
 import { surfaceColor, trackerSpacing } from '@/components/tracker/tokens';
-import { useSettings } from '@/hooks/useSettings';
+import { MAX_FAVORITES, useSettings } from '@/hooks/useSettings';
 import { useRouteSearch } from '@/hooks/useRouteSearch';
 import { fetchRouteBundle } from '@/services/routeBundle';
 
@@ -38,12 +39,29 @@ export default function AddBusScreen() {
       router.back();
       return;
     }
+    if (settings.favoritedRoutes.length >= MAX_FAVORITES) {
+      Alert.alert(
+        'Favorite limit reached',
+        `You've reached ${MAX_FAVORITES} favorite buses. Remove one in Settings to add a new bus.`,
+      );
+      return;
+    }
     setStep({ kind: 'pickStop', route: hit });
   };
 
   const handlePickStop = (stop: GtfsStop) => {
     if (step.kind !== 'pickStop') return;
-    settings.addFavorite(step.route.code, stop.stop_id);
+    const result = settings.addFavorite(step.route.code, stop.stop_id);
+    if (!result.ok) {
+      if (result.reason === 'cap-reached') {
+        Alert.alert(
+          'Favorite limit reached',
+          `You've reached ${MAX_FAVORITES} favorite buses. Remove one in Settings to add a new bus.`,
+        );
+        return;
+      }
+      // 'already-favorited' — just activate and dismiss.
+    }
     settings.setPreferredRouteCode(step.route.code);
     router.back();
   };
@@ -61,7 +79,12 @@ export default function AddBusScreen() {
           headerLeft:
             step.kind === 'pickStop'
               ? () => (
-                  <Pressable onPress={handleBack} hitSlop={12}>
+                  <Pressable
+                    onPress={handleBack}
+                    hitSlop={12}
+                    accessibilityRole="button"
+                    accessibilityLabel="Back to search"
+                  >
                     <Text style={styles.headerAction}>Back</Text>
                   </Pressable>
                 )
@@ -120,6 +143,7 @@ function SearchStep({
           autoCorrect={false}
           autoCapitalize="characters"
           clearButtonMode="while-editing"
+          accessibilityLabel="Search routes"
           style={styles.searchInput}
         />
       </View>
@@ -161,6 +185,12 @@ function ResultRow({
   return (
     <Pressable
       onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={
+        isFavorited
+          ? `Select ${hit.code}${hit.long_name ? ', ' + hit.long_name : ''}, already favorited`
+          : `Add ${hit.code}${hit.long_name ? ', ' + hit.long_name : ''}`
+      }
       style={({ pressed }) => [
         styles.row,
         pressed && styles.rowPressed,
@@ -349,6 +379,8 @@ function StopPickerStep({
         renderItem={({ item, section }) => (
           <Pressable
             onPress={() => onPickStop(item)}
+            accessibilityRole="button"
+            accessibilityLabel={`Pick stop ${formatStopName(item.stop_name)}`}
             style={({ pressed }) => [
               styles.stopRow,
               pressed && styles.rowPressed,
