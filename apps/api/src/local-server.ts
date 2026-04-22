@@ -4,6 +4,8 @@ import { createLeaveNowApp } from "../api/cron/leave-now.js";
 import { createRefreshGtfsApp } from "../api/cron/refresh-gtfs.js";
 import { createGtfsStaticApp } from "../api/gtfs-static.js";
 import { createPushRegisterApp } from "../api/push/register.js";
+import { createRouteDetailApp } from "../api/route/[code].js";
+import { createRoutesSearchApp } from "../api/routes/search.js";
 import { createTrafficEtaApp } from "../api/traffic-eta.js";
 
 const app = new Hono();
@@ -13,6 +15,8 @@ app.get("/api/health", (c) =>
 );
 
 app.route("/", createGtfsStaticApp());
+app.route("/", createRoutesSearchApp());
+app.route("/", createRouteDetailApp());
 app.route("/", createRefreshGtfsApp());
 app.route("/", createTrafficEtaApp());
 app.route("/", createPushRegisterApp());
@@ -24,6 +28,8 @@ serve({ fetch: app.fetch, port, hostname: "0.0.0.0" }, (info) => {
   console.log(`[api] ready on http://localhost:${info.port}`);
   console.log(`  GET /api/health`);
   console.log(`  GET /api/gtfs-static`);
+  console.log(`  GET /api/routes/search?q=<query>`);
+  console.log(`  GET /api/route/:code`);
   console.log(`  GET /api/cron/refresh-gtfs`);
   console.log(`  GET /api/cron/leave-now`);
   console.log(`  GET /api/traffic-eta`);
