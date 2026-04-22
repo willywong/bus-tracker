@@ -48,7 +48,7 @@ export default function RootLayout() {
           labelStyle={{ fontSize: 11 }}
           minimizeBehavior="onScrollDown"
         >
-          <NativeTabs.Trigger name="index">
+          <NativeTabs.Trigger name="(tracker)">
             <NativeTabs.Trigger.Icon sf="tram.fill" />
             <NativeTabs.Trigger.Label>Tracker</NativeTabs.Trigger.Label>
           </NativeTabs.Trigger>
