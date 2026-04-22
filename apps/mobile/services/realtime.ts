@@ -12,7 +12,6 @@ import { getTripToRouteMap } from "@/db/queries";
 const ENDPOINT =
   "https://api.data.gov.my/gtfs-realtime/vehicle-position/prasarana?category=rapid-bus-mrtfeeder";
 const POLL_INTERVAL_MS = 30_000;
-const ROUTE_CODES = ["T816", "T815"] as const;
 
 export interface RealtimeSnapshot {
   positions: VehiclePosition[];
@@ -39,12 +38,19 @@ export interface RealtimeStore {
    * subscribers (refCount 0) or the app isn't active.
    */
   refresh(): Promise<void>;
+  /**
+   * Replaces the set of route codes the poller is watching. Clears the cached
+   * tripMap so the next tick rebuilds it against the new set. Empty array
+   * stops polling entirely.
+   */
+  setRouteCodes(codes: readonly string[]): void;
   setFilter(filter: PositionFilter): void;
   resetFilterState(): void;
   __forTests: {
     reset(): void;
     refCount(): number;
     tick(): Promise<void>;
+    getRouteCodes(): readonly string[];
   };
 }
 
@@ -58,7 +64,7 @@ export interface AppStateLike {
 
 export interface RealtimeDeps {
   fetchFeed: (signal: AbortSignal) => Promise<Uint8Array>;
-  loadTripMap: () => Promise<TripRouteMap>;
+  loadTripMap: (routeCodes: readonly string[]) => Promise<TripRouteMap>;
   appState: AppStateLike;
   now: () => number;
   pollIntervalMs: number;
@@ -72,10 +78,11 @@ const defaultDeps: RealtimeDeps = {
     if (!res.ok) throw new Error(`realtime ${res.status}`);
     return new Uint8Array(await res.arrayBuffer());
   },
-  loadTripMap: async () => {
+  loadTripMap: async (routeCodes) => {
+    if (routeCodes.length === 0) return new Map();
     const db = await openDb();
-    const raw = await getTripToRouteMap(db, ROUTE_CODES);
-    const typed = new Map() as Map<string, VehiclePosition["routeId"]>;
+    const raw = await getTripToRouteMap(db, routeCodes);
+    const typed = new Map<string, VehiclePosition["routeId"]>();
     for (const [tripId, code] of raw) {
       typed.set(tripId, code as VehiclePosition["routeId"]);
     }
@@ -89,6 +96,17 @@ const defaultDeps: RealtimeDeps = {
     return () => clearTimeout(handle);
   },
 };
+
+function sameRouteCodes(
+  a: readonly string[],
+  b: readonly string[],
+): boolean {
+  if (a.length !== b.length) return false;
+  const sa = [...a].sort();
+  const sb = [...b].sort();
+  for (let i = 0; i < sa.length; i++) if (sa[i] !== sb[i]) return false;
+  return true;
+}
 
 export function createRealtimeStore(
   deps: Partial<RealtimeDeps> = {},
@@ -105,6 +123,7 @@ export function createRealtimeStore(
   const listeners = new Set<Listener>();
   let refCount = 0;
 
+  let routeCodes: readonly string[] = [];
   let tripMap: TripRouteMap | null = null;
   let cancelTimer: (() => void) | null = null;
   let inflight: AbortController | null = null;
@@ -153,6 +172,7 @@ export function createRealtimeStore(
 
   async function tick(): Promise<void> {
     if (refCount === 0) return;
+    if (routeCodes.length === 0) return;
     if (cfg.appState.currentState !== "active") return;
 
     cancelInflight();
@@ -161,7 +181,7 @@ export function createRealtimeStore(
     setRefreshing(true);
 
     try {
-      if (!tripMap) tripMap = await cfg.loadTripMap();
+      if (!tripMap) tripMap = await cfg.loadTripMap(routeCodes);
       const bytes = await cfg.fetchFeed(ctrl.signal);
       if (ctrl.signal.aborted) return;
       const feed = decodeFeed(bytes);
@@ -182,7 +202,11 @@ export function createRealtimeStore(
     } finally {
       if (inflight === ctrl) inflight = null;
       setRefreshing(false);
-      if (refCount > 0 && cfg.appState.currentState === "active") {
+      if (
+        refCount > 0 &&
+        routeCodes.length > 0 &&
+        cfg.appState.currentState === "active"
+      ) {
         scheduleNext();
       } else {
         setNextRefreshAt(null);
@@ -214,6 +238,7 @@ export function createRealtimeStore(
     if (!appStateSub) {
       appStateSub = cfg.appState.addEventListener("change", onAppStateChange);
     }
+    if (routeCodes.length === 0) return;
     if (cfg.appState.currentState === "active") {
       void tick();
     }
@@ -249,6 +274,22 @@ export function createRealtimeStore(
       if (refCount === 0) stopPolling();
     },
     refresh: () => tick(),
+    setRouteCodes(next) {
+      if (sameRouteCodes(routeCodes, next)) return;
+      routeCodes = [...next];
+      tripMap = null;
+      if (routeCodes.length === 0) {
+        clearTimer();
+        cancelInflight();
+        setRefreshing(false);
+        setNextRefreshAt(null);
+        commit({ positions: [] }, false);
+        return;
+      }
+      if (refCount > 0 && cfg.appState.currentState === "active") {
+        void tick();
+      }
+    },
     setFilter(filter) {
       positionFilter = filter;
     },
@@ -259,6 +300,7 @@ export function createRealtimeStore(
       reset() {
         stopPolling();
         refCount = 0;
+        routeCodes = [];
         listeners.clear();
         snapshot = {
           positions: [],
@@ -273,6 +315,7 @@ export function createRealtimeStore(
         return refCount;
       },
       tick: () => tick(),
+      getRouteCodes: () => routeCodes,
     },
   };
 }

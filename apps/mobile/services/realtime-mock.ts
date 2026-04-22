@@ -265,6 +265,9 @@ export function createMockRealtimeStore(): RealtimeStore {
       if (refCount === 0) stopTicking();
     },
     refresh: async () => emit(),
+    setRouteCodes() {
+      // no-op in mock mode — the mock always simulates MOCK_ROUTE_CODE
+    },
     setFilter() {
       // no-op in mock mode
     },
@@ -288,6 +291,7 @@ export function createMockRealtimeStore(): RealtimeStore {
       },
       refCount: () => refCount,
       tick: async () => emit(),
+      getRouteCodes: () => [MOCK_ROUTE_CODE],
     },
   };
 }
