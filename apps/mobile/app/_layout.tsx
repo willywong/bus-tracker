@@ -6,9 +6,10 @@ import { useEffect } from 'react';
 import 'react-native-reanimated';
 import '../global.css';
 
-import { bootstrapStaticGtfs } from '@/db/bootstrap';
 import { PushRegistrationProvider } from '@/hooks/PushRegistrationContext';
+import { useRealtimeRoutes } from '@/hooks/useRealtimeRoutes';
 import { SettingsProvider } from '@/hooks/useSettings';
+import { useStaticGtfs } from '@/hooks/useStaticGtfs';
 import { tokens } from '@/theme/tokens';
 
 export {
@@ -34,18 +35,13 @@ export default function RootLayout() {
     }
   }, [loaded]);
 
-  useEffect(() => {
-    bootstrapStaticGtfs().catch((err) => {
-      console.warn('[gtfs] bootstrap failed', err);
-    });
-  }, []);
-
   if (!loaded) {
     return null;
   }
 
   return (
     <SettingsProvider>
+      <StaticGtfsRunner />
       <PushRegistrationProvider>
         <NativeTabs
           tintColor={tokens.color.accent}
@@ -68,4 +64,10 @@ export default function RootLayout() {
       </PushRegistrationProvider>
     </SettingsProvider>
   );
+}
+
+function StaticGtfsRunner() {
+  useStaticGtfs();
+  useRealtimeRoutes();
+  return null;
 }

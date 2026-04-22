@@ -1,11 +1,17 @@
-import type { RouteId, T816Bundle } from "@bus-tracker/shared";
+import type { T816Bundle } from "@bus-tracker/shared";
 import { gtfsTimeToSeconds } from "@bus-tracker/shared";
 import { API_BASE_URL } from "@/config/env";
-import { AVAILABLE_ROUTE_CODES } from "@/hooks/useSettings";
 import { openDb, type Db } from "./database";
 import { META_KEYS } from "./schema";
 
 const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
+
+export class RouteNotFoundError extends Error {
+  constructor(code: string) {
+    super(`route ${code} not found`);
+    this.name = "RouteNotFoundError";
+  }
+}
 
 export async function getMeta(db: Db, key: string): Promise<string | null> {
   const row = await db.getFirstAsync<{ value: string }>(
@@ -23,20 +29,6 @@ async function setMeta(db: Db, key: string, value: string): Promise<void> {
   );
 }
 
-async function cacheHasAllRoutes(
-  db: Db,
-  expected: readonly RouteId[],
-): Promise<boolean> {
-  if (expected.length === 0) return true;
-  const placeholders = expected.map(() => "?").join(",");
-  const rows = await db.getAllAsync<{ code: string }>(
-    `SELECT code FROM routes WHERE code IN (${placeholders});`,
-    ...expected,
-  );
-  const have = new Set(rows.map((r) => r.code));
-  return expected.every((c) => have.has(c));
-}
-
 async function hasOrphanTrips(db: Db): Promise<boolean> {
   const row = await db.getFirstAsync<{ n: number }>(
     `SELECT COUNT(*) AS n FROM trips
@@ -47,69 +39,121 @@ async function hasOrphanTrips(db: Db): Promise<boolean> {
   return (row?.n ?? 0) > 0;
 }
 
-async function hasRouteWithoutTrips(
-  db: Db,
-  expected: readonly RouteId[],
-): Promise<boolean> {
-  if (expected.length === 0) return false;
-  const placeholders = expected.map(() => "?").join(",");
+async function getCachedRouteCodes(db: Db): Promise<Set<string>> {
+  const rows = await db.getAllAsync<{ code: string }>(
+    "SELECT code FROM routes;",
+  );
+  return new Set(rows.map((r) => r.code));
+}
+
+async function getEmptyRouteCodes(db: Db): Promise<Set<string>> {
   const rows = await db.getAllAsync<{ code: string; n: number }>(
     `SELECT r.code AS code, COUNT(t.trip_id) AS n
        FROM routes r
        LEFT JOIN trips t ON t.route_id = r.route_id
-      WHERE r.code IN (${placeholders})
       GROUP BY r.code;`,
-    ...expected,
   );
-  // A code present in the routes table with zero trips means a stale or
-  // half-written bundle. Force a refresh to recover.
-  return rows.some((row) => (row.n ?? 0) === 0);
+  const out = new Set<string>();
+  for (const row of rows) {
+    if ((row.n ?? 0) === 0) out.add(row.code);
+  }
+  return out;
 }
 
+/**
+ * Returns the subset of `favorites` that need to be (re)fetched from the API.
+ * Checks: overall TTL (>24h → all), missing routes, routes without trips, and
+ * orphan trips (stale half-write recovery — marks every favorite stale).
+ */
 export async function needsRefresh(
   db: Db,
+  favorites: readonly string[],
   now: number = Date.now(),
   staleMs: number = STALE_AFTER_MS,
-): Promise<boolean> {
+): Promise<string[]> {
+  if (favorites.length === 0) return [];
+
   const fetchedAt = await getMeta(db, META_KEYS.fetchedAt);
-  if (!fetchedAt) return true;
-  const ts = Number.parseInt(fetchedAt, 10);
-  if (!Number.isFinite(ts)) return true;
-  if (now - ts > staleMs) return true;
-  // A new route code was shipped — cache is stale regardless of TTL.
-  if (!(await cacheHasAllRoutes(db, AVAILABLE_ROUTE_CODES))) return true;
-  // Cache has the routes row but no trips for it — a partial bundle from an
-  // older API/JS combo or an interrupted writeBundle. Without this check, the
-  // cache silently serves an empty schedule for that route forever.
-  if (await hasRouteWithoutTrips(db, AVAILABLE_ROUTE_CODES)) return true;
-  // Defence against a half-written bundle (e.g. app killed mid-write, or a v1
-  // install upgrading to v2 where stop_times is a new table).
-  if (await hasOrphanTrips(db)) return true;
-  return false;
+  const ts = fetchedAt ? Number.parseInt(fetchedAt, 10) : NaN;
+  const ttlExpired =
+    !Number.isFinite(ts) || now - ts > staleMs;
+  if (ttlExpired) return Array.from(new Set(favorites));
+
+  if (await hasOrphanTrips(db)) return Array.from(new Set(favorites));
+
+  const cached = await getCachedRouteCodes(db);
+  const empty = await getEmptyRouteCodes(db);
+  const out = new Set<string>();
+  for (const code of favorites) {
+    if (!cached.has(code)) out.add(code);
+    else if (empty.has(code)) out.add(code);
+  }
+  return Array.from(out);
 }
 
-export async function writeBundle(
+async function deleteRouteRows(db: Db, code: string): Promise<void> {
+  // Cascade-cleanup (SQLite has no ON DELETE CASCADE in this schema). Order
+  // matters: children before parents. Shared stops and calendar rows are
+  // never deleted — other favorites may still reference them.
+  await db.runAsync(
+    `DELETE FROM stop_times
+       WHERE trip_id IN (
+         SELECT t.trip_id FROM trips t
+         JOIN routes r ON r.route_id = t.route_id
+         WHERE r.code = ?
+       );`,
+    code,
+  );
+  await db.runAsync(
+    `DELETE FROM shape_points
+       WHERE shape_id IN (
+         SELECT DISTINCT t.shape_id FROM trips t
+         JOIN routes r ON r.route_id = t.route_id
+         WHERE r.code = ? AND t.shape_id IS NOT NULL
+       );`,
+    code,
+  );
+  await db.runAsync(
+    `DELETE FROM trips
+       WHERE route_id IN (SELECT route_id FROM routes WHERE code = ?);`,
+    code,
+  );
+  await db.runAsync("DELETE FROM traffic_signals WHERE route_code = ?;", code);
+  await db.runAsync("DELETE FROM routes WHERE code = ?;", code);
+}
+
+/** Removes all rows belonging exclusively to `code`. Safe to call outside a txn. */
+export async function pruneRoute(db: Db, code: string): Promise<void> {
+  await db.withTransactionAsync(async () => {
+    await deleteRouteRows(db, code);
+  });
+}
+
+/**
+ * Merges a single-route `bundle` into SQLite: deletes any existing rows for
+ * the route (cascade), then inserts routes/trips/shape_points/stop_times.
+ * Stops and calendar entries are upserted (shared across routes).
+ */
+export async function mergeBundle(
   db: Db,
   bundle: T816Bundle,
   now: number = Date.now(),
 ): Promise<void> {
   await db.withTransactionAsync(async () => {
-    await db.execAsync(
-      "DELETE FROM routes; DELETE FROM stops; DELETE FROM trips; DELETE FROM shape_points; DELETE FROM stop_times; DELETE FROM calendar; DELETE FROM traffic_signals;",
-    );
-
-    for (const r of bundle.routes) {
+    for (const route of bundle.routes) {
+      await deleteRouteRows(db, route.code);
       await db.runAsync(
         "INSERT INTO routes(route_id, code, long_name) VALUES (?, ?, ?);",
-        r.route_id,
-        r.code,
-        r.long_name ?? null,
+        route.route_id,
+        route.code,
+        route.long_name ?? null,
       );
     }
 
     for (const s of bundle.stops) {
       await db.runAsync(
-        "INSERT INTO stops(stop_id, stop_name, stop_lat, stop_lon) VALUES (?, ?, ?, ?);",
+        `INSERT OR IGNORE INTO stops(stop_id, stop_name, stop_lat, stop_lon)
+         VALUES (?, ?, ?, ?);`,
         s.stop_id,
         s.stop_name,
         s.stop_lat,
@@ -119,7 +163,8 @@ export async function writeBundle(
 
     for (const t of bundle.trips) {
       await db.runAsync(
-        "INSERT INTO trips(trip_id, route_id, service_id, shape_id, direction_id) VALUES (?, ?, ?, ?, ?);",
+        `INSERT INTO trips(trip_id, route_id, service_id, shape_id, direction_id)
+         VALUES (?, ?, ?, ?, ?);`,
         t.trip_id,
         t.route_id,
         t.service_id,
@@ -131,7 +176,8 @@ export async function writeBundle(
     for (const [shapeId, points] of Object.entries(bundle.shapes)) {
       for (const p of points) {
         await db.runAsync(
-          "INSERT INTO shape_points(shape_id, seq, lat, lng) VALUES (?, ?, ?, ?);",
+          `INSERT OR REPLACE INTO shape_points(shape_id, seq, lat, lng)
+           VALUES (?, ?, ?, ?);`,
           shapeId,
           p.seq,
           p.lat,
@@ -142,7 +188,8 @@ export async function writeBundle(
 
     if (bundle.stopTimes.length > 0) {
       const stopTimeStmt = await db.prepareAsync(
-        "INSERT INTO stop_times(trip_id, stop_sequence, stop_id, arrival_seconds, departure_seconds) VALUES (?, ?, ?, ?, ?);",
+        `INSERT INTO stop_times(trip_id, stop_sequence, stop_id, arrival_seconds, departure_seconds)
+         VALUES (?, ?, ?, ?, ?);`,
       );
       try {
         for (const st of bundle.stopTimes) {
@@ -161,7 +208,8 @@ export async function writeBundle(
 
     if (bundle.calendar.length > 0) {
       const calStmt = await db.prepareAsync(
-        "INSERT INTO calendar(service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+        `INSERT OR REPLACE INTO calendar(service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
       );
       try {
         for (const c of bundle.calendar) {
@@ -185,7 +233,8 @@ export async function writeBundle(
 
     if (bundle.trafficSignals) {
       const sigStmt = await db.prepareAsync(
-        "INSERT OR IGNORE INTO traffic_signals(route_code, osm_id, lat, lng) VALUES (?, ?, ?, ?);",
+        `INSERT OR IGNORE INTO traffic_signals(route_code, osm_id, lat, lng)
+         VALUES (?, ?, ?, ?);`,
       );
       try {
         for (const [code, signals] of Object.entries(bundle.trafficSignals)) {
@@ -198,64 +247,113 @@ export async function writeBundle(
       }
     }
 
-    await setMeta(db, META_KEYS.fetchedAt, String(now));
     await setMeta(db, META_KEYS.generatedAt, String(bundle.generatedAt));
   });
 }
 
-export async function fetchBundleFromApi(
+export async function fetchRouteBundle(
+  code: string,
   baseUrl: string = API_BASE_URL,
   signal?: AbortSignal,
 ): Promise<T816Bundle> {
-  const res = await fetch(`${baseUrl}/api/gtfs-static`, { signal });
-  if (!res.ok) {
-    throw new Error(`gtfs-static ${res.status}`);
-  }
+  const res = await fetch(
+    `${baseUrl}/api/route/${encodeURIComponent(code)}`,
+    { signal },
+  );
+  if (res.status === 404) throw new RouteNotFoundError(code);
+  if (!res.ok) throw new Error(`route ${code}: ${res.status}`);
   return (await res.json()) as T816Bundle;
 }
 
 export interface BootstrapResult {
-  refreshed: boolean;
+  /** Route codes whose bundles were (re)fetched this run. */
+  refreshed: string[];
+  /** Route codes whose fetch failed — does not include routes that were already fresh. */
+  failed: string[];
+  /** Absolute epoch ms of the newest `generatedAt` across refreshed bundles, else the cached value. */
   generatedAt: number | null;
 }
 
-let inflight: Promise<BootstrapResult> | null = null;
+const inflightByKey = new Map<string, Promise<BootstrapResult>>();
 
-export async function bootstrapStaticGtfs(opts?: {
+function normalizeRoutes(routes: readonly string[]): string[] {
+  return Array.from(new Set(routes)).sort();
+}
+
+export async function bootstrapStaticGtfs(opts: {
+  routes: readonly string[];
   db?: Db;
-  fetchBundle?: (signal?: AbortSignal) => Promise<T816Bundle>;
+  fetchBundle?: (code: string, signal?: AbortSignal) => Promise<T816Bundle>;
   now?: () => number;
   force?: boolean;
   signal?: AbortSignal;
 }): Promise<BootstrapResult> {
-  if (inflight && !opts?.force) return inflight;
+  const key = normalizeRoutes(opts.routes).join(",");
+  if (!opts.force) {
+    const existing = inflightByKey.get(key);
+    if (existing) return existing;
+  }
 
   const run = (async (): Promise<BootstrapResult> => {
-    const db = opts?.db ?? (await openDb());
-    const now = (opts?.now ?? Date.now)();
+    const db = opts.db ?? (await openDb());
+    const now = (opts.now ?? Date.now)();
     const fetchBundle =
-      opts?.fetchBundle ?? ((s) => fetchBundleFromApi(undefined, s));
+      opts.fetchBundle ?? ((code, signal) => fetchRouteBundle(code, undefined, signal));
 
-    const mustRefresh = opts?.force || (await needsRefresh(db, now));
-    if (!mustRefresh) {
+    if (opts.routes.length === 0) {
       const gen = await getMeta(db, META_KEYS.generatedAt);
-      return { refreshed: false, generatedAt: gen ? Number(gen) : null };
+      return {
+        refreshed: [],
+        failed: [],
+        generatedAt: gen ? Number(gen) : null,
+      };
     }
 
-    const bundle = await fetchBundle(opts?.signal);
-    await writeBundle(db, bundle, now);
-    return { refreshed: true, generatedAt: bundle.generatedAt };
+    const toFetch = opts.force
+      ? Array.from(new Set(opts.routes))
+      : await needsRefresh(db, opts.routes, now);
+
+    const refreshed: string[] = [];
+    const failed: string[] = [];
+    let maxGeneratedAt = 0;
+
+    for (const code of toFetch) {
+      try {
+        const bundle = await fetchBundle(code, opts.signal);
+        await mergeBundle(db, bundle, now);
+        refreshed.push(code);
+        if (bundle.generatedAt > maxGeneratedAt) {
+          maxGeneratedAt = bundle.generatedAt;
+        }
+      } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") throw err;
+        console.warn(`[gtfs] fetch ${code} failed`, err);
+        failed.push(code);
+      }
+    }
+
+    // Only bump fetchedAt if every needed route succeeded. Partial success
+    // leaves the stamp stale so the next launch retries the failures.
+    if (failed.length === 0 && toFetch.length > 0) {
+      await setMeta(db, META_KEYS.fetchedAt, String(now));
+    }
+
+    const gen = await getMeta(db, META_KEYS.generatedAt);
+    return {
+      refreshed,
+      failed,
+      generatedAt: maxGeneratedAt > 0 ? maxGeneratedAt : gen ? Number(gen) : null,
+    };
   })();
 
-  inflight = run;
+  inflightByKey.set(key, run);
   try {
     return await run;
-  } catch (err) {
-    inflight = null;
-    throw err;
+  } finally {
+    if (inflightByKey.get(key) === run) inflightByKey.delete(key);
   }
 }
 
 export function resetBootstrapCacheForTests(): void {
-  inflight = null;
+  inflightByKey.clear();
 }

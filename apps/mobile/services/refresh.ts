@@ -21,23 +21,25 @@ export type RefreshOutcome =
  *
  * Use from pull-to-refresh handlers / explicit refresh buttons.
  */
-export async function refreshAll(opts?: {
+export async function refreshAll(opts: {
+  /** Favorited route codes to refresh — pulled fresh from `/api/route/:code`. */
+  routes: readonly string[];
   /** Bypass the 30 s throttle. Reserved for failure-recovery paths. */
   force?: boolean;
   now?: () => number;
 }): Promise<RefreshOutcome> {
-  const now = (opts?.now ?? Date.now)();
+  const now = (opts.now ?? Date.now)();
   const lastUpdated = realtimeStore.getSnapshot().lastUpdated ?? 0;
-  if (!opts?.force && lastUpdated > 0 && now - lastUpdated < REFRESH_THROTTLE_MS) {
+  if (!opts.force && lastUpdated > 0 && now - lastUpdated < REFRESH_THROTTLE_MS) {
     return { status: "throttled", lastUpdated };
   }
 
   try {
     // Force-bootstrap rewrites SQLite even if TTL hasn't elapsed — the user
     // pulled because something looks wrong, so we re-fetch.
-    await bootstrapStaticGtfs({ force: true });
+    await bootstrapStaticGtfs({ routes: opts.routes, force: true });
     await realtimeStore.refresh();
-    return { status: "refreshed", finishedAt: (opts?.now ?? Date.now)() };
+    return { status: "refreshed", finishedAt: (opts.now ?? Date.now)() };
   } catch (err) {
     return {
       status: "failed",
