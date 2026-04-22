@@ -17,6 +17,8 @@ import {
   type ListRenderItemInfo,
 } from 'react-native';
 
+import { useHeaderHeight } from '@react-navigation/elements';
+
 import { formatStopName } from '@/components/map/format';
 import { surfaceColor } from '@/components/tracker/tokens';
 import { tokens } from '@/theme/tokens';
@@ -65,8 +67,10 @@ export default function AddBusScreen() {
 
   const handleBack = () => setStep({ kind: 'search' });
 
+  const headerHeight = useHeaderHeight();
+
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, { paddingTop: headerHeight }]}>
       <Stack.Screen
         options={{
           title: step.kind === 'search' ? 'Add bus' : step.route.code,
@@ -544,7 +548,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     marginHorizontal: CARD_MARGIN,
-    marginTop: 12,
+    marginTop: 16,
     marginBottom: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,

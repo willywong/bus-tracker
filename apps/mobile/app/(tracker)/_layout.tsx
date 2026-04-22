@@ -13,11 +13,11 @@ export default function TrackerStackLayout() {
     >
       <Stack.Screen name="index" />
       <Stack.Screen
-        name="add-bus"
+        name="add-a-bus"
         options={{
-          presentation: 'modal',
+          presentation: 'formSheet',
           headerShown: true,
-          title: 'Add bus',
+          title: 'Add a Bus',
           headerLargeTitle: false,
         }}
       />
