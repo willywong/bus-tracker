@@ -60,19 +60,57 @@ test("evaluateApproach: bus heading west on first segment is departing (wrong di
   assert.ok(e.headingDot < 0);
 });
 
-test("evaluateApproach: bus just past stop on a loop still counts as approaching (wraps around)", () => {
-  // Bus at 3.108 on the W-bound leg (segment index 2), heading west (270°).
+test("evaluateApproach: bus just past stop on a loop counts as departing (more than half the loop to wrap back)", () => {
+  // Bus at 3.11, 101.605 on the W-bound leg (segment index 2), heading west (270°).
   const e = evaluateApproach({
     bus: bus("A", 3.11, 101.605, 270),
     stop: STOP,
     polyline: LOOP,
     loop: true,
   });
-  // Heading aligned with westbound tangent ⇒ heading dot positive.
+  // Heading is aligned with the westbound tangent — same loop direction — but
+  // the bus has more than half the loop to travel before returning to the stop,
+  // so the shorter path back is *backwards*. Treat as departing.
   assert.ok(e.headingDot > 0.9);
-  assert.equal(e.verdict, "approaching");
-  // Almost a full loop remains.
+  assert.equal(e.verdict, "departing");
   assert.ok(e.forwardMeters > 2000);
+});
+
+test("evaluateApproach: bus just past stop on a loop with no heading data is departing", () => {
+  // Same position as above but no bearing and no previousBus — falls back to
+  // geometry-only, which must still classify a wrapped-around bus as departing.
+  const e = evaluateApproach({
+    bus: bus("A", 3.11, 101.605),
+    stop: STOP,
+    polyline: LOOP,
+    loop: true,
+  });
+  assert.equal(e.headingDot, 0);
+  assert.equal(e.verdict, "departing");
+});
+
+test("pickApproachingVehicle: returns null when the only bus has just passed the stop on a loop", () => {
+  // Single just-passed bus — caller should fall back to scheduled arrivals,
+  // not lock onto a bus that has to travel almost a full loop back.
+  const justPast = bus("PAST", 3.11, 101.605, 270);
+  const picked = pickApproachingVehicle({
+    vehicles: [justPast],
+    stop: STOP,
+    polyline: LOOP,
+  });
+  assert.equal(picked, null);
+});
+
+test("pickApproachingVehicle: prefers a true approaching bus over a just-passed one on a loop", () => {
+  const justPast = bus("PAST", 3.11, 101.605, 270);
+  const approaching = bus("NEXT", 3.1, 101.608, 90);
+  const picked = pickApproachingVehicle({
+    vehicles: [justPast, approaching],
+    stop: STOP,
+    polyline: LOOP,
+  });
+  assert.ok(picked);
+  assert.equal(picked!.vehicle.vehicleId, "NEXT");
 });
 
 test("evaluateApproach: falls back to position-only heading from previousBus", () => {

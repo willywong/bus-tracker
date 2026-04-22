@@ -29,7 +29,7 @@ export interface EvaluateApproachArgs {
   loop?: boolean;
   /** Max off-route distance in meters before verdict drops to 'unknown'. Default: 500. */
   maxOffRouteMeters?: number;
-  /** Forward distance in meters below which we treat the bus as already passed (for non-loop). Default: 25. */
+  /** Forward distance in meters below which a non-loop bus is treated as already passed. Default: 80. */
   justPassedMeters?: number;
 }
 
@@ -39,11 +39,16 @@ export interface EvaluateApproachArgs {
  * A bus is approaching when:
  *   - its heading points the same direction as the polyline tangent at its
  *     current projection (dot product > 0), AND
- *   - its forward distance along the route to the stop is positive.
+ *   - its forward distance along the route to the stop is positive, AND
+ *   - (loop routes) it is not "just past" the stop — i.e. the forward wrap
+ *     around the loop isn't the long way home.
  *
- * For circular routes (`loop: true`), a bus that just passed the stop will
- * still have a large positive `forwardMeters` (wraps around the loop) — the
- * heading check is what prevents a wrong-direction bus from being picked.
+ * For circular routes (`loop: true`), a bus that just passed the stop has
+ * `forwardMeters ≈ polylineLength − small`. We treat `forwardMeters > L / 2`
+ * as departing: the shorter path back to the stop is *backwards*, so the bus
+ * is genuinely behind the stop. This avoids locking onto a just-passed bus
+ * when a true approaching bus exists — and correctly falls back to the next
+ * scheduled arrival when it's the only observation.
  */
 export function evaluateApproach(args: EvaluateApproachArgs): ApproachEvaluation {
   const {
@@ -53,7 +58,7 @@ export function evaluateApproach(args: EvaluateApproachArgs): ApproachEvaluation
     polyline,
     loop = true,
     maxOffRouteMeters = 500,
-    justPassedMeters = 25,
+    justPassedMeters = 80,
   } = args;
 
   const busProj = projectOntoRoute({ lat: bus.lat, lng: bus.lng }, polyline);
@@ -68,14 +73,14 @@ export function evaluateApproach(args: EvaluateApproachArgs): ApproachEvaluation
   const headingDot = heading ? dot2(heading, tangent) : NaN;
 
   const forwardMeters = distanceAlongRoute(busProj, stopProj, polyline, { loop });
+  const L = polylineLength(polyline);
+  const justPassed = loop
+    ? forwardMeters <= 0 || forwardMeters > L / 2
+    : forwardMeters < justPassedMeters;
 
   if (!Number.isFinite(headingDot)) {
-    // No heading info — fall back to pure geometry.
-    const approaching = loop
-      ? forwardMeters > 0 && forwardMeters < polylineLength(polyline) - justPassedMeters
-      : forwardMeters > justPassedMeters;
     return {
-      verdict: approaching ? "approaching" : "departing",
+      verdict: justPassed ? "departing" : "approaching",
       forwardMeters,
       headingDot: 0,
     };
@@ -85,7 +90,7 @@ export function evaluateApproach(args: EvaluateApproachArgs): ApproachEvaluation
     return { verdict: "departing", forwardMeters, headingDot };
   }
 
-  if (!loop && forwardMeters < justPassedMeters) {
+  if (justPassed) {
     return { verdict: "departing", forwardMeters, headingDot };
   }
 
