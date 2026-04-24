@@ -458,68 +458,84 @@ export function useEta({
         ? now + nextBus.minutesToStop * 60_000
         : null;
 
-    // Decide which scheduled row (if any) the live `current` consumes.
-    let consumedTripId: string | null = null;
-    if (liveEtaMs != null) {
-      // Prefer trip-id match when the time delta is plausible.
-      if (currentTripId && currentScheduledEpochMs != null) {
-        consumedTripId = currentTripId;
-      } else {
-        // Fallback: nearest scheduled within ±TRIP_MATCH_MAX_MIN.
-        let bestDiff = TRIP_MATCH_MAX_MIN * 60_000 + 1;
-        for (const dep of scheduled.upcoming) {
-          const diff = Math.abs(dep.departureEpochMs - liveEtaMs);
-          if (diff < bestDiff) {
-            bestDiff = diff;
-            consumedTripId = dep.tripId;
-          }
-        }
+    // Decide which scheduled rows the live buses consume. Each live entry
+    // claims its best match (trip-id preferred, else nearest within
+    // ±TRIP_MATCH_MAX_MIN) *plus* any other scheduled row within ±60 s of
+    // that match's clock — this collapses doubled loop-route service where
+    // two trips depart at the same clock minute so the duplicate doesn't
+    // sort ahead of the live bus and flip the Tracker to Timetable.
+    const CLOCK_DUP_WINDOW_MS = 60_000;
+    const consumedTripIds = new Set<string>();
+
+    const pickMatchedSched = (
+      etaMs: number,
+      preferredTripId: string | null,
+    ): ScheduledDeparture | null => {
+      if (preferredTripId) {
+        const hit = scheduled.upcoming.find((d) => d.tripId === preferredTripId);
+        if (hit && !consumedTripIds.has(hit.tripId)) return hit;
       }
-    }
-    // The second live bus, likewise, consumes the nearest schedule to *its* ETA.
-    let consumedBySecondaryTripId: string | null = null;
-    if (nextLiveEtaMs != null) {
+      let best: ScheduledDeparture | null = null;
       let bestDiff = TRIP_MATCH_MAX_MIN * 60_000 + 1;
       for (const dep of scheduled.upcoming) {
-        if (dep.tripId === consumedTripId) continue;
-        const diff = Math.abs(dep.departureEpochMs - nextLiveEtaMs);
+        if (consumedTripIds.has(dep.tripId)) continue;
+        const diff = Math.abs(dep.departureEpochMs - etaMs);
         if (diff < bestDiff) {
           bestDiff = diff;
-          consumedBySecondaryTripId = dep.tripId;
+          best = dep;
         }
       }
+      return best;
+    };
+
+    const claimDuplicates = (anchor: ScheduledDeparture) => {
+      consumedTripIds.add(anchor.tripId);
+      for (const dep of scheduled.upcoming) {
+        if (consumedTripIds.has(dep.tripId)) continue;
+        if (
+          Math.abs(dep.departureEpochMs - anchor.departureEpochMs) <=
+          CLOCK_DUP_WINDOW_MS
+        ) {
+          consumedTripIds.add(dep.tripId);
+        }
+      }
+    };
+
+    let primaryMatchedSched: ScheduledDeparture | null = null;
+    if (liveEtaMs != null) {
+      const preferred =
+        currentTripId && currentScheduledEpochMs != null ? currentTripId : null;
+      primaryMatchedSched = pickMatchedSched(liveEtaMs, preferred);
+      if (primaryMatchedSched) claimDuplicates(primaryMatchedSched);
+    }
+
+    let secondaryMatchedSched: ScheduledDeparture | null = null;
+    if (nextLiveEtaMs != null) {
+      secondaryMatchedSched = pickMatchedSched(nextLiveEtaMs, null);
+      if (secondaryMatchedSched) claimDuplicates(secondaryMatchedSched);
     }
 
     const out: ArrivalEntry[] = [];
     if (liveEtaMs != null && current) {
-      const matchedSched = consumedTripId
-        ? scheduled.upcoming.find((d) => d.tripId === consumedTripId) ?? null
-        : null;
       out.push({
         kind: "live",
         epochMs: liveEtaMs,
         live: current,
-        sched: matchedSched,
-        tripId: consumedTripId ?? currentTripId,
+        sched: primaryMatchedSched,
+        tripId: primaryMatchedSched?.tripId ?? currentTripId,
       });
     }
     if (nextLiveEtaMs != null && nextBus) {
-      const matchedSched = consumedBySecondaryTripId
-        ? scheduled.upcoming.find(
-            (d) => d.tripId === consumedBySecondaryTripId,
-          ) ?? null
-        : null;
       out.push({
         kind: "live",
         epochMs: nextLiveEtaMs,
         live: nextBus,
-        sched: matchedSched,
-        tripId: consumedBySecondaryTripId,
+        sched: secondaryMatchedSched,
+        tripId: secondaryMatchedSched?.tripId ?? null,
       });
     }
     for (const dep of scheduled.upcoming) {
-      if (dep.tripId === consumedTripId) continue;
-      if (dep.tripId === consumedBySecondaryTripId) continue;
+      if (consumedTripIds.has(dep.tripId)) continue;
       out.push({
         kind: "sched",
         epochMs: dep.departureEpochMs,

@@ -456,6 +456,14 @@ function TrackerActive({ onAddBus }: { onAddBus: () => void }) {
               livePosition={positions.find(
                 (p) => p.vehicleId === primaryArrival.live?.vehicleId,
               )}
+              liveCurrent={eta.current}
+              liveCurrentPosition={
+                eta.current?.vehicleId
+                  ? positions.find(
+                      (p) => p.vehicleId === eta.current?.vehicleId,
+                    )
+                  : undefined
+              }
               delay={primaryArrival.kind === 'live' ? resolved.delay : null}
               isStale={updated.isStale}
               lastUpdated={lastUpdated}
