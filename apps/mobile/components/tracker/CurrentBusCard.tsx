@@ -36,11 +36,20 @@ import {
   trackerSpacing,
 } from '@/components/tracker/tokens';
 import type { TrafficSignalRow } from '@/db/queries';
-import type { ArrivalEntry } from '@/hooks/useEta';
+import type { ApproachingBus, ArrivalEntry } from '@/hooks/useEta';
 
 interface CurrentBusCardProps {
   entry: ArrivalEntry;
   livePosition:
+    | Pick<
+        VehiclePosition,
+        'speed' | 'bearing' | 'lat' | 'lng' | 'observedAt' | 'vehicleId'
+      >
+    | undefined;
+  /** Currently-tracked live vehicle, even when `entry` is a scheduled row. Mirrors the Map's `eta.current` so telemetry shows the moment a bus is being tracked. */
+  liveCurrent?: ApproachingBus | null;
+  /** VehiclePosition for `liveCurrent`. Fallback for telemetry when `entry.live` is absent. */
+  liveCurrentPosition?:
     | Pick<
         VehiclePosition,
         'speed' | 'bearing' | 'lat' | 'lng' | 'observedAt' | 'vehicleId'
@@ -69,6 +78,8 @@ interface CurrentBusCardProps {
 export function CurrentBusCard({
   entry,
   livePosition,
+  liveCurrent,
+  liveCurrentPosition,
   delay,
   isStale,
   lastUpdated,
@@ -80,15 +91,36 @@ export function CurrentBusCard({
   nextEntry,
   nextLivePosition,
 }: CurrentBusCardProps) {
-  const live = entry.live;
+  const entryLive = entry.live;
   const sched = entry.sched;
-  const isLive = entry.kind === 'live' && live != null;
+
+  // When the primary timeline row is scheduled but a live vehicle is actually
+  // being tracked (duplicate scheduled rows on a loop, or the traffic-ETA race
+  // on first mount before computeEta can produce live minutes), back-fill the
+  // live view from `eta.current`. Mirrors the Map card's behavior so the same
+  // GTFS feed drives both screens together.
+  const effectiveLive = entryLive ?? liveCurrent ?? null;
+  const effectivePosition = livePosition ?? liveCurrentPosition;
+  const hasTrackedLive =
+    effectiveLive != null && effectivePosition != null && !isStale;
+  const isLive =
+    (entry.kind === 'live' && entryLive != null) || hasTrackedLive;
   const isArrived = arrivalStatus === 'arrived';
   const isArriving = arrivalStatus === 'arriving';
 
+  // If the primary timeline row is scheduled but a live vehicle is tracked,
+  // project the headline clock off the live ETA (matches the Map). Falls back
+  // to the scheduled epoch when live minutes aren't ready yet (traffic race).
+  const liveProjectedEpochMs =
+    entry.kind !== 'live' &&
+    hasTrackedLive &&
+    effectiveLive?.minutesToStop != null
+      ? Date.now() + effectiveLive.minutesToStop * 60_000
+      : null;
+
   const minutes =
-    isLive && live?.minutesToStop != null
-      ? live.minutesToStop
+    isLive && effectiveLive?.minutesToStop != null
+      ? effectiveLive.minutesToStop
       : Math.max(0, Math.round((entry.epochMs - Date.now()) / 60_000));
 
   const eyebrow = isArrived
@@ -99,7 +131,7 @@ export function CurrentBusCard({
         ? 'ARRIVING NOW'
         : 'ARRIVING IN';
 
-  const projectedClock = formatClockHHMM(entry.epochMs);
+  const projectedClock = formatClockHHMM(liveProjectedEpochMs ?? entry.epochMs);
   // Inline headline shown next to the big minutes value — only when the
   // schedule compare row isn't already displaying the same clock time. Hides
   // on "arriving now" / "arrived" where the eyebrow already says everything.
@@ -113,10 +145,10 @@ export function CurrentBusCard({
   const motion = useMemo(() => {
     if (!isLive) return null;
     return getMotionStatus({
-      speedKmh: livePosition?.speed,
+      speedKmh: effectivePosition?.speed,
       position:
-        livePosition?.lat != null && livePosition?.lng != null
-          ? { lat: livePosition.lat, lng: livePosition.lng }
+        effectivePosition?.lat != null && effectivePosition?.lng != null
+          ? { lat: effectivePosition.lat, lng: effectivePosition.lng }
           : null,
       signals: trafficSignals.map((s) => ({
         id: s.osm_id,
@@ -124,19 +156,25 @@ export function CurrentBusCard({
         lng: s.lng,
       })),
     });
-  }, [isLive, livePosition?.speed, livePosition?.lat, livePosition?.lng, trafficSignals]);
+  }, [
+    isLive,
+    effectivePosition?.speed,
+    effectivePosition?.lat,
+    effectivePosition?.lng,
+    trafficSignals,
+  ]);
 
   // Progress = 1 − (distance-to-stop / route length). T816 is a loop, so right
   // after the bus passes the stop forwardMeters ≈ polylineMeters (full loop to
   // come back around), and near arrival forwardMeters ≈ 0. Clamp to [0, 1] —
   // distanceAlongRoute can briefly exceed polylineLength at the loop seam.
   const progress = useMemo(() => {
-    const m = live?.forwardMeters;
+    const m = effectiveLive?.forwardMeters;
     if (!isLive || m == null || !polylineMeters || polylineMeters <= 0) {
       return null;
     }
     return Math.max(0, Math.min(1, 1 - m / polylineMeters));
-  }, [isLive, live?.forwardMeters, polylineMeters]);
+  }, [isLive, effectiveLive?.forwardMeters, polylineMeters]);
 
   const delayLabel = formatDelayLabel(delay);
   const schedClock = sched ? formatClockHHMM(sched.departureEpochMs) : null;
@@ -155,11 +193,11 @@ export function CurrentBusCard({
   // Telemetry grid cells — each is a labelled value that helps a casual user
   // understand what they're looking at. Skip speed when the motion pill
   // already carries it (moving / slow) to avoid duplicating "55 km/h".
-  const vehicleAge = useVehicleAge(livePosition?.observedAt ?? null);
+  const vehicleAge = useVehicleAge(effectivePosition?.observedAt ?? null);
   const infoCells = useMemo(() => {
     if (!isLive) return [];
     const cells: InfoCellData[] = [];
-    const distance = formatDistanceToStop(live?.forwardMeters);
+    const distance = formatDistanceToStop(effectiveLive?.forwardMeters);
     if (distance) {
       cells.push({ key: 'distance', label: 'Distance', value: distance });
     }
@@ -167,21 +205,21 @@ export function CurrentBusCard({
       motion != null && (motion.kind === 'moving' || motion.kind === 'slow');
     if (
       !motionCarriesSpeed &&
-      livePosition?.speed != null &&
-      Number.isFinite(livePosition.speed)
+      effectivePosition?.speed != null &&
+      Number.isFinite(effectivePosition.speed)
     ) {
       cells.push({
         key: 'speed',
         label: 'Speed',
-        value: `${Math.round(livePosition.speed)} km/h`,
+        value: `${Math.round(effectivePosition.speed)} km/h`,
       });
     }
-    const heading = bearingToCardinal(livePosition?.bearing);
+    const heading = bearingToCardinal(effectivePosition?.bearing);
     if (heading) {
       const rotation =
-        typeof livePosition?.bearing === 'number' &&
-        Number.isFinite(livePosition.bearing)
-          ? livePosition.bearing
+        typeof effectivePosition?.bearing === 'number' &&
+        Number.isFinite(effectivePosition.bearing)
+          ? effectivePosition.bearing
           : undefined;
       cells.push({
         key: 'heading',
@@ -191,11 +229,11 @@ export function CurrentBusCard({
         iconRotation: rotation,
       });
     }
-    if (livePosition?.vehicleId != null) {
+    if (effectivePosition?.vehicleId != null) {
       cells.push({
         key: 'vehicle',
         label: 'Vehicle',
-        value: livePosition.vehicleId,
+        value: effectivePosition.vehicleId,
       });
     }
     if (vehicleAge) {
@@ -204,11 +242,11 @@ export function CurrentBusCard({
     return cells;
   }, [
     isLive,
-    live?.forwardMeters,
+    effectiveLive?.forwardMeters,
     motion,
-    livePosition?.speed,
-    livePosition?.bearing,
-    livePosition?.vehicleId,
+    effectivePosition?.speed,
+    effectivePosition?.bearing,
+    effectivePosition?.vehicleId,
     vehicleAge,
   ]);
 
