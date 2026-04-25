@@ -1,4 +1,5 @@
 import {
+  Button,
   DatePicker,
   Form,
   Host,
@@ -7,23 +8,32 @@ import {
   Picker,
   Section,
   Slider,
+  Spacer,
   Text,
 } from '@expo/ui/swift-ui';
 import {
+  buttonStyle,
   font,
   foregroundStyle,
   padding,
   tag,
 } from '@expo/ui/swift-ui/modifiers';
+import { useMemo, useState } from 'react';
 import { View } from 'react-native';
 
+import { MapModesSheet } from '@/components/map/MapModesSheet';
 import { FavoritesSection } from '@/components/settings/FavoritesSection';
+import {
+  StopPickerSheet,
+  type StopPickerRoute,
+} from '@/components/stops/StopPickerSheet';
 import {
   CLOCK_FORMATS,
   NOTIF_BUFFER_CHOICES_MIN,
   TRAFFIC_PROVIDERS,
   useSettings,
   type ClockFormat,
+  type MapType,
   type TrafficProvider,
 } from '@/hooks/useSettings';
 
@@ -55,8 +65,22 @@ const clockFormatLabel: Record<ClockFormat, string> = {
   '12h': '12-hour (2:30 PM)',
 };
 
+const mapTypeLabel: Record<MapType, string> = {
+  standard: 'Standard',
+  satellite: 'Satellite',
+};
+
 export default function SettingsScreen() {
   const settings = useSettings();
+  const [activeChangeStopCode, setActiveChangeStopCode] = useState<
+    string | null
+  >(null);
+  const [showMapModes, setShowMapModes] = useState(false);
+
+  const changeStopRoute = useMemo<StopPickerRoute | null>(
+    () => (activeChangeStopCode ? { code: activeChangeStopCode } : null),
+    [activeChangeStopCode],
+  );
 
   if (!settings.ready) {
     return <View style={{ flex: 1 }} />;
@@ -69,8 +93,9 @@ export default function SettingsScreen() {
   const clockFormatIndex = CLOCK_FORMATS.indexOf(settings.clockFormat);
 
   return (
-    <Host style={{ flex: 1 }} useViewportSizeMeasurement>
-      <Form>
+    <View style={{ flex: 1 }}>
+      <Host style={{ flex: 1 }} useViewportSizeMeasurement>
+        <Form>
         <Section
           header={<Text>Walk</Text>}
           footer={
@@ -129,6 +154,34 @@ export default function SettingsScreen() {
           </Picker>
         </Section>
 
+        <Section
+          header={<Text>Map</Text>}
+          footer={
+            <Text>
+              Choose between Standard and Satellite views, and toggle traffic.
+            </Text>
+          }
+        >
+          <Button
+            onPress={() => setShowMapModes(true)}
+            modifiers={[buttonStyle('plain')]}
+          >
+            <HStack spacing={12} modifiers={[padding({ vertical: 6 })]}>
+              <Image systemName="map" size={18} color="#8E8E93" />
+              <Text>Map mode</Text>
+              <Spacer />
+              <Text
+                modifiers={[
+                  foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
+                ]}
+              >
+                {mapTypeLabel[settings.mapType]}
+              </Text>
+              <Image systemName="chevron.right" size={12} color="#8E8E93" />
+            </HStack>
+          </Button>
+        </Section>
+
         {/* Notifications lead time — temporarily hidden; notifications are
             not wired up yet. Restore this Section when the push pipeline ships.
         <Section
@@ -158,7 +211,7 @@ export default function SettingsScreen() {
         </Section>
         */}
 
-        <FavoritesSection />
+        <FavoritesSection onRequestChangeStop={setActiveChangeStopCode} />
 
         {/* Traffic provider — temporarily hidden; HERE is the only provider
             in use. TomTom remains wired through `useSettings` / `useEta` so
@@ -231,7 +284,27 @@ export default function SettingsScreen() {
             </Text>
           </HStack>
         </Section>
-      </Form>
-    </Host>
+        </Form>
+      </Host>
+      <StopPickerSheet
+        isPresented={activeChangeStopCode !== null}
+        route={changeStopRoute}
+        title="Change boarding stop"
+        onDismiss={() => setActiveChangeStopCode(null)}
+        onPick={(stop) => {
+          if (activeChangeStopCode) {
+            settings.setPreferredStopForRoute(
+              activeChangeStopCode,
+              stop.stop_id,
+            );
+          }
+          setActiveChangeStopCode(null);
+        }}
+      />
+      <MapModesSheet
+        isPresented={showMapModes}
+        onDismiss={() => setShowMapModes(false)}
+      />
+    </View>
   );
 }

@@ -23,6 +23,10 @@ export type ClockFormat = '12h' | '24h';
 
 export const CLOCK_FORMATS: readonly ClockFormat[] = ['24h', '12h'];
 
+export type MapType = 'standard' | 'satellite';
+
+export const MAP_TYPES: readonly MapType[] = ['standard', 'satellite'];
+
 export const NOTIF_BUFFER_CHOICES_MIN: readonly number[] = [0, 1, 2, 3, 5];
 
 export const MAX_FAVORITES = 10;
@@ -47,6 +51,8 @@ export interface Settings {
   quietEndMin: number;
   /** 12-hour (AM/PM) vs 24-hour clock for ETA / arrival time displays. */
   clockFormat: ClockFormat;
+  /** Apple Maps base layer for the Map screen. */
+  mapType: MapType;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -59,6 +65,7 @@ export const DEFAULT_SETTINGS: Settings = {
   quietStartMin: 22 * 60,
   quietEndMin: 6 * 60,
   clockFormat: '24h',
+  mapType: 'standard',
 };
 
 export interface SettingsApi extends Settings {
@@ -78,6 +85,7 @@ export interface SettingsApi extends Settings {
   setQuietStartMin: (v: number) => void;
   setQuietEndMin: (v: number) => void;
   setClockFormat: (v: ClockFormat) => void;
+  setMapType: (v: MapType) => void;
   /**
    * Adds `code` to the favorites list with a default stop. Returns
    * `{ ok: false }` with a reason when blocked (already favorited, or cap
@@ -100,6 +108,7 @@ const STORAGE_KEYS = {
   quietStartMin: 'bt.quietStartMin',
   quietEndMin: 'bt.quietEndMin',
   clockFormat: 'bt.clockFormat',
+  mapType: 'bt.mapType',
 } as const;
 
 const SettingsContext = createContext<SettingsApi | null>(null);
@@ -133,6 +142,12 @@ function parseClockFormatOr(
 ): ClockFormat {
   return value && CLOCK_FORMATS.includes(value as ClockFormat)
     ? (value as ClockFormat)
+    : fallback;
+}
+
+function parseMapTypeOr(value: string | null, fallback: MapType): MapType {
+  return value && MAP_TYPES.includes(value as MapType)
+    ? (value as MapType)
     : fallback;
 }
 
@@ -183,6 +198,7 @@ async function loadFromStore(): Promise<Settings> {
     quietStart,
     quietEnd,
     clockFormat,
+    mapType,
   ] = await Promise.all([
     SecureStore.getItemAsync(STORAGE_KEYS.walkMinutes),
     SecureStore.getItemAsync(STORAGE_KEYS.notifBufferMin),
@@ -193,6 +209,7 @@ async function loadFromStore(): Promise<Settings> {
     SecureStore.getItemAsync(STORAGE_KEYS.quietStartMin),
     SecureStore.getItemAsync(STORAGE_KEYS.quietEndMin),
     SecureStore.getItemAsync(STORAGE_KEYS.clockFormat),
+    SecureStore.getItemAsync(STORAGE_KEYS.mapType),
   ]);
 
   const favoritedRoutes = parseFavoritedRoutes(favoritesRaw);
@@ -212,6 +229,7 @@ async function loadFromStore(): Promise<Settings> {
     quietStartMin: parseIntOr(quietStart, DEFAULT_SETTINGS.quietStartMin),
     quietEndMin: parseIntOr(quietEnd, DEFAULT_SETTINGS.quietEndMin),
     clockFormat: parseClockFormatOr(clockFormat, DEFAULT_SETTINGS.clockFormat),
+    mapType: parseMapTypeOr(mapType, DEFAULT_SETTINGS.mapType),
   };
 }
 
@@ -341,6 +359,14 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const setMapType = useCallback((v: MapType) => {
+    setState((prev) => {
+      if (prev.mapType === v) return prev;
+      writeValue(STORAGE_KEYS.mapType, v);
+      return { ...prev, mapType: v };
+    });
+  }, []);
+
   const addFavorite = useCallback(
     (code: string, stopId: string): AddFavoriteResult => {
       let result: AddFavoriteResult = { ok: true };
@@ -438,6 +464,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     setQuietStartMin,
     setQuietEndMin,
     setClockFormat,
+    setMapType,
     addFavorite,
     removeFavorite,
     reorderFavorites,

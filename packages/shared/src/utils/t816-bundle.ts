@@ -81,6 +81,23 @@ export function filterToRoutes(
 
   const serviceIds = new Set(trips.map((t) => t.service_id));
   const calendar = parsed.calendar.filter((c) => serviceIds.has(c.service_id));
+  const calendarDates = parsed.calendarDates.filter((c) =>
+    serviceIds.has(c.service_id),
+  );
+
+  // Fares are route-scoped via fare_rules.route_id. Attributes are kept only
+  // for fare_ids referenced by surviving rules.
+  const routeFareRules = parsed.fareRules.filter(
+    (r) => !r.route_id || matchedRouteIds.has(r.route_id),
+  );
+  const fareIds = new Set(routeFareRules.map((r) => r.fare_id));
+  const fareAttributes = parsed.fareAttributes.filter((a) =>
+    fareIds.has(a.fare_id),
+  );
+
+  const transfers = parsed.transfers.filter(
+    (t) => stopIds.has(t.from_stop_id) && stopIds.has(t.to_stop_id),
+  );
 
   return {
     generatedAt: now(),
@@ -90,6 +107,10 @@ export function filterToRoutes(
     stopTimes,
     shapes,
     calendar,
+    calendarDates: calendarDates.length > 0 ? calendarDates : undefined,
+    fareAttributes: fareAttributes.length > 0 ? fareAttributes : undefined,
+    fareRules: routeFareRules.length > 0 ? routeFareRules : undefined,
+    transfers: transfers.length > 0 ? transfers : undefined,
   };
 }
 

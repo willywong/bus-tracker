@@ -9,7 +9,7 @@ import '../global.css';
 import { PushRegistrationProvider } from '@/hooks/PushRegistrationContext';
 import { useRealtimeRoutes } from '@/hooks/useRealtimeRoutes';
 import { SettingsProvider } from '@/hooks/useSettings';
-import { useStaticGtfs } from '@/hooks/useStaticGtfs';
+import { StaticGtfsProvider } from '@/hooks/useStaticGtfs';
 import { tokens } from '@/theme/tokens';
 
 export {
@@ -41,33 +41,34 @@ export default function RootLayout() {
 
   return (
     <SettingsProvider>
-      <StaticGtfsRunner />
-      <PushRegistrationProvider>
-        <NativeTabs
-          tintColor={tokens.color.accent}
-          labelStyle={{ fontSize: 11 }}
-          minimizeBehavior="onScrollDown"
-        >
-          <NativeTabs.Trigger name="(tracker)">
-            <NativeTabs.Trigger.Icon sf="tram.fill" />
-            <NativeTabs.Trigger.Label>Tracker</NativeTabs.Trigger.Label>
-          </NativeTabs.Trigger>
-          <NativeTabs.Trigger name="map">
-            <NativeTabs.Trigger.Icon sf="map.fill" />
-            <NativeTabs.Trigger.Label>Map</NativeTabs.Trigger.Label>
-          </NativeTabs.Trigger>
-          <NativeTabs.Trigger name="settings">
-            <NativeTabs.Trigger.Icon sf="gear" />
-            <NativeTabs.Trigger.Label>Settings</NativeTabs.Trigger.Label>
-          </NativeTabs.Trigger>
-        </NativeTabs>
-      </PushRegistrationProvider>
+      <StaticGtfsProvider>
+        <RealtimeRoutesRunner />
+        <PushRegistrationProvider>
+          <NativeTabs
+            tintColor={tokens.color.accent}
+            labelStyle={{ fontSize: 11 }}
+            minimizeBehavior="onScrollDown"
+          >
+            <NativeTabs.Trigger name="(tracker)">
+              <NativeTabs.Trigger.Icon sf="tram.fill" />
+              <NativeTabs.Trigger.Label>Tracker</NativeTabs.Trigger.Label>
+            </NativeTabs.Trigger>
+            <NativeTabs.Trigger name="map">
+              <NativeTabs.Trigger.Icon sf="map.fill" />
+              <NativeTabs.Trigger.Label>Map</NativeTabs.Trigger.Label>
+            </NativeTabs.Trigger>
+            <NativeTabs.Trigger name="settings">
+              <NativeTabs.Trigger.Icon sf="gear" />
+              <NativeTabs.Trigger.Label>Settings</NativeTabs.Trigger.Label>
+            </NativeTabs.Trigger>
+          </NativeTabs>
+        </PushRegistrationProvider>
+      </StaticGtfsProvider>
     </SettingsProvider>
   );
 }
 
-function StaticGtfsRunner() {
-  useStaticGtfs();
+function RealtimeRoutesRunner() {
   useRealtimeRoutes();
   return null;
 }

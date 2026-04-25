@@ -8,19 +8,21 @@ interface ScheduledBusCalloutProps {
   /** Absolute epoch ms of the scheduled departure at the user's stop. */
   scheduledEpochMs: number;
   now?: number;
+  hidden?: boolean;
 }
 
 export function ScheduledBusCallout({
   routeCode,
   scheduledEpochMs,
   now = Date.now(),
+  hidden = false,
 }: ScheduledBusCalloutProps) {
   const clock = formatClockHHMM(scheduledEpochMs);
   const minutesAway = Math.max(0, Math.round((scheduledEpochMs - now) / 60_000));
 
   return (
     <Callout tooltip>
-      <View style={styles.wrap}>
+      <View style={[styles.wrap, hidden && styles.hidden]}>
         <View style={styles.card}>
           <View style={styles.header}>
             <Text style={styles.kicker}>Next scheduled</Text>
@@ -46,6 +48,7 @@ const CARD_BG = '#FFFFFF';
 
 const styles = StyleSheet.create({
   wrap: { alignItems: 'center' },
+  hidden: { opacity: 0 },
   card: {
     backgroundColor: CARD_BG,
     paddingHorizontal: 16,

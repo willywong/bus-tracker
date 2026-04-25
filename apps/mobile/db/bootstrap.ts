@@ -6,6 +6,11 @@ import { META_KEYS } from "./schema";
 
 const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 
+function isDev(): boolean {
+  const g = globalThis as unknown as { __DEV__?: boolean };
+  return g.__DEV__ ?? false;
+}
+
 export class RouteNotFoundError extends Error {
   constructor(code: string) {
     super(`route ${code} not found`);
@@ -151,25 +156,34 @@ export async function mergeBundle(
     }
 
     for (const s of bundle.stops) {
+      // Stops are shared across routes. Upsert so newer bundles can fill in
+      // wheelchair_boarding on stops inserted by earlier route bootstraps.
       await db.runAsync(
-        `INSERT OR IGNORE INTO stops(stop_id, stop_name, stop_lat, stop_lon)
-         VALUES (?, ?, ?, ?);`,
+        `INSERT INTO stops(stop_id, stop_name, stop_lat, stop_lon, wheelchair_boarding)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(stop_id) DO UPDATE SET
+           stop_name = excluded.stop_name,
+           stop_lat = excluded.stop_lat,
+           stop_lon = excluded.stop_lon,
+           wheelchair_boarding = COALESCE(excluded.wheelchair_boarding, stops.wheelchair_boarding);`,
         s.stop_id,
         s.stop_name,
         s.stop_lat,
         s.stop_lon,
+        s.wheelchair_boarding ?? null,
       );
     }
 
     for (const t of bundle.trips) {
       await db.runAsync(
-        `INSERT INTO trips(trip_id, route_id, service_id, shape_id, direction_id)
-         VALUES (?, ?, ?, ?, ?);`,
+        `INSERT OR REPLACE INTO trips(trip_id, route_id, service_id, shape_id, direction_id, trip_headsign)
+         VALUES (?, ?, ?, ?, ?, ?);`,
         t.trip_id,
         t.route_id,
         t.service_id,
         t.shape_id ?? null,
         t.direction_id ?? null,
+        t.trip_headsign ?? null,
       );
     }
 
@@ -188,7 +202,7 @@ export async function mergeBundle(
 
     if (bundle.stopTimes.length > 0) {
       const stopTimeStmt = await db.prepareAsync(
-        `INSERT INTO stop_times(trip_id, stop_sequence, stop_id, arrival_seconds, departure_seconds)
+        `INSERT OR REPLACE INTO stop_times(trip_id, stop_sequence, stop_id, arrival_seconds, departure_seconds)
          VALUES (?, ?, ?, ?, ?);`,
       );
       try {
@@ -247,6 +261,92 @@ export async function mergeBundle(
       }
     }
 
+    if (bundle.calendarDates && bundle.calendarDates.length > 0) {
+      const stmt = await db.prepareAsync(
+        `INSERT OR REPLACE INTO calendar_dates(service_id, date, exception_type)
+         VALUES (?, ?, ?);`,
+      );
+      try {
+        for (const c of bundle.calendarDates) {
+          await stmt.executeAsync([c.service_id, c.date, c.exception_type]);
+        }
+      } finally {
+        await stmt.finalizeAsync();
+      }
+    }
+
+    if (bundle.fareAttributes && bundle.fareAttributes.length > 0) {
+      const stmt = await db.prepareAsync(
+        `INSERT OR REPLACE INTO fare_attributes(fare_id, price, currency_type, payment_method, transfers, transfer_duration)
+         VALUES (?, ?, ?, ?, ?, ?);`,
+      );
+      try {
+        for (const a of bundle.fareAttributes) {
+          await stmt.executeAsync([
+            a.fare_id,
+            a.price,
+            a.currency_type,
+            a.payment_method ?? null,
+            a.transfers ?? null,
+            a.transfer_duration ?? null,
+          ]);
+        }
+      } finally {
+        await stmt.finalizeAsync();
+      }
+    }
+
+    if (bundle.fareRules && bundle.fareRules.length > 0) {
+      // Rules have no natural PK in GTFS; wipe & reinsert for the scoped
+      // fare_ids to avoid stale rules from earlier bundles.
+      const fareIds = Array.from(
+        new Set(bundle.fareRules.map((r) => r.fare_id)),
+      );
+      if (fareIds.length > 0) {
+        const ph = fareIds.map(() => "?").join(",");
+        await db.runAsync(
+          `DELETE FROM fare_rules WHERE fare_id IN (${ph});`,
+          ...fareIds,
+        );
+      }
+      const stmt = await db.prepareAsync(
+        `INSERT INTO fare_rules(fare_id, route_id, origin_id, destination_id, contains_id)
+         VALUES (?, ?, ?, ?, ?);`,
+      );
+      try {
+        for (const r of bundle.fareRules) {
+          await stmt.executeAsync([
+            r.fare_id,
+            r.route_id ?? null,
+            r.origin_id ?? null,
+            r.destination_id ?? null,
+            r.contains_id ?? null,
+          ]);
+        }
+      } finally {
+        await stmt.finalizeAsync();
+      }
+    }
+
+    if (bundle.transfers && bundle.transfers.length > 0) {
+      const stmt = await db.prepareAsync(
+        `INSERT OR REPLACE INTO transfers(from_stop_id, to_stop_id, transfer_type, min_transfer_time)
+         VALUES (?, ?, ?, ?);`,
+      );
+      try {
+        for (const t of bundle.transfers) {
+          await stmt.executeAsync([
+            t.from_stop_id,
+            t.to_stop_id,
+            t.transfer_type,
+            t.min_transfer_time ?? null,
+          ]);
+        }
+      } finally {
+        await stmt.finalizeAsync();
+      }
+    }
+
     await setMeta(db, META_KEYS.generatedAt, String(bundle.generatedAt));
   });
 }
@@ -261,7 +361,11 @@ export async function fetchRouteBundle(
     { signal },
   );
   if (res.status === 404) throw new RouteNotFoundError(code);
-  if (!res.ok) throw new Error(`route ${code}: ${res.status}`);
+  if (!res.ok) {
+    const e = new Error(`route ${code}: ${res.status}`);
+    (e as Error & { status?: number }).status = res.status;
+    throw e;
+  }
   return (await res.json()) as T816Bundle;
 }
 
@@ -327,7 +431,28 @@ export async function bootstrapStaticGtfs(opts: {
         }
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") throw err;
-        console.warn(`[gtfs] fetch ${code} failed`, err);
+        if (isDev()) {
+          const e = err as {
+            name?: string;
+            message?: string;
+            stack?: string;
+            status?: number;
+          };
+          console.warn(
+            `[gtfs] fetch ${code} failed`,
+            "name=",
+            e?.name,
+            "message=",
+            e?.message,
+            "status=",
+            e?.status,
+            "stack=",
+            e?.stack,
+          );
+        } else {
+          const msg = (err as { message?: string })?.message ?? String(err);
+          console.warn(`[gtfs] fetch ${code} failed: ${msg}`);
+        }
         failed.push(code);
       }
     }

@@ -11,17 +11,21 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, {
   AnimatedRegion,
   Circle,
+  MapMarker,
   Marker,
-  MarkerAnimated,
   Polyline,
   PROVIDER_DEFAULT,
   type Region,
 } from 'react-native-maps';
 
+import { AlertBanner } from '@/components/alerts/AlertBanner';
 import { BusCallout } from '@/components/map/BusCallout';
 import { GlassDemoSheet } from '@/components/tracker/GlassDemoSheet';
+import { LiveBusMarker } from '@/components/map/LiveBusMarker';
 import { MapChooseBusCard } from '@/components/map/MapChooseBusCard';
 import { MapLegendButton } from '@/components/map/MapLegendButton';
+import { MapModeButton } from '@/components/map/MapModeButton';
+import { MapModesSheet } from '@/components/map/MapModesSheet';
 import { MapStatusCard } from '@/components/map/MapStatusCard';
 import { MapStatusCardSkeleton } from '@/components/map/MapStatusCardSkeleton';
 import { RecenterRouteButton } from '@/components/map/RecenterRouteButton';
@@ -30,6 +34,10 @@ import { RouteSwitcher } from '@/components/tracker/RouteSwitcher';
 import { ScheduledBusCallout } from '@/components/map/ScheduledBusCallout';
 import { ScheduledBusMarker } from '@/components/map/ScheduledBusMarker';
 import { StopCallout } from '@/components/map/StopCallout';
+import {
+  TripStopsSheet,
+  type TripStopsSheetContext,
+} from '@/components/stops/TripStopsSheet';
 import { openDb } from '@/db/database';
 import {
   getRoutePolyline,
@@ -41,6 +49,7 @@ import {
   type StopRow,
   type TrafficSignalRow,
 } from '@/db/queries';
+import { useAlerts } from '@/hooks/useAlerts';
 import { useBusPosition } from '@/hooks/useBusPosition';
 import { useEta } from '@/hooks/useEta';
 import { useLocationPermission } from '@/hooks/useLocationPermission';
@@ -52,6 +61,21 @@ import { tokens } from '@/theme/tokens';
 
 const POSITION_TWEEN_MS = 30_000;
 const BBOX_PAD_DEG = 0.008;
+
+// Bus-callout pan: when a marker is tapped, recenter the map so the bus
+// lands at ~60% down the visible area. The callout is ~180pt tall and
+// anchors above the marker; the MapStatusCard occludes the bottom ~22% of
+// the map. 60% keeps the bus clear of the card and leaves enough room above
+// for the callout so MapKit doesn't nudge it sideways.
+const CALLOUT_PAN_DURATION_MS = 350;
+const CALLOUT_TARGET_Y_FRACTION = 0.6;
+// Small delay after the pan before we mount the Callout child so MapKit's
+// pan animation has fully settled and the callout anchors at the final
+// screen position. Any less and the callout sometimes still anchors mid-pan.
+const CALLOUT_MOUNT_DELAY_MS = CALLOUT_PAN_DURATION_MS + 40;
+// Identity used to key the ghost/scheduled marker in the selection state —
+// it has no vehicleId of its own.
+const GHOST_CALLOUT_KEY = '__ghost_callout__';
 
 const EMPTY_STOPS: ReadonlyMap<string, SharedLatLng> = new Map();
 
@@ -66,6 +90,7 @@ interface StaticData {
   stopsById: ReadonlyMap<string, SharedLatLng>;
   region: Region;
   trafficSignals: TrafficSignalRow[];
+  routeLongName: string | null;
 }
 
 function computeRegion(points: PolylinePoint[]): Region | null {
@@ -95,9 +120,20 @@ export default function MapScreen() {
   const [staticData, setStaticData] = useState<StaticData | null>(null);
   const [mapRegion, setMapRegion] = useState<Region | null>(null);
   const [mapSize, setMapSize] = useState({ width: 0, height: 0 });
+  // vehicleId (or GHOST_CALLOUT_KEY) of the marker whose Callout should be
+  // mounted. Kept null until after the tap-triggered pan settles — that
+  // prevents MapKit from auto-showing the callout at the pre-pan tap position
+  // (which caused a half-second flash on the wrong spot).
+  const [shownCalloutKey, setShownCalloutKey] = useState<string | null>(null);
   const [showAddBus, setShowAddBus] = useState(false);
   const openAddBus = useCallback(() => setShowAddBus(true), []);
   const closeAddBus = useCallback(() => setShowAddBus(false), []);
+  const [showMapModes, setShowMapModes] = useState(false);
+  const openMapModes = useCallback(() => setShowMapModes(true), []);
+  const closeMapModes = useCallback(() => setShowMapModes(false), []);
+  const [tripStopsContext, setTripStopsContext] =
+    useState<TripStopsSheetContext | null>(null);
+  const closeTripStops = useCallback(() => setTripStopsContext(null), []);
   const hasFavorites = settings.favoritedRoutes.length > 0;
   const activeRoute = settings.preferredRouteCode ?? '';
   const { positions, lastUpdated, nextRefreshAt, isRefreshing } =
@@ -108,6 +144,19 @@ export default function MapScreen() {
     stopId: settings.preferredStopId,
     routeCode: activeRoute,
     trafficProvider: settings.trafficProvider,
+  });
+  const alertStopIds = useMemo(
+    () =>
+      settings.preferredStopId ? [settings.preferredStopId] : [],
+    [settings.preferredStopId],
+  );
+  const alertRouteCodes = useMemo(
+    () => (activeRoute ? [activeRoute] : []),
+    [activeRoute],
+  );
+  const { alerts } = useAlerts({
+    routeCodes: alertRouteCodes,
+    stopIds: alertStopIds,
   });
   const isTransitioning = useRouteTransition({
     preferredRouteCode: settings.preferredRouteCode,
@@ -149,6 +198,10 @@ export default function MapScreen() {
           stopsById,
           region,
           trafficSignals,
+          routeLongName:
+            route.long_name && route.long_name.trim() !== route.code
+              ? route.long_name.trim()
+              : null,
         });
       } catch (err) {
         console.error(
@@ -179,6 +232,14 @@ export default function MapScreen() {
 
   const regionsRef = useRef(new Map<string, AnimatedRegion>());
   const mapRef = useRef<MapView>(null);
+  // Keyed by vehicleId for live buses; the ghost/scheduled marker lives in
+  // `ghostMarkerRef`. We need refs so we can hide/re-show the callout around
+  // an `animateToRegion` — iOS MapKit anchors auto-shown callouts at tap-time
+  // screen position and doesn't re-anchor during a pan, so the callout ends
+  // up detached from the marker after we recenter. Hiding then re-showing
+  // forces MapKit to re-anchor to the marker's new position.
+  const busMarkerRefs = useRef(new Map<string, MapMarker>());
+  const ghostMarkerRef = useRef<MapMarker | null>(null);
 
   const handleRecenterStop = useCallback(() => {
     const stop = staticData?.stop;
@@ -200,6 +261,55 @@ export default function MapScreen() {
     if (!region) return;
     mapRef.current?.animateToRegion(region, 550);
   }, [staticData]);
+
+  const calloutRevealTimer = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  useEffect(
+    () => () => {
+      if (calloutRevealTimer.current) clearTimeout(calloutRevealTimer.current);
+    },
+    [],
+  );
+
+  const handleCalloutPan = useCallback(
+    (key: string, coord: { latitude: number; longitude: number }) => {
+      const base = mapRegion ?? staticData?.region;
+      if (!base) return;
+      // Keep the callout hidden (opacity 0) so MapKit's auto-show at the tap
+      // position is invisible — no flash.
+      setShownCalloutKey(null);
+      // Shift map center north so the bus appears lower on screen, leaving
+      // room above for the callout. Horizontal recenter keeps the tail
+      // aligned so MapKit doesn't push the callout sideways.
+      const offsetLat =
+        base.latitudeDelta * (CALLOUT_TARGET_Y_FRACTION - 0.5);
+      mapRef.current?.animateToRegion(
+        {
+          latitude: coord.latitude + offsetLat,
+          longitude: coord.longitude,
+          latitudeDelta: base.latitudeDelta,
+          longitudeDelta: base.longitudeDelta,
+        },
+        CALLOUT_PAN_DURATION_MS,
+      );
+      if (calloutRevealTimer.current) clearTimeout(calloutRevealTimer.current);
+      calloutRevealTimer.current = setTimeout(() => {
+        // MapKit won't re-anchor the auto-shown callout during animateToRegion,
+        // so dismiss and re-show once the pan has settled. The callout is
+        // still invisible at this point (opacity 0), so the user sees nothing
+        // until we flip `shownCalloutKey` below.
+        const ref =
+          key === GHOST_CALLOUT_KEY
+            ? ghostMarkerRef.current
+            : busMarkerRefs.current.get(key);
+        ref?.hideCallout();
+        ref?.showCallout();
+        setShownCalloutKey(key);
+      }, CALLOUT_MOUNT_DELAY_MS);
+    },
+    [mapRegion, staticData],
+  );
 
   // Per-bus scheduled arrival (for BusCallout). Keyed by vehicleId. We look up
   // the scheduled departure from the user's stop for each visible trip. If a
@@ -370,6 +480,28 @@ export default function MapScreen() {
     );
   }
 
+  // Gate the Stops pill: only render it when a live trip can be surfaced.
+  // The sheet itself is modal — tapping the pill opens it; dismissing it
+  // returns to the floating card, which keeps the tab bar visible.
+  const viewStopsLive = positions.find(
+    (p) => p.vehicleId === eta.current?.vehicleId,
+  );
+  const openTripStops = viewStopsLive
+    ? () =>
+        setTripStopsContext({
+          tripId: viewStopsLive.tripId,
+          routeCode: activeRoute,
+          userStopId: staticData.stop.stop_id,
+          livePosition: {
+            currentStopSequence: viewStopsLive.currentStopSequence,
+            currentStopId: viewStopsLive.currentStopId,
+            currentStatus: viewStopsLive.currentStatus,
+            observedAt: viewStopsLive.observedAt,
+          },
+        })
+    : undefined;
+  const livePositionForCard = viewStopsLive;
+
   // `staticData` is loaded async, so when the user switches routes it briefly
   // still holds the PREVIOUS route's polyline / circles / stop. If we render
   // those against the live MapView and then in-place-update their props when
@@ -387,6 +519,7 @@ export default function MapScreen() {
         provider={PROVIDER_DEFAULT}
         style={styles.map}
         initialRegion={staticData.region}
+        mapType={settings.mapType}
         showsUserLocation
         showsMyLocationButton={false}
         showsTraffic
@@ -441,14 +574,22 @@ export default function MapScreen() {
         ) : null}
         {staticFresh && ghostScheduled && ghostPosition.coord ? (
           <ScheduledBusMarker
+            ref={ghostMarkerRef}
             coordinate={{
               latitude: ghostPosition.coord.lat,
               longitude: ghostPosition.coord.lng,
             }}
+            onPress={() =>
+              handleCalloutPan(GHOST_CALLOUT_KEY, {
+                latitude: ghostPosition.coord!.lat,
+                longitude: ghostPosition.coord!.lng,
+              })
+            }
           >
             <ScheduledBusCallout
               routeCode={ghostScheduled.routeCode}
               scheduledEpochMs={ghostScheduled.departureEpochMs}
+              hidden={shownCalloutKey !== GHOST_CALLOUT_KEY}
             />
           </ScheduledBusMarker>
         ) : null}
@@ -475,33 +616,40 @@ export default function MapScreen() {
                 : null;
             return { at, delay };
           })();
+          const isPassed = eta.passedVehicleIds.has(p.vehicleId);
           return (
-            <MarkerAnimated
+            <LiveBusMarker
               key={p.vehicleId}
-              coordinate={
-                region as unknown as React.ComponentProps<
-                  typeof MarkerAnimated
-                >['coordinate']
+              markerRef={(r: MapMarker | null) => {
+                if (r) busMarkerRefs.current.set(p.vehicleId, r);
+                else busMarkerRefs.current.delete(p.vehicleId);
+              }}
+              region={region}
+              isPassed={isPassed}
+              bearing={p.bearing}
+              onPress={() =>
+                handleCalloutPan(p.vehicleId, {
+                  latitude: p.lat,
+                  longitude: p.lng,
+                })
               }
-              flat
-              anchor={{ x: 0.5, y: 0.5 }}
-              calloutAnchor={{ x: 0.5, y: 0 }}
-              tracksViewChanges={false}
             >
-              <View style={styles.busMarker}>
-                <SymbolView
-                  name="bus.fill"
-                  size={18}
-                  tintColor="#FFFFFF"
-                  resizeMode="scaleAspectFit"
-                />
-              </View>
-              <BusCallout position={p} scheduledArrival={scheduledArrival} />
-            </MarkerAnimated>
+              <BusCallout
+                position={p}
+                scheduledArrival={scheduledArrival}
+                isPassed={isPassed}
+                hidden={shownCalloutKey !== p.vehicleId}
+              />
+            </LiveBusMarker>
           );
         })}
       </MapView>
       <View style={styles.overlay} pointerEvents="box-none">
+        {alerts.length > 0 ? (
+          <View style={styles.alertsWrap} pointerEvents="box-none">
+            <AlertBanner alerts={alerts} />
+          </View>
+        ) : null}
         {!hasFavorites ? (
           <MapChooseBusCard onAddBus={openAddBus} />
         ) : isTransitioning ? (
@@ -520,14 +668,14 @@ export default function MapScreen() {
           >
             <MapStatusCard
               routeCode={activeRoute}
+              routeLongName={staticData.routeLongName}
               eta={eta}
               stopName={staticData.stop.stop_name}
               lastUpdated={lastUpdated}
-              livePosition={positions.find(
-                (p) => p.vehicleId === eta.current?.vehicleId,
-              )}
+              livePosition={livePositionForCard}
               nextRefreshAt={nextRefreshAt}
               isRefreshing={isRefreshing}
+              onOpenStops={openTripStops}
             />
           </Animated.View>
         )}
@@ -554,15 +702,23 @@ export default function MapScreen() {
         <View style={styles.fabStack}>
           <RecenterStopButton onPress={handleRecenterStop} />
           <RecenterRouteButton onPress={handleRecenterRoute} />
+          <MapModeButton onPress={openMapModes} />
           <MapLegendButton />
         </View>
       </SafeAreaView>
       <GlassDemoSheet isPresented={showAddBus} onDismiss={closeAddBus} />
+      <MapModesSheet isPresented={showMapModes} onDismiss={closeMapModes} />
+      <TripStopsSheet
+        context={tripStopsContext}
+        onDismiss={closeTripStops}
+        eta={eta}
+        livePosition={livePositionForCard}
+        stopName={staticData.stop.stop_name}
+      />
     </View>
   );
 }
 
-const busColor = tokens.color.accent as ColorValue;
 const bgColor = tokens.color.bg as ColorValue;
 const SIGNAL_RED_FILL = 'rgba(208, 2, 27, 1)';
 const SIGNAL_RED_STROKE = 'rgba(255, 255, 255, 0.9)';
@@ -575,6 +731,10 @@ const styles = StyleSheet.create({
     left: 16,
     right: 16,
     bottom: 110,
+    gap: 10,
+  },
+  alertsWrap: {
+    // Sits above the MapStatusCard within the overlay. Spacing via parent gap.
   },
   fabTopRight: {
     position: 'absolute',
@@ -595,17 +755,6 @@ const styles = StyleSheet.create({
   fabStack: {
     alignItems: 'flex-end',
     gap: 10,
-  },
-  busMarker: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    borderWidth: 2,
-    borderColor: '#FFFFFF',
-    backgroundColor: busColor,
-    alignItems: 'center',
-    justifyContent: 'center',
-    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.25)',
   },
   stopMarker: {
     width: 32,

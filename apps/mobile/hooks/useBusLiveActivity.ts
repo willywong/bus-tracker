@@ -153,6 +153,12 @@ export function useBusLiveActivity({
 
     const forwardMeters = primaryArrival.live?.forwardMeters ?? null;
 
+    // Live Activity only models 'en-route' | 'arriving' | 'arrived' — the
+    // 'passed' state is an in-app-only concept that reflects the *previous*
+    // bus. For the native widget we treat 'passed' as 'en-route' so the
+    // lock-screen card tracks the new primary bus cleanly.
+    const activityStatus = arrivalStatus === 'passed' ? 'en-route' : arrivalStatus;
+
     const next: BusActivityProps = {
       kind: 'arrival',
       routeCode,
@@ -167,7 +173,7 @@ export function useBusLiveActivity({
       distanceToStopMeters:
         forwardMeters != null && Number.isFinite(forwardMeters) ? forwardMeters : null,
       isStale,
-      arrivalStatus,
+      arrivalStatus: activityStatus,
     };
 
     const inst = instanceRef.current;

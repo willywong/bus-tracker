@@ -44,6 +44,48 @@ async function migrate(db: Db): Promise<void> {
   if (current < 3) {
     await db.runAsync("DELETE FROM meta WHERE key = ?;", META_KEYS.fetchedAt);
   }
+
+  // v3 -> v4: clean up orphan rows that earlier partial-write bugs could leave
+  // behind (observed in the wild as a UNIQUE constraint on stop_times.trip_id
+  // when retrying a route whose previous merge failed halfway). Re-invalidate
+  // fetchedAt so the next bootstrap re-pulls anything the cleanup affected.
+  if (current < 4) {
+    await db.runAsync(
+      "DELETE FROM stop_times WHERE trip_id NOT IN (SELECT trip_id FROM trips);",
+    );
+    await db.runAsync(
+      "DELETE FROM trips WHERE route_id NOT IN (SELECT route_id FROM routes);",
+    );
+    await db.runAsync(
+      `DELETE FROM shape_points
+         WHERE shape_id NOT IN (
+           SELECT DISTINCT shape_id FROM trips WHERE shape_id IS NOT NULL
+         );`,
+    );
+    await db.runAsync("DELETE FROM meta WHERE key = ?;", META_KEYS.fetchedAt);
+  }
+
+  // v4 -> v5: add wheelchair_boarding to stops and trip_headsign to trips.
+  // calendar_dates / fare / transfers tables are created by CREATE TABLE IF NOT
+  // EXISTS already. Re-invalidate fetchedAt so the next bootstrap repopulates.
+  if (current < 5) {
+    await addColumnIfMissing(db, "stops", "wheelchair_boarding", "INTEGER");
+    await addColumnIfMissing(db, "trips", "trip_headsign", "TEXT");
+    await db.runAsync("DELETE FROM meta WHERE key = ?;", META_KEYS.fetchedAt);
+  }
+}
+
+async function addColumnIfMissing(
+  db: Db,
+  table: string,
+  column: string,
+  type: string,
+): Promise<void> {
+  const cols = await db.getAllAsync<{ name: string }>(
+    `PRAGMA table_info(${table});`,
+  );
+  if (cols.some((c) => c.name === column)) return;
+  await db.runAsync(`ALTER TABLE ${table} ADD COLUMN ${column} ${type};`);
 }
 
 export function resetDbForTests(): void {

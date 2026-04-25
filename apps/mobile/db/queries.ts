@@ -6,6 +6,8 @@ export interface StopRow {
   stop_name: string;
   stop_lat: number;
   stop_lon: number;
+  /** 0/null = no info, 1 = accessible, 2 = not accessible. */
+  wheelchair_boarding: number | null;
 }
 
 export interface RouteRow {
@@ -20,6 +22,7 @@ export interface TripRow {
   service_id: string;
   shape_id: string | null;
   direction_id: number | null;
+  trip_headsign: string | null;
 }
 
 export interface PolylinePoint {
@@ -50,7 +53,7 @@ export interface ServiceDayBounds {
 
 export async function getStops(db: Db): Promise<StopRow[]> {
   return db.getAllAsync<StopRow>(
-    "SELECT stop_id, stop_name, stop_lat, stop_lon FROM stops ORDER BY stop_name;",
+    "SELECT stop_id, stop_name, stop_lat, stop_lon, wheelchair_boarding FROM stops ORDER BY stop_name;",
   );
 }
 
@@ -59,13 +62,69 @@ export async function getStopsForRoute(
   routeCode: string,
 ): Promise<StopRow[]> {
   return db.getAllAsync<StopRow>(
-    `SELECT DISTINCT s.stop_id, s.stop_name, s.stop_lat, s.stop_lon
+    `SELECT DISTINCT s.stop_id, s.stop_name, s.stop_lat, s.stop_lon, s.wheelchair_boarding
        FROM stops s
        JOIN stop_times st ON st.stop_id = s.stop_id
        JOIN trips t       ON t.trip_id  = st.trip_id
        JOIN routes r      ON r.route_id = t.route_id
       WHERE r.code = ?
       ORDER BY s.stop_name;`,
+    routeCode,
+  );
+}
+
+/**
+ * Returns the stops of `routeCode` in route-sequence order as observed on a
+ * representative trip. Representative trip is chosen by the same heuristic as
+ * `getRoutePolyline`: group the route's trips by `shape_id`, pick the most
+ * common shape; within ties, prefer `direction_id = 0`. Loop revisits of the
+ * same stop collapse via `MIN(stop_sequence)`. Stops that somehow aren't on
+ * the representative trip fall back to the tail, alphabetical.
+ */
+export async function getStopsForRouteOrdered(
+  db: Db,
+  routeCode: string,
+): Promise<StopRow[]> {
+  return db.getAllAsync<StopRow>(
+    `WITH rep_shape AS (
+       SELECT t.shape_id
+         FROM trips t
+         JOIN routes r ON r.route_id = t.route_id
+        WHERE r.code = ? AND t.shape_id IS NOT NULL
+        GROUP BY t.shape_id
+        ORDER BY COUNT(*) DESC,
+                 MIN(CASE WHEN t.direction_id = 0 THEN 0 ELSE 1 END) ASC,
+                 t.shape_id ASC
+        LIMIT 1
+     ),
+     rep_trip AS (
+       SELECT t.trip_id
+         FROM trips t
+         JOIN rep_shape rs ON rs.shape_id = t.shape_id
+         ORDER BY CASE WHEN t.direction_id = 0 THEN 0 ELSE 1 END,
+                  t.trip_id
+         LIMIT 1
+     ),
+     ordered_stops AS (
+       SELECT st.stop_id, MIN(st.stop_sequence) AS seq
+         FROM stop_times st
+         JOIN rep_trip rt ON rt.trip_id = st.trip_id
+        GROUP BY st.stop_id
+     )
+     SELECT s.stop_id, s.stop_name, s.stop_lat, s.stop_lon, s.wheelchair_boarding
+       FROM stops s
+       JOIN (
+         SELECT DISTINCT st.stop_id
+           FROM stop_times st
+           JOIN trips t  ON t.trip_id  = st.trip_id
+           JOIN routes r ON r.route_id = t.route_id
+          WHERE r.code = ?
+       ) route_stops ON route_stops.stop_id = s.stop_id
+       LEFT JOIN ordered_stops os ON os.stop_id = s.stop_id
+      ORDER BY CASE WHEN os.seq IS NULL THEN 1 ELSE 0 END,
+               os.seq ASC,
+               s.stop_name ASC;`,
+    routeCode,
     routeCode,
   );
 }
@@ -81,9 +140,30 @@ export async function getTripsForRoute(
   routeId: string,
 ): Promise<TripRow[]> {
   return db.getAllAsync<TripRow>(
-    "SELECT trip_id, route_id, service_id, shape_id, direction_id FROM trips WHERE route_id = ?;",
+    "SELECT trip_id, route_id, service_id, shape_id, direction_id, trip_headsign FROM trips WHERE route_id = ?;",
     routeId,
   );
+}
+
+/**
+ * Returns the most common trip_headsign for a route, or null if none. Used to
+ * label the route with its destination (e.g. "Loop via KL Sentral").
+ */
+export async function getPrimaryTripHeadsign(
+  db: Db,
+  routeCode: string,
+): Promise<string | null> {
+  const row = await db.getFirstAsync<{ headsign: string | null }>(
+    `SELECT t.trip_headsign AS headsign
+       FROM trips t
+       JOIN routes r ON r.route_id = t.route_id
+      WHERE r.code = ? AND t.trip_headsign IS NOT NULL AND t.trip_headsign <> ''
+      GROUP BY t.trip_headsign
+      ORDER BY COUNT(*) DESC
+      LIMIT 1;`,
+    routeCode,
+  );
+  return row?.headsign ?? null;
 }
 
 export async function getTripToRouteMap(
@@ -142,9 +222,9 @@ export async function getRoutePolyline(
 // ---------------------------------------------------------------------------
 // Schedule queries
 //
-// Known limitation: calendar_dates.txt (public-holiday exceptions) is not in
-// the bundle today, so a weekday-service bus will still show as scheduled on a
-// Malaysian public holiday. Out of scope for v1.
+// Service activation = (calendar row matches DOW + date range) unless
+// calendar_dates overrides for this date (exception_type=2 removes service,
+// exception_type=1 adds service). Honors GTFS v2 semantics.
 // ---------------------------------------------------------------------------
 
 const DOW_COLUMN = [
@@ -164,15 +244,100 @@ export async function getActiveServiceIdsForDate(
   const { ymd, dow } = toMalaysiaParts(date);
   // DOW is always 0..6 and never user-influenced, so interpolation is safe.
   const dowCol = DOW_COLUMN[dow];
-  const rows = await db.getAllAsync<{ service_id: string }>(
-    `SELECT service_id FROM calendar
-      WHERE ${dowCol} = 1
-        AND start_date <= ?
-        AND end_date >= ?;`,
-    ymd,
-    ymd,
+  const [calendarRows, exceptionRows] = await Promise.all([
+    db.getAllAsync<{ service_id: string }>(
+      `SELECT service_id FROM calendar
+        WHERE ${dowCol} = 1
+          AND start_date <= ?
+          AND end_date >= ?;`,
+      ymd,
+      ymd,
+    ),
+    db.getAllAsync<{ service_id: string; exception_type: number }>(
+      `SELECT service_id, exception_type FROM calendar_dates WHERE date = ?;`,
+      ymd,
+    ),
+  ]);
+  const active = new Set(calendarRows.map((r) => r.service_id));
+  for (const ex of exceptionRows) {
+    if (ex.exception_type === 2) active.delete(ex.service_id);
+    else if (ex.exception_type === 1) active.add(ex.service_id);
+  }
+  return Array.from(active);
+}
+
+// ---------------------------------------------------------------------------
+// Fare queries
+// ---------------------------------------------------------------------------
+
+export interface FareInfo {
+  fareId: string;
+  price: number;
+  currency: string;
+}
+
+/**
+ * Returns the cheapest applicable fare for `routeCode`. Applies the simple
+ * "route-scoped rule" pattern: fare_rules rows where route_id matches.
+ * Returns null if no fare data is available for this route.
+ */
+export async function getFareForRoute(
+  db: Db,
+  routeCode: string,
+): Promise<FareInfo | null> {
+  const row = await db.getFirstAsync<{
+    fare_id: string;
+    price: number;
+    currency_type: string;
+  }>(
+    `SELECT fa.fare_id AS fare_id, fa.price AS price, fa.currency_type AS currency_type
+       FROM fare_attributes fa
+       JOIN fare_rules fr ON fr.fare_id = fa.fare_id
+       JOIN routes r ON r.route_id = fr.route_id
+      WHERE r.code = ?
+      ORDER BY fa.price ASC
+      LIMIT 1;`,
+    routeCode,
   );
-  return rows.map((r) => r.service_id);
+  if (!row) return null;
+  return { fareId: row.fare_id, price: row.price, currency: row.currency_type };
+}
+
+// ---------------------------------------------------------------------------
+// Transfer queries
+// ---------------------------------------------------------------------------
+
+export interface TransferRow {
+  fromStopId: string;
+  toStopId: string;
+  transferType: number;
+  minTransferTime: number | null;
+}
+
+/**
+ * Returns outbound transfers from `stopId`. Empty when the feed has no
+ * transfers entries for this stop.
+ */
+export async function getTransfersFromStop(
+  db: Db,
+  stopId: string,
+): Promise<TransferRow[]> {
+  const rows = await db.getAllAsync<{
+    from_stop_id: string;
+    to_stop_id: string;
+    transfer_type: number;
+    min_transfer_time: number | null;
+  }>(
+    `SELECT from_stop_id, to_stop_id, transfer_type, min_transfer_time
+       FROM transfers WHERE from_stop_id = ?;`,
+    stopId,
+  );
+  return rows.map((r) => ({
+    fromStopId: r.from_stop_id,
+    toStopId: r.to_stop_id,
+    transferType: r.transfer_type,
+    minTransferTime: r.min_transfer_time,
+  }));
 }
 
 interface StopTimeJoinRow {
@@ -306,6 +471,51 @@ export interface TripStopTimeRow {
   stopSequence: number;
   arrivalSeconds: number | null;
   departureSeconds: number | null;
+}
+
+export interface TripStopWithName extends TripStopTimeRow {
+  stopName: string;
+  stopLat: number;
+  stopLon: number;
+  wheelchairBoarding: number | null;
+}
+
+/**
+ * Like `getStopTimesForTrip` but joins `stops` for display data (name, coords,
+ * wheelchair flag). Drives the stop-by-stop ETA board.
+ */
+export async function getTripStopsWithNames(
+  db: Db,
+  tripId: string,
+): Promise<TripStopWithName[]> {
+  const rows = await db.getAllAsync<{
+    stop_id: string;
+    stop_sequence: number;
+    arrival_seconds: number | null;
+    departure_seconds: number | null;
+    stop_name: string;
+    stop_lat: number;
+    stop_lon: number;
+    wheelchair_boarding: number | null;
+  }>(
+    `SELECT st.stop_id, st.stop_sequence, st.arrival_seconds, st.departure_seconds,
+            s.stop_name, s.stop_lat, s.stop_lon, s.wheelchair_boarding
+       FROM stop_times st
+       JOIN stops s ON s.stop_id = st.stop_id
+      WHERE st.trip_id = ?
+      ORDER BY st.stop_sequence ASC;`,
+    tripId,
+  );
+  return rows.map((r) => ({
+    stopId: r.stop_id,
+    stopSequence: r.stop_sequence,
+    arrivalSeconds: r.arrival_seconds,
+    departureSeconds: r.departure_seconds,
+    stopName: r.stop_name,
+    stopLat: r.stop_lat,
+    stopLon: r.stop_lon,
+    wheelchairBoarding: r.wheelchair_boarding,
+  }));
 }
 
 /**

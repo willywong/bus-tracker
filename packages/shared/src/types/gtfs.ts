@@ -11,6 +11,8 @@ export interface GtfsStop {
   stop_name: string;
   stop_lat: number;
   stop_lon: number;
+  /** 0/blank = no info, 1 = accessible, 2 = not accessible (GTFS spec). */
+  wheelchair_boarding?: 0 | 1 | 2;
 }
 
 export interface GtfsTrip {
@@ -19,6 +21,40 @@ export interface GtfsTrip {
   trip_id: string;
   shape_id?: string;
   direction_id?: 0 | 1;
+  trip_headsign?: string;
+}
+
+export interface GtfsCalendarDate {
+  service_id: string;
+  /** YYYYMMDD as in GTFS. */
+  date: string;
+  /** 1 = service added, 2 = service removed. */
+  exception_type: 1 | 2;
+}
+
+export interface GtfsFareAttribute {
+  fare_id: string;
+  price: number;
+  currency_type: string;
+  payment_method?: 0 | 1;
+  transfers?: 0 | 1 | 2 | null;
+  transfer_duration?: number;
+}
+
+export interface GtfsFareRule {
+  fare_id: string;
+  route_id?: string;
+  origin_id?: string;
+  destination_id?: string;
+  contains_id?: string;
+}
+
+export interface GtfsTransfer {
+  from_stop_id: string;
+  to_stop_id: string;
+  /** 0 = recommended, 1 = timed, 2 = min time required, 3 = not possible. */
+  transfer_type: 0 | 1 | 2 | 3;
+  min_transfer_time?: number;
 }
 
 export interface GtfsStopTime {
@@ -76,6 +112,13 @@ export interface T816Bundle {
   stopTimes: GtfsStopTime[];
   shapes: Record<string, PolylinePoint[]>;
   calendar: GtfsCalendar[];
+  /** Service-exception rows keyed by the same service_ids as `calendar`. */
+  calendarDates?: GtfsCalendarDate[];
+  /** Fare catalog (optional — RapidKL may not publish fares). */
+  fareAttributes?: GtfsFareAttribute[];
+  fareRules?: GtfsFareRule[];
+  /** Stop-to-stop transfers within the RapidKL feed. */
+  transfers?: GtfsTransfer[];
   /** OSM traffic signals along each route's polyline, keyed by route code. */
   trafficSignals?: Record<string, TrafficSignal[]>;
 }

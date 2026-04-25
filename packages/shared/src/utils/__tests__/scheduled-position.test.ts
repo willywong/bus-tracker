@@ -37,22 +37,6 @@ test("returns null when fewer than 2 stop_times", () => {
   assert.equal(out, null);
 });
 
-test("returns null when polyline has fewer than 2 points", () => {
-  const out = interpolateScheduledPosition({
-    stopTimes: [
-      { stopId: "A", stopSequence: 1, arrivalSeconds: 600, departureSeconds: 600 },
-      { stopId: "B", stopSequence: 2, arrivalSeconds: 1200, departureSeconds: 1200 },
-    ],
-    stopsById: stopsMap([
-      ["A", STOP_A],
-      ["B", STOP_B],
-    ]),
-    polyline: [{ lat: 3.1, lng: 101.6 }],
-    nowSec: 900,
-  });
-  assert.equal(out, null);
-});
-
 test("pins to origin stop before the trip's first departure", () => {
   const out = interpolateScheduledPosition({
     stopTimes: [
@@ -98,7 +82,10 @@ test("returns null after the trip's last arrival", () => {
   assert.equal(out, null);
 });
 
-test("midway between consecutive stops returns midpoint along polyline", () => {
+test("pins to origin stop during the trip window instead of interpolating", () => {
+  // Mid-trip (nowSec = 900, between origin dep 600 and terminus 1200) — the
+  // ghost must stay at the origin stop rather than drift along the polyline,
+  // since no live vehicle has confirmed the trip is running.
   const out = interpolateScheduledPosition({
     stopTimes: [
       { stopId: "A", stopSequence: 1, arrivalSeconds: 600, departureSeconds: 600 },
@@ -111,35 +98,36 @@ test("midway between consecutive stops returns midpoint along polyline", () => {
     polyline: STRAIGHT_POLY,
     nowSec: 900,
   });
-  assert.ok(out, "expected a coordinate");
-  // Midpoint of (3.1, 101.605) → (3.1, 101.615) is (3.1, 101.610).
-  assert.ok(Math.abs(out.lat - 3.1) < 1e-4);
-  assert.ok(Math.abs(out.lng - 101.61) < 1e-4, `lng=${out.lng}`);
+  assert.deepEqual(out, STOP_A);
 });
 
-test("dwelling at a stop snaps to that stop's coordinates", () => {
+test("dwell at a mid-route stop still pins to origin", () => {
+  // Even when the schedule has the bus dwelling at stop B (arr 1200, dep 1260)
+  // and nowSec is inside that dwell window, the ghost stays at the origin.
   const out = interpolateScheduledPosition({
     stopTimes: [
       { stopId: "A", stopSequence: 1, arrivalSeconds: 600, departureSeconds: 720 },
-      { stopId: "B", stopSequence: 2, arrivalSeconds: 1200, departureSeconds: 1200 },
+      { stopId: "B", stopSequence: 2, arrivalSeconds: 1200, departureSeconds: 1260 },
+      { stopId: "C", stopSequence: 3, arrivalSeconds: 1800, departureSeconds: 1800 },
     ],
     stopsById: stopsMap([
       ["A", STOP_A],
       ["B", STOP_B],
+      ["C", { lat: 3.1, lng: 101.62 }],
     ]),
     polyline: STRAIGHT_POLY,
-    nowSec: 660,
+    nowSec: 1230,
   });
   assert.deepEqual(out, STOP_A);
 });
 
-test("returns null when a needed stop is missing from the lookup", () => {
+test("returns null when origin stop is missing from the lookup mid-trip", () => {
   const out = interpolateScheduledPosition({
     stopTimes: [
       { stopId: "A", stopSequence: 1, arrivalSeconds: 600, departureSeconds: 600 },
       { stopId: "B", stopSequence: 2, arrivalSeconds: 1200, departureSeconds: 1200 },
     ],
-    stopsById: stopsMap([["A", STOP_A]]),
+    stopsById: stopsMap([["B", STOP_B]]),
     polyline: STRAIGHT_POLY,
     nowSec: 900,
   });
@@ -159,12 +147,26 @@ test("falls back to departureSeconds when arrivalSeconds is null", () => {
     polyline: STRAIGHT_POLY,
     nowSec: 900,
   });
-  assert.ok(out);
-  assert.ok(Math.abs(out.lng - 101.61) < 1e-4);
+  assert.deepEqual(out, STOP_A);
 });
 
-test("loop wrap: consecutive stops crossing the polyline seam still produce a point", () => {
-  // Box loop around the unit-ish square at ~3.10 lat / ~101.60 lng.
+test("returns null when the origin's arrival and departure seconds are both null", () => {
+  const out = interpolateScheduledPosition({
+    stopTimes: [
+      { stopId: "A", stopSequence: 1, arrivalSeconds: null, departureSeconds: null },
+      { stopId: "B", stopSequence: 2, arrivalSeconds: 1200, departureSeconds: 1200 },
+    ],
+    stopsById: stopsMap([
+      ["A", STOP_A],
+      ["B", STOP_B],
+    ]),
+    polyline: STRAIGHT_POLY,
+    nowSec: 900,
+  });
+  assert.equal(out, null);
+});
+
+test("ignores polyline and loop args and still pins to origin on loop routes", () => {
   const LOOP: LatLng[] = [
     { lat: 3.1, lng: 101.6 },
     { lat: 3.1, lng: 101.61 },
@@ -172,11 +174,9 @@ test("loop wrap: consecutive stops crossing the polyline seam still produce a po
     { lat: 3.11, lng: 101.6 },
     { lat: 3.1, lng: 101.6 },
   ];
-  // Stop A near the end of the loop (last leg, heading south); stop B at the
-  // start. Without loop-wrap, posB < posA and we'd compute a backwards motion.
   const stopA: LatLng = { lat: 3.105, lng: 101.6 };
   const stopB: LatLng = { lat: 3.1, lng: 101.605 };
-  const out = interpolateScheduledPosition({
+  const baseArgs = {
     stopTimes: [
       { stopId: "A", stopSequence: 1, arrivalSeconds: 100, departureSeconds: 100 },
       { stopId: "B", stopSequence: 2, arrivalSeconds: 200, departureSeconds: 200 },
@@ -185,12 +185,17 @@ test("loop wrap: consecutive stops crossing the polyline seam still produce a po
       ["A", stopA],
       ["B", stopB],
     ]),
-    polyline: LOOP,
     nowSec: 150,
+  };
+  const withLoop = interpolateScheduledPosition({
+    ...baseArgs,
+    polyline: LOOP,
     loop: true,
   });
-  assert.ok(out, "expected a coordinate from loop interpolation");
-  // The midpoint should be near the (3.1, 101.6) corner — the polyline seam.
-  assert.ok(Math.abs(out.lat - 3.1) < 0.01, `lat=${out.lat}`);
-  assert.ok(Math.abs(out.lng - 101.6) < 0.01, `lng=${out.lng}`);
+  const withoutAnyGeometry = interpolateScheduledPosition(baseArgs);
+  assert.deepEqual(withLoop, stopA);
+  // Contract check: the polyline / loop args are no-ops; supplying them or not
+  // must produce identical output. Catches any future regression that quietly
+  // reintroduces polyline-aware interpolation.
+  assert.deepEqual(withLoop, withoutAnyGeometry);
 });

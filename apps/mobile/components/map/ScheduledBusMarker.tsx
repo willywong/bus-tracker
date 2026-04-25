@@ -1,12 +1,14 @@
 import { SymbolView } from 'expo-symbols';
+import { forwardRef } from 'react';
 import { StyleSheet, View, type ColorValue } from 'react-native';
-import { Marker, type LatLng } from 'react-native-maps';
+import { MapMarker, Marker, type LatLng } from 'react-native-maps';
 
 import { tokens } from '@/theme/tokens';
 
 interface ScheduledBusMarkerProps {
   coordinate: LatLng;
   children?: React.ReactNode;
+  onPress?: () => void;
 }
 
 /**
@@ -14,18 +16,23 @@ interface ScheduledBusMarkerProps {
  * Visually distinct from the live marker (hollow + dashed accent border +
  * lower opacity) so users read it as an estimate, not a real position.
  */
-export function ScheduledBusMarker({
-  coordinate,
-  children,
-}: ScheduledBusMarkerProps) {
+export const ScheduledBusMarker = forwardRef<
+  MapMarker,
+  ScheduledBusMarkerProps
+>(function ScheduledBusMarker(
+  { coordinate, children, onPress }: ScheduledBusMarkerProps,
+  ref,
+) {
   return (
     <Marker
+      ref={ref}
       coordinate={coordinate}
       anchor={{ x: 0.5, y: 0.5 }}
       calloutAnchor={{ x: 0.5, y: 0 }}
       tracksViewChanges={false}
       flat
       zIndex={1}
+      onPress={onPress}
     >
       <View style={styles.marker}>
         <SymbolView
@@ -38,7 +45,7 @@ export function ScheduledBusMarker({
       {children}
     </Marker>
   );
-}
+});
 
 const accentColor = tokens.color.accent as ColorValue;
 const accentString = '#0A84FF';

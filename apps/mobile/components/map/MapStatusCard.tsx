@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import {
   DynamicColorIOS,
   PlatformColor,
+  Pressable,
   StyleSheet,
   Text,
   View,
@@ -21,7 +22,11 @@ import {
   useRefreshCountdownSeconds,
   type DelayTone,
 } from '@/components/tracker/logic';
-import { heroStateColor, surfaceColor } from '@/components/tracker/tokens';
+import {
+  heroStateColor,
+  sourceColor,
+  surfaceColor,
+} from '@/components/tracker/tokens';
 import type { UseEtaResult } from '@/hooks/useEta';
 import { tokens } from '@/theme/tokens';
 
@@ -37,10 +42,12 @@ type CardState =
   | 'service-ended'
   | 'before-service'
   | 'arriving'
-  | 'arrived';
+  | 'arrived'
+  | 'passed';
 
 interface MapStatusCardProps {
   routeCode: string;
+  routeLongName?: string | null;
   eta: UseEtaResult;
   stopName: string;
   lastUpdated: number | null;
@@ -53,16 +60,20 @@ interface MapStatusCardProps {
   nextRefreshAt?: number | null;
   /** True while a realtime poll is in flight. */
   isRefreshing?: boolean;
+  /** When provided, renders a tappable "Stops" pill in the status row that opens the trip's stop-by-stop list. */
+  onOpenStops?: () => void;
 }
 
 export function MapStatusCard({
   routeCode,
+  routeLongName = null,
   eta,
   stopName,
   lastUpdated,
   livePosition,
   nextRefreshAt = null,
   isRefreshing = false,
+  onOpenStops,
 }: MapStatusCardProps) {
   const updated = useLastUpdatedLabel(lastUpdated);
   const countdown = useRefreshCountdownSeconds(nextRefreshAt);
@@ -84,21 +95,23 @@ export function MapStatusCard({
       : null;
 
   const state: CardState =
-    eta.current != null && eta.minutesToStop != null
-      ? eta.arrivalStatus === 'arrived'
-        ? 'arrived'
-        : eta.arrivalStatus === 'arriving'
-          ? 'arriving'
-          : eta.isStale
-            ? 'stale'
-            : 'live'
-      : eta.serviceEnded
-        ? 'service-ended'
-        : eta.beforeServiceStart
-          ? 'before-service'
-          : nextScheduled != null
-            ? 'schedule'
-            : 'waiting';
+    eta.arrivalStatus === 'passed'
+      ? 'passed'
+      : eta.current != null && eta.minutesToStop != null
+        ? eta.arrivalStatus === 'arrived'
+          ? 'arrived'
+          : eta.arrivalStatus === 'arriving'
+            ? 'arriving'
+            : eta.isStale
+              ? 'stale'
+              : 'live'
+        : eta.serviceEnded
+          ? 'service-ended'
+          : eta.beforeServiceStart
+            ? 'before-service'
+            : nextScheduled != null
+              ? 'schedule'
+              : 'waiting';
 
   const dotColor =
     state === 'arrived'
@@ -107,9 +120,11 @@ export function MapStatusCard({
         ? '#FF9F0A'
         : state === 'live'
           ? heroStateColor.relaxed
-          : state === 'service-ended' || state === 'before-service'
-            ? (PlatformColor('tertiaryLabel') as unknown as string)
-            : heroStateColor.waiting;
+          : state === 'passed'
+            ? sourceColor.scheduled
+            : state === 'service-ended' || state === 'before-service'
+              ? (PlatformColor('tertiaryLabel') as unknown as string)
+              : heroStateColor.waiting;
   const statusLabel =
     state === 'arrived'
       ? 'Arrived'
@@ -119,13 +134,15 @@ export function MapStatusCard({
           ? 'Live'
           : state === 'stale'
             ? 'Stale'
-            : state === 'schedule'
-              ? 'Scheduled'
-              : state === 'service-ended'
-                ? 'Off duty'
-                : state === 'before-service'
-                  ? 'Pre-service'
-                  : 'Waiting';
+            : state === 'passed'
+              ? 'Passed'
+              : state === 'schedule'
+                ? 'Scheduled'
+                : state === 'service-ended'
+                  ? 'Off duty'
+                  : state === 'before-service'
+                    ? 'Pre-service'
+                    : 'Waiting';
   const scheduleClock =
     (state === 'live' || state === 'arriving') && eta.currentScheduled
       ? formatClockHHMM(eta.currentScheduled.departureEpochMs)
@@ -142,6 +159,19 @@ export function MapStatusCard({
     state === 'arrived';
   const showMetaRow = state !== 'service-ended' && state !== 'before-service';
 
+  // Next-bus minutes for the passed state — prefer secondary live arrival,
+  // fall back to the next scheduled departure so the card always has
+  // something actionable to show.
+  const passedNextMinutes =
+    state === 'passed'
+      ? eta.secondaryArrival != null
+        ? Math.max(
+            0,
+            Math.round((eta.secondaryArrival.epochMs - Date.now()) / 60_000),
+          )
+        : scheduleMinutes
+      : null;
+
   const niceStop = useMemo(() => formatStopName(stopName), [stopName]);
 
   return (
@@ -157,9 +187,23 @@ export function MapStatusCard({
           <Text style={styles.statusText} selectable>
             {statusLabel} · {routeCode}
           </Text>
+          {state === 'stale' ? (
+            <SymbolView
+              name="exclamationmark.triangle.fill"
+              size={11}
+              tintColor={dotColor}
+              weight="semibold"
+            />
+          ) : null}
           <View style={styles.statusSpacer} />
           {eta.trafficError ? <TrafficErrorBadge /> : null}
+          {onOpenStops ? <StopsPill onPress={onOpenStops} /> : null}
         </View>
+        {routeLongName ? (
+          <Text style={styles.routeLongName} selectable numberOfLines={1}>
+            {routeLongName}
+          </Text>
+        ) : null}
 
         <Animated.View
           key={state}
@@ -184,6 +228,8 @@ export function MapStatusCard({
               minutes={scheduleMinutes}
               nextAt={nextScheduled.departureEpochMs}
             />
+          ) : state === 'passed' ? (
+            <PassedBody nextMinutes={passedNextMinutes} />
           ) : state === 'arrived' ? (
             <ArrivalBody tone="arrived" />
           ) : state === 'arriving' ? (
@@ -467,6 +513,34 @@ function ArrivalBody({ tone }: { tone: 'arriving' | 'arrived' }) {
   );
 }
 
+function PassedBody({ nextMinutes }: { nextMinutes: number | null }) {
+  const subtitle =
+    nextMinutes == null
+      ? 'Next bus later'
+      : nextMinutes <= 0
+        ? 'Next bus any moment'
+        : `Next in ${nextMinutes} min`;
+  return (
+    <View style={styles.heroCol}>
+      <Text style={styles.eyebrow} selectable numberOfLines={1}>
+        Already passed
+      </Text>
+      <View style={styles.numberRow}>
+        <Text
+          style={[styles.arrivalTitle, { color: sourceColor.scheduled }]}
+          selectable
+          allowFontScaling={false}
+        >
+          Gone
+        </Text>
+        <Text style={styles.unit} selectable numberOfLines={1}>
+          {subtitle}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
 function TrafficErrorBadge() {
   return (
     <View style={styles.trafficBadge}>
@@ -493,6 +567,36 @@ function WaitingBody() {
         </Text>
       </View>
     </View>
+  );
+}
+
+function StopsPill({ onPress }: { onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      hitSlop={6}
+      accessibilityRole="button"
+      accessibilityLabel="View all stops on this trip"
+    >
+      {({ pressed }) => (
+        <View
+          style={[
+            styles.stopsPill,
+            pressed ? styles.stopsPillPressed : null,
+          ]}
+        >
+          <SymbolView
+            name="list.bullet"
+            size={12}
+            tintColor="#FFFFFF"
+            weight="semibold"
+          />
+          <Text style={styles.stopsPillText} allowFontScaling={false}>
+            Stops
+          </Text>
+        </View>
+      )}
+    </Pressable>
   );
 }
 
@@ -534,6 +638,13 @@ const styles = StyleSheet.create({
   },
   statusSpacer: {
     flex: 1,
+  },
+  routeLongName: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: PlatformColor('secondaryLabel'),
+    marginTop: -4,
+    letterSpacing: -0.1,
   },
   trafficBadge: {
     flexDirection: 'row',
@@ -706,5 +817,24 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
     letterSpacing: 0.1,
     marginTop: -2,
+  },
+  stopsPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 14,
+    backgroundColor: '#0A84FF',
+    overflow: 'hidden',
+  },
+  stopsPillPressed: {
+    opacity: 0.75,
+  },
+  stopsPillText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    letterSpacing: 0.1,
   },
 });

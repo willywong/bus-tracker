@@ -1,4 +1,4 @@
-import type { GtfsStop, RouteSearchHit, T816Bundle } from '@bus-tracker/shared';
+import type { GtfsStop, RouteSearchHit } from '@bus-tracker/shared';
 import {
   BottomSheet,
   Button,
@@ -33,9 +33,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useWindowDimensions } from 'react-native';
 
 import { formatStopName } from '@/components/map/format';
+import {
+  RouteBanner,
+  StopPickerContent,
+} from '@/components/stops/StopPickerSheet';
 import { MAX_FAVORITES, useSettings } from '@/hooks/useSettings';
 import { useRouteSearch } from '@/hooks/useRouteSearch';
-import { fetchRouteBundle } from '@/services/routeBundle';
 
 /**
  * Throwaway demo of the @expo/ui/swift-ui BottomSheet (beta). Mirrors the
@@ -203,7 +206,14 @@ function AddBusFlow({
           onDismiss={onDismiss}
         />
         <RouteBanner route={current} />
-        <StopPickerStep route={current} onPick={handlePickStop} />
+        <StopPickerContent
+          route={{
+            code: current.code,
+            long_name: current.long_name,
+            matchedStopIds: current.matchedStops?.map((s) => s.stop_id),
+          }}
+          onPick={handlePickStop}
+        />
       </VStack>
     );
   }
@@ -611,233 +621,4 @@ function PickerHeader({
   );
 }
 
-function RouteBanner({ route }: { route: RouteSearchHit }) {
-  const showLongName =
-    !!route.long_name &&
-    route.long_name.trim().toUpperCase() !== route.code.trim().toUpperCase();
-  return (
-    <HStack spacing={14}>
-      <HStack
-        modifiers={[
-          padding({ all: 14 }),
-          background('#0A84FF', shapes.circle()),
-        ]}
-      >
-        <Image systemName="bus.fill" size={22} color="#FFFFFF" />
-      </HStack>
-      <VStack spacing={2} alignment="leading">
-        <Text modifiers={[font({ size: 28, weight: 'bold' })]}>
-          {route.code}
-        </Text>
-        {showLongName ? (
-          <Text
-            modifiers={[
-              foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
-              font({ size: 14 }),
-            ]}
-          >
-            {route.long_name ?? ''}
-          </Text>
-        ) : null}
-      </VStack>
-      <Spacer />
-    </HStack>
-  );
-}
 
-function StopPickerStep({
-  route,
-  onPick,
-}: {
-  route: RouteSearchHit;
-  onPick: (stop: GtfsStop) => void;
-}) {
-  const [bundle, setBundle] = useState<T816Bundle | null>(null);
-  const [error, setError] = useState<Error | null>(null);
-
-  useEffect(() => {
-    const ctrl = new AbortController();
-    let cancelled = false;
-    setBundle(null);
-    setError(null);
-    (async () => {
-      try {
-        const b = await fetchRouteBundle(route.code, ctrl.signal);
-        if (cancelled) return;
-        setBundle(b);
-      } catch (err) {
-        if (cancelled) return;
-        if (err instanceof Error && err.name === 'AbortError') return;
-        setError(err instanceof Error ? err : new Error(String(err)));
-      }
-    })();
-    return () => {
-      cancelled = true;
-      ctrl.abort();
-    };
-  }, [route.code]);
-
-  const { matched, rest } = useMemo(() => {
-    if (!bundle) return { matched: [] as GtfsStop[], rest: [] as GtfsStop[] };
-    const matchedIds = new Set(
-      (route.matchedStops ?? []).map((s) => s.stop_id),
-    );
-    // Loop routes revisit the same stop multiple times; dedupe by stop_id so
-    // the list renders each stop once and avoids duplicate React keys.
-    const seen = new Set<string>();
-    const m: GtfsStop[] = [];
-    const r: GtfsStop[] = [];
-    for (const s of bundle.stops) {
-      if (seen.has(s.stop_id)) continue;
-      seen.add(s.stop_id);
-      (matchedIds.has(s.stop_id) ? m : r).push(s);
-    }
-    const byName = (a: GtfsStop, b: GtfsStop) =>
-      a.stop_name.localeCompare(b.stop_name);
-    m.sort(byName);
-    r.sort(byName);
-    return { matched: m, rest: r };
-  }, [bundle, route.matchedStops]);
-
-  if (error) {
-    return (
-      <HStack spacing={10}>
-        <Image
-          systemName="exclamationmark.triangle"
-          size={16}
-          color="#8E8E93"
-        />
-        <Text
-          modifiers={[
-            foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
-            font({ size: 13 }),
-          ]}
-        >
-          Couldn't load stops — {error.message}
-        </Text>
-      </HStack>
-    );
-  }
-  if (!bundle) {
-    return (
-      <HStack spacing={10}>
-        <ProgressView />
-        <Text
-          modifiers={[
-            foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
-            font({ size: 13 }),
-          ]}
-        >
-          Loading stops…
-        </Text>
-      </HStack>
-    );
-  }
-  return (
-    <VStack spacing={14} alignment="leading">
-      {matched.length > 0 ? (
-        <StopSection
-          title="Matched stops"
-          stops={matched}
-          variant="matched"
-          onPick={onPick}
-        />
-      ) : null}
-      {rest.length > 0 ? (
-        <StopSection
-          title={matched.length > 0 ? 'All stops' : 'Stops'}
-          stops={rest}
-          variant="default"
-          onPick={onPick}
-        />
-      ) : null}
-    </VStack>
-  );
-}
-
-function StopSection({
-  title,
-  stops,
-  variant,
-  onPick,
-}: {
-  title: string;
-  stops: GtfsStop[];
-  variant: 'matched' | 'default';
-  onPick: (stop: GtfsStop) => void;
-}) {
-  return (
-    <VStack spacing={6} alignment="leading">
-      <Text
-        modifiers={[
-          foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
-          font({ size: 12, weight: 'semibold' }),
-        ]}
-      >
-        {title.toUpperCase()}
-      </Text>
-      <VStack
-        spacing={0}
-        alignment="leading"
-        modifiers={[
-          background('#2C2C2E', shapes.roundedRectangle({ cornerRadius: 14 })),
-        ]}
-      >
-        {stops.map((s, i) => (
-          <StopRow
-            key={s.stop_id}
-            stop={s}
-            variant={variant}
-            isLast={i === stops.length - 1}
-            onPress={() => onPick(s)}
-          />
-        ))}
-      </VStack>
-    </VStack>
-  );
-}
-
-function StopRow({
-  stop,
-  variant,
-  isLast,
-  onPress,
-}: {
-  stop: GtfsStop;
-  variant: 'matched' | 'default';
-  isLast: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Button onPress={onPress} modifiers={[buttonStyle('plain')]}>
-      <VStack spacing={0} alignment="leading">
-        <HStack
-          spacing={12}
-          modifiers={[padding({ horizontal: 14, vertical: 12 })]}
-        >
-          <Image
-            systemName={variant === 'matched' ? 'circle.fill' : 'circle'}
-            size={10}
-            color={variant === 'matched' ? '#0A84FF' : '#636366'}
-          />
-          <Text modifiers={[font({ size: 15 })]}>
-            {formatStopName(stop.stop_name)}
-          </Text>
-          <Spacer />
-          <Image systemName="chevron.right" size={12} color="#8E8E93" />
-        </HStack>
-        {!isLast ? (
-          <HStack
-            spacing={0}
-            modifiers={[
-              padding({ leading: 40 }),
-              background('#3A3A3C', shapes.rectangle()),
-            ]}
-          >
-            <Spacer />
-          </HStack>
-        ) : null}
-      </VStack>
-    </Button>
-  );
-}

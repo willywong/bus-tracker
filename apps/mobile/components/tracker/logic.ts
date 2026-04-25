@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import {
   computeScheduleDelay,
@@ -346,7 +346,7 @@ export function resolveHeroState(args: {
 // about whether the bus is imminent or at the stop.
 // ---------------------------------------------------------------------------
 
-export type ArrivalStatus = 'en-route' | 'arriving' | 'arrived';
+export type ArrivalStatus = 'en-route' | 'arriving' | 'arrived' | 'passed';
 
 /** Within this many meters + slow speed, the bus is considered docked at the stop. */
 export const ARRIVED_METERS = 40;
@@ -358,6 +358,8 @@ export const ARRIVING_METERS = 300;
 export const ARRIVING_MINUTES = 1;
 /** How long `"Arrived"` stays visible after the bus starts moving again. */
 export const ARRIVED_LATCH_MS = 45_000;
+/** How long `"Passed"` stays visible after the tracked bus rolls off. */
+export const PASSED_LATCH_MS = 45_000;
 
 export interface ArrivalStatusInput {
   minutesToStop: number | null;
@@ -405,7 +407,14 @@ export function getArrivalStatus(input: ArrivalStatusInput): ArrivalStatus {
 /**
  * Latches the `'arrived'` status for ARRIVED_LATCH_MS so the Live Activity and
  * in-app surfaces can keep the label visible for ~45s after the bus begins
- * moving away. Resets when the tracked vehicle changes (next trip rolled in).
+ * moving away.
+ *
+ * Also emits `'passed'` for PASSED_LATCH_MS when a bus that was being tracked
+ * as arriving/arrived rolls off the primary slot — either because its
+ * vehicleId was swapped out by `pickApproachingVehicle` (which rejects
+ * 'departing' verdicts), or because the same vehicleId re-appears as passed.
+ * The `passedVehicleIds` set is the authoritative list of currently-departing
+ * live vehicles (populated from `evaluateApproach` verdicts in useEta).
  */
 export function useArrivalStatus(input: {
   vehicleId: string | null;
@@ -414,6 +423,7 @@ export function useArrivalStatus(input: {
   speedKmh: number | null;
   isStale: boolean;
   mode: EtaMode;
+  passedVehicleIds?: ReadonlySet<string>;
 }): { status: ArrivalStatus } {
   const raw = getArrivalStatus({
     minutesToStop: input.minutesToStop,
@@ -423,41 +433,109 @@ export function useArrivalStatus(input: {
     mode: input.mode,
   });
 
-  const [latch, setLatch] = useState<
+  const [arrivedLatch, setArrivedLatch] = useState<
     { vehicleId: string | null; since: number } | null
   >(null);
+  const [passedLatch, setPassedLatch] = useState<
+    { vehicleId: string; since: number } | null
+  >(null);
 
-  // Start / restart the latch whenever we see a fresh 'arrived'.
+  // Track the last primary vehicle that was arriving or arrived — it's the
+  // candidate that should flip to 'passed' if it rolls off or enters the
+  // passed set.
+  const trackedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (
+      input.vehicleId &&
+      (raw === 'arriving' || raw === 'arrived')
+    ) {
+      trackedRef.current = input.vehicleId;
+    }
+  }, [input.vehicleId, raw]);
+
+  // Start / restart the arrived latch whenever we see a fresh 'arrived'.
   useEffect(() => {
     if (raw !== 'arrived') return;
-    setLatch((prev) =>
+    setArrivedLatch((prev) =>
       prev && prev.vehicleId === input.vehicleId
         ? prev
         : { vehicleId: input.vehicleId, since: devNow() },
     );
   }, [raw, input.vehicleId]);
 
-  // Clear the latch when the tracked vehicle rolls over to a different trip.
+  // Clear the arrived latch when the tracked vehicle rolls over to a different
+  // trip — we may start a passed latch instead (see below).
   useEffect(() => {
-    setLatch((prev) =>
+    setArrivedLatch((prev) =>
       prev && prev.vehicleId !== input.vehicleId ? null : prev,
     );
   }, [input.vehicleId]);
 
-  // Expire the latch after ARRIVED_LATCH_MS — a single timeout per latch is
-  // enough; no interval ticks needed.
+  // Expire the arrived latch after ARRIVED_LATCH_MS.
   useEffect(() => {
-    if (!latch) return;
-    const remaining = ARRIVED_LATCH_MS - (devNow() - latch.since);
+    if (!arrivedLatch) return;
+    const remaining = ARRIVED_LATCH_MS - (devNow() - arrivedLatch.since);
     if (remaining <= 0) {
-      setLatch(null);
+      setArrivedLatch(null);
       return;
     }
-    const t = setTimeout(() => setLatch(null), remaining);
+    const t = setTimeout(() => setArrivedLatch(null), remaining);
     return () => clearTimeout(t);
-  }, [latch]);
+  }, [arrivedLatch]);
 
-  if (latch && devNow() - latch.since < ARRIVED_LATCH_MS) {
+  // Detect the arriving/arrived → passed transition. Fires when the tracked
+  // vehicle either (a) is no longer the primary (vehicleId swapped to another
+  // bus or null) AND is now present in passedVehicleIds, or (b) is still the
+  // primary but its verdict flipped to departing for any reason.
+  //
+  // We don't gate on `mode === 'live'` here: after the passed bus rolls off,
+  // the new primary may be schedule-only, flipping mode to 'schedule'. The
+  // latch signal is still valid as long as the feed itself isn't stale, since
+  // `passedVehicleIds` is sourced directly from fresh live positions.
+  useEffect(() => {
+    if (input.isStale) return;
+    const tracked = trackedRef.current;
+    if (!tracked) return;
+    const passed = input.passedVehicleIds;
+    const trackedIsDeparting = passed ? passed.has(tracked) : false;
+    const rolledOff = input.vehicleId !== tracked;
+    if (!trackedIsDeparting && !rolledOff) return;
+    if (!trackedIsDeparting && rolledOff) {
+      // Rolled off but we have no evidence the previous bus actually departed
+      // (e.g. app just woke up). Don't claim 'passed'.
+      trackedRef.current = null;
+      return;
+    }
+    setPassedLatch((prev) =>
+      prev && prev.vehicleId === tracked
+        ? prev
+        : { vehicleId: tracked, since: devNow() },
+    );
+    trackedRef.current = null;
+  }, [input.vehicleId, input.passedVehicleIds, input.isStale]);
+
+  // Expire the passed latch after PASSED_LATCH_MS.
+  useEffect(() => {
+    if (!passedLatch) return;
+    const remaining = PASSED_LATCH_MS - (devNow() - passedLatch.since);
+    if (remaining <= 0) {
+      setPassedLatch(null);
+      return;
+    }
+    const t = setTimeout(() => setPassedLatch(null), remaining);
+    return () => clearTimeout(t);
+  }, [passedLatch]);
+
+  // Suppress passed latch when the feed goes stale — we don't want to claim
+  // 'passed' from a potentially-wrong frozen snapshot.
+  useEffect(() => {
+    if (input.isStale) setPassedLatch(null);
+  }, [input.isStale]);
+
+  if (passedLatch && devNow() - passedLatch.since < PASSED_LATCH_MS) {
+    return { status: 'passed' };
+  }
+  if (arrivedLatch && devNow() - arrivedLatch.since < ARRIVED_LATCH_MS) {
     return { status: 'arrived' };
   }
   return { status: raw };

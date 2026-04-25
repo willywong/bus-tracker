@@ -10,6 +10,11 @@ export {
 } from "./t816-bundle.js";
 export { searchRoutes, type RouteSearchHit } from "./search-routes.js";
 export {
+  orderStopsByTrip,
+  pickRepresentativeTrip,
+  type RepresentativeTrip,
+} from "./stop-order.js";
+export {
   decodeFeed,
   getFeedMessage,
   resetProtobufCacheForTests,
@@ -21,6 +26,11 @@ export {
   type DecodedPosition,
 } from "./protobuf.js";
 export { entitiesToPositions, type TripRouteMap } from "./realtime.js";
+export {
+  entitiesToAlerts,
+  entitiesToTripUpdates,
+  filterAlertsForScope,
+} from "./alerts.js";
 export {
   createOutlierFilter,
   haversineMeters,

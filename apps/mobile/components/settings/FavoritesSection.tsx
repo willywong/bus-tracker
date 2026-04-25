@@ -6,17 +6,18 @@ import {
   Section,
   Spacer,
   Text,
+  VStack,
 } from '@expo/ui/swift-ui';
 import {
+  font,
   foregroundStyle,
   padding,
 } from '@expo/ui/swift-ui/modifiers';
 import { useEffect, useMemo, useState } from 'react';
-import { ActionSheetIOS } from 'react-native';
 
 import { formatStopName } from '@/components/map/format';
 import { openDb } from '@/db/database';
-import { getRoutes, getStopsForRoute, type StopRow } from '@/db/queries';
+import { getRoutes, getStopsForRouteOrdered, type StopRow } from '@/db/queries';
 import { useSettings } from '@/hooks/useSettings';
 import { useStaticGtfs } from '@/hooks/useStaticGtfs';
 
@@ -43,7 +44,7 @@ function useFavoritesData(): Map<string, RouteMeta> {
         const entries = await Promise.all(
           favoritedRoutes.map(
             async (code) =>
-              [code, await getStopsForRoute(db, code)] as const,
+              [code, await getStopsForRouteOrdered(db, code)] as const,
           ),
         );
         if (cancelled) return;
@@ -60,12 +61,22 @@ function useFavoritesData(): Map<string, RouteMeta> {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, gtfs.ready, gtfs.result?.generatedAt]);
+  }, [key, gtfs.ready, gtfs.result?.generatedAt, gtfs.lastSettledAt]);
 
   return data;
 }
 
-export function FavoritesSection() {
+export interface FavoritesSectionProps {
+  /**
+   * Called when the user taps "Change boarding stop" on a favourite row.
+   * Parent owns the bottom-sheet presentation state.
+   */
+  onRequestChangeStop: (code: string) => void;
+}
+
+export function FavoritesSection({
+  onRequestChangeStop,
+}: FavoritesSectionProps) {
   const settings = useSettings();
   const data = useFavoritesData();
 
@@ -109,6 +120,7 @@ export function FavoritesSection() {
           index={index}
           count={settings.favoritedRoutes.length}
           meta={data.get(code) ?? null}
+          onChangeStop={() => onRequestChangeStop(code)}
         />
       ))}
     </Section>
@@ -120,40 +132,40 @@ interface FavoriteRowProps {
   index: number;
   count: number;
   meta: RouteMeta | null;
+  onChangeStop: () => void;
 }
 
-function FavoriteRow({ code, index, count, meta }: FavoriteRowProps) {
+function FavoriteRow({
+  code,
+  index,
+  count,
+  meta,
+  onChangeStop,
+}: FavoriteRowProps) {
   const settings = useSettings();
+  const gtfs = useStaticGtfs();
   const stops = meta?.stops ?? [];
   const selectedStopId = settings.preferredStopByRoute[code];
   const selectedStop = useMemo(
     () => stops.find((s) => s.stop_id === selectedStopId) ?? null,
     [stops, selectedStopId],
   );
-  const stopLabel = selectedStop
-    ? formatStopName(selectedStop.stop_name)
-    : meta == null
-      ? 'Loading…'
-      : 'Pick a stop';
+  const bootstrapFailed = gtfs.failed.has(code);
+  const isRefreshing = gtfs.refreshing.has(code);
+  let stopLabel: string;
+  if (isRefreshing) {
+    stopLabel = 'Retrying…';
+  } else if (bootstrapFailed) {
+    stopLabel = "Couldn't load — tap to retry";
+  } else if (meta == null) {
+    stopLabel = 'Loading…';
+  } else if (selectedStop) {
+    stopLabel = formatStopName(selectedStop.stop_name);
+  } else {
+    stopLabel = 'Pick a stop';
+  }
   const longName =
     meta?.longName && meta.longName.trim() !== code ? meta.longName : null;
-
-  const openStopPicker = () => {
-    if (stops.length === 0) return;
-    const names = stops.map((s) => formatStopName(s.stop_name));
-    ActionSheetIOS.showActionSheetWithOptions(
-      {
-        title: `${code} — boarding stop`,
-        options: [...names, 'Cancel'],
-        cancelButtonIndex: names.length,
-      },
-      (choice) => {
-        if (choice == null || choice === names.length) return;
-        const stop = stops[choice];
-        if (stop) settings.setPreferredStopForRoute(code, stop.stop_id);
-      },
-    );
-  };
 
   const moveUp = () => {
     if (index === 0) return;
@@ -173,34 +185,56 @@ function FavoriteRow({ code, index, count, meta }: FavoriteRowProps) {
     settings.removeFavorite(code);
   };
 
+  const retry = () => {
+    void gtfs.retry(code);
+  };
+
   return (
     <Menu
       label={
-        <HStack
-          spacing={12}
-          modifiers={[padding({ vertical: 6 })]}
-        >
+        <HStack spacing={12} modifiers={[padding({ vertical: 6 })]}>
           <Image systemName="bus.fill" size={18} color="#8E8E93" />
-          <Text>{code}</Text>
-          {longName ? (
+          <VStack spacing={2} alignment="leading">
+            <HStack spacing={8}>
+              <Text>{code}</Text>
+              {longName ? (
+                <Text
+                  modifiers={[
+                    foregroundStyle({
+                      type: 'hierarchical',
+                      style: 'tertiary',
+                    }),
+                  ]}
+                >
+                  {longName}
+                </Text>
+              ) : null}
+            </HStack>
             <Text
               modifiers={[
-                foregroundStyle({ type: 'hierarchical', style: 'tertiary' }),
+                font({ size: 13 }),
+                ...(bootstrapFailed ? [foregroundStyle('#FF9F0A')] : []),
               ]}
             >
-              {longName}
+              {stopLabel}
             </Text>
-          ) : null}
+          </VStack>
           <Spacer />
-          <Text>{stopLabel}</Text>
           <Image systemName="ellipsis.circle" size={16} />
         </HStack>
       }
     >
+      {bootstrapFailed ? (
+        <Button
+          systemImage="arrow.clockwise"
+          label="Retry loading stops"
+          onPress={retry}
+        />
+      ) : null}
       <Button
         systemImage="mappin.circle"
         label="Change boarding stop"
-        onPress={openStopPicker}
+        onPress={onChangeStop}
       />
       <Button
         systemImage="arrow.up"

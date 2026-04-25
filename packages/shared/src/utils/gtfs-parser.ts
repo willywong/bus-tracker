@@ -1,10 +1,14 @@
 import { strFromU8, unzipSync } from "fflate";
 import type {
   GtfsCalendar,
+  GtfsCalendarDate,
+  GtfsFareAttribute,
+  GtfsFareRule,
   GtfsRoute,
   GtfsShapePoint,
   GtfsStop,
   GtfsStopTime,
+  GtfsTransfer,
   GtfsTrip,
 } from "../types/gtfs.js";
 
@@ -15,6 +19,10 @@ export interface ParsedGtfs {
   stopTimes: GtfsStopTime[];
   shapes: GtfsShapePoint[];
   calendar: GtfsCalendar[];
+  calendarDates: GtfsCalendarDate[];
+  fareAttributes: GtfsFareAttribute[];
+  fareRules: GtfsFareRule[];
+  transfers: GtfsTransfer[];
 }
 
 const BOM = "\uFEFF";
@@ -93,6 +101,14 @@ export function parseGtfsZip(buffer: ArrayBuffer | Uint8Array): ParsedGtfs {
     stop_name: r.stop_name,
     stop_lat: num(r.stop_lat),
     stop_lon: num(r.stop_lon),
+    wheelchair_boarding:
+      r.wheelchair_boarding === "1"
+        ? 1
+        : r.wheelchair_boarding === "2"
+          ? 2
+          : r.wheelchair_boarding === "0"
+            ? 0
+            : undefined,
   }));
 
   const trips: GtfsTrip[] = read("trips.txt").map((r) => ({
@@ -102,6 +118,7 @@ export function parseGtfsZip(buffer: ArrayBuffer | Uint8Array): ParsedGtfs {
     shape_id: r.shape_id || undefined,
     direction_id:
       r.direction_id === "1" ? 1 : r.direction_id === "0" ? 0 : undefined,
+    trip_headsign: r.trip_headsign || undefined,
   }));
 
   const stopTimes: GtfsStopTime[] = read("stop_times.txt").map((r) => ({
@@ -132,5 +149,70 @@ export function parseGtfsZip(buffer: ArrayBuffer | Uint8Array): ParsedGtfs {
     end_date: r.end_date,
   }));
 
-  return { routes, stops, trips, stopTimes, shapes, calendar };
+  const calendarDates: GtfsCalendarDate[] = [];
+  for (const r of read("calendar_dates.txt")) {
+    const t =
+      r.exception_type === "1" ? 1 : r.exception_type === "2" ? 2 : null;
+    if (t === null || !r.service_id || !r.date) continue;
+    calendarDates.push({
+      service_id: r.service_id,
+      date: r.date,
+      exception_type: t as 1 | 2,
+    });
+  }
+
+  const fareAttributes: GtfsFareAttribute[] = read("fare_attributes.txt").map(
+    (r) => ({
+      fare_id: r.fare_id,
+      price: num(r.price),
+      currency_type: r.currency_type,
+      payment_method:
+        r.payment_method === "1" ? 1 : r.payment_method === "0" ? 0 : undefined,
+      transfers:
+        r.transfers === "" || r.transfers === undefined
+          ? null
+          : (num(r.transfers) as 0 | 1 | 2),
+      transfer_duration:
+        r.transfer_duration === "" || r.transfer_duration === undefined
+          ? undefined
+          : num(r.transfer_duration),
+    }),
+  );
+
+  const fareRules: GtfsFareRule[] = read("fare_rules.txt").map((r) => ({
+    fare_id: r.fare_id,
+    route_id: r.route_id || undefined,
+    origin_id: r.origin_id || undefined,
+    destination_id: r.destination_id || undefined,
+    contains_id: r.contains_id || undefined,
+  }));
+
+  const transfers: GtfsTransfer[] = [];
+  for (const r of read("transfers.txt")) {
+    const t = num(r.transfer_type);
+    if (t !== 0 && t !== 1 && t !== 2 && t !== 3) continue;
+    if (!r.from_stop_id || !r.to_stop_id) continue;
+    const entry: GtfsTransfer = {
+      from_stop_id: r.from_stop_id,
+      to_stop_id: r.to_stop_id,
+      transfer_type: t as 0 | 1 | 2 | 3,
+    };
+    if (r.min_transfer_time !== "" && r.min_transfer_time !== undefined) {
+      entry.min_transfer_time = num(r.min_transfer_time);
+    }
+    transfers.push(entry);
+  }
+
+  return {
+    routes,
+    stops,
+    trips,
+    stopTimes,
+    shapes,
+    calendar,
+    calendarDates,
+    fareAttributes,
+    fareRules,
+    transfers,
+  };
 }

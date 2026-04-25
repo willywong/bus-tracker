@@ -1,5 +1,46 @@
-import type { RouteId, VehiclePosition } from "../types/bus.js";
+import type {
+  OccupancyStatus,
+  RouteId,
+  VehiclePosition,
+  VehicleStopStatus,
+} from "../types/bus.js";
 import type { DecodedEntity, DecodedFeed } from "./protobuf.js";
+
+const VEHICLE_STOP_STATUSES = new Set<string>([
+  "INCOMING_AT",
+  "STOPPED_AT",
+  "IN_TRANSIT_TO",
+]);
+
+const OCCUPANCY_STATUSES = new Set<string>([
+  "EMPTY",
+  "MANY_SEATS_AVAILABLE",
+  "FEW_SEATS_AVAILABLE",
+  "STANDING_ROOM_ONLY",
+  "CRUSHED_STANDING_ROOM_ONLY",
+  "FULL",
+  "NOT_ACCEPTING_PASSENGERS",
+  "NO_DATA_AVAILABLE",
+  "NOT_BOARDABLE",
+]);
+
+function asStopStatus(v: string | undefined): VehicleStopStatus | undefined {
+  return v && VEHICLE_STOP_STATUSES.has(v)
+    ? (v as VehicleStopStatus)
+    : undefined;
+}
+
+function asOccupancy(v: string | undefined): OccupancyStatus | undefined {
+  return v && OCCUPANCY_STATUSES.has(v) ? (v as OccupancyStatus) : undefined;
+}
+
+function asWheelchair(v: number | undefined): 0 | 1 | 2 | undefined {
+  // GTFS-RT enum: 0=NO_VALUE, 1=UNKNOWN, 2=WHEELCHAIR_ACCESSIBLE, 3=WHEELCHAIR_INACCESSIBLE.
+  // Map to the simpler stops.txt shape: 0=no info, 1=accessible, 2=not accessible.
+  if (v === 2) return 1;
+  if (v === 3) return 2;
+  return undefined;
+}
 
 export type TripRouteMap = ReadonlyMap<string, RouteId>;
 
@@ -53,6 +94,17 @@ function toPosition(
       ? v.timestamp * 1000
       : fallbackNow;
 
+  const currentStopSequence =
+    typeof v.current_stop_sequence === "number" && v.current_stop_sequence >= 0
+      ? v.current_stop_sequence
+      : undefined;
+  const occupancyPercentage =
+    typeof v.occupancy_percentage === "number" &&
+    v.occupancy_percentage >= 0 &&
+    v.occupancy_percentage <= 100
+      ? v.occupancy_percentage
+      : undefined;
+
   return {
     vehicleId,
     tripId: v.trip.trip_id,
@@ -62,5 +114,11 @@ function toPosition(
     bearing: Number.isFinite(bearing) ? bearing : undefined,
     speed: Number.isFinite(speed) ? speed : undefined,
     observedAt,
+    currentStopSequence,
+    currentStopId: v.stop_id || undefined,
+    currentStatus: asStopStatus(v.current_status),
+    occupancyStatus: asOccupancy(v.occupancy_status),
+    occupancyPercentage,
+    wheelchairAccessible: asWheelchair(v.vehicle?.wheelchair_accessible),
   };
 }

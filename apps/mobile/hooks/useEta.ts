@@ -1,5 +1,6 @@
 import {
   computeEta,
+  evaluateApproach,
   pickApproachingVehicle,
   polylineLength,
   toMalaysiaParts,
@@ -51,6 +52,8 @@ function toFiniteOrNull(v: number | null | undefined): number | null {
 
 /** Max |live-projected-arrival - trip-scheduled-departure| we trust before declaring the trip-id match unreliable. */
 export const TRIP_MATCH_MAX_MIN = 15;
+
+const EMPTY_PASSED_SET: ReadonlySet<string> = new Set();
 
 export type ArrivalKind = "live" | "sched";
 
@@ -107,6 +110,8 @@ export interface UseEtaResult {
   polylineMeters: number | null;
   /** Hybrid distance+time+speed classifier for the primary arrival. Latches `'arrived'` for ~45s. */
   arrivalStatus: ArrivalStatus;
+  /** Set of `vehicleId`s currently classified as `departing` by `evaluateApproach` relative to the user's stop. Map markers read this per-frame. */
+  passedVehicleIds: ReadonlySet<string>;
 }
 
 interface StaticCtx {
@@ -228,6 +233,28 @@ export function useEta({
       loop: true,
     });
   }, [staticCtx, positions, trafficMinutes]);
+
+  // 4a. Per-vehicle "has passed your stop" classification for the map.
+  // Stateless: recomputed every time positions change. A bus is passed when
+  // `evaluateApproach` returns the 'departing' verdict (loop-aware — bus is
+  // more than halfway around the loop from the stop's forward direction).
+  const passedVehicleIds: ReadonlySet<string> = useMemo(() => {
+    if (!staticCtx) return EMPTY_PASSED_SET;
+    const out = new Set<string>();
+    for (const v of positions as VehiclePosition[]) {
+      const evaluation = evaluateApproach({
+        bus: v,
+        previousBus: previousByVehicleRef.current.get(v.vehicleId),
+        stop: staticCtx.stop,
+        polyline: staticCtx.polyline,
+        loop: true,
+      });
+      if (evaluation.verdict === "departing") {
+        out.add(v.vehicleId);
+      }
+    }
+    return out;
+  }, [staticCtx, positions]);
 
   // 4b. Pick the second-closest approaching vehicle for the "Next" row.
   const nextBus: ApproachingBus | null = useMemo(() => {
@@ -629,6 +656,7 @@ export function useEta({
     speedKmh: primaryLive?.speedKmh ?? null,
     isStale,
     mode: resolved.mode,
+    passedVehicleIds,
   });
 
   return {
@@ -656,5 +684,6 @@ export function useEta({
     beforeServiceStart: scheduled.beforeServiceStart,
     polylineMeters,
     arrivalStatus,
+    passedVehicleIds,
   };
 }

@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 5;
 
 export const DDL = [
   `CREATE TABLE IF NOT EXISTS routes (
@@ -19,14 +19,16 @@ export const DDL = [
     stop_id TEXT PRIMARY KEY NOT NULL,
     stop_name TEXT NOT NULL,
     stop_lat REAL NOT NULL,
-    stop_lon REAL NOT NULL
+    stop_lon REAL NOT NULL,
+    wheelchair_boarding INTEGER
   );`,
   `CREATE TABLE IF NOT EXISTS trips (
     trip_id TEXT PRIMARY KEY NOT NULL,
     route_id TEXT NOT NULL,
     service_id TEXT NOT NULL,
     shape_id TEXT,
-    direction_id INTEGER
+    direction_id INTEGER,
+    trip_headsign TEXT
   );`,
   `CREATE INDEX IF NOT EXISTS trips_route_id_idx ON trips(route_id);`,
   `CREATE TABLE IF NOT EXISTS shape_points (
@@ -60,6 +62,40 @@ export const DDL = [
     start_date TEXT NOT NULL,
     end_date TEXT NOT NULL
   );`,
+  `CREATE TABLE IF NOT EXISTS calendar_dates (
+    service_id TEXT NOT NULL,
+    date TEXT NOT NULL,
+    exception_type INTEGER NOT NULL,
+    PRIMARY KEY (service_id, date)
+  );`,
+  `CREATE INDEX IF NOT EXISTS calendar_dates_date_idx
+    ON calendar_dates(date);`,
+  `CREATE TABLE IF NOT EXISTS fare_attributes (
+    fare_id TEXT PRIMARY KEY NOT NULL,
+    price REAL NOT NULL,
+    currency_type TEXT NOT NULL,
+    payment_method INTEGER,
+    transfers INTEGER,
+    transfer_duration INTEGER
+  );`,
+  `CREATE TABLE IF NOT EXISTS fare_rules (
+    fare_id TEXT NOT NULL,
+    route_id TEXT,
+    origin_id TEXT,
+    destination_id TEXT,
+    contains_id TEXT
+  );`,
+  `CREATE INDEX IF NOT EXISTS fare_rules_route_idx
+    ON fare_rules(route_id);`,
+  `CREATE TABLE IF NOT EXISTS transfers (
+    from_stop_id TEXT NOT NULL,
+    to_stop_id TEXT NOT NULL,
+    transfer_type INTEGER NOT NULL,
+    min_transfer_time INTEGER,
+    PRIMARY KEY (from_stop_id, to_stop_id)
+  );`,
+  `CREATE INDEX IF NOT EXISTS transfers_from_idx
+    ON transfers(from_stop_id);`,
   `CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY NOT NULL,
     value TEXT NOT NULL

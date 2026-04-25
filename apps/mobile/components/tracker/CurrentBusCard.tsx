@@ -107,38 +107,43 @@ export function CurrentBusCard({
     (entry.kind === 'live' && entryLive != null) || hasTrackedLive;
   const isArrived = arrivalStatus === 'arrived';
   const isArriving = arrivalStatus === 'arriving';
+  const isPassed = arrivalStatus === 'passed';
 
-  // If the primary timeline row is scheduled but a live vehicle is tracked,
-  // project the headline clock off the live ETA (matches the Map). Falls back
-  // to the scheduled epoch when live minutes aren't ready yet (traffic race).
-  const liveProjectedEpochMs =
-    entry.kind !== 'live' &&
-    hasTrackedLive &&
-    effectiveLive?.minutesToStop != null
-      ? Date.now() + effectiveLive.minutesToStop * 60_000
-      : null;
-
+  // Headline countdown must reflect the primary arrival's own trip — never the
+  // globally-tracked live bus, which may belong to a different run. When the
+  // live bus's ETA is within the trip-match window the timeline already emits
+  // the entry as `kind: "live"` with its live minutes attached to `entry.live`;
+  // otherwise the entry is a standalone sched and we count down to its clock.
   const minutes =
-    isLive && effectiveLive?.minutesToStop != null
-      ? effectiveLive.minutesToStop
+    entry.live?.minutesToStop != null
+      ? entry.live.minutesToStop
       : Math.max(0, Math.round((entry.epochMs - Date.now()) / 60_000));
 
-  const eyebrow = isArrived
-    ? 'ARRIVED'
-    : isArriving
-      ? 'ARRIVING'
-      : isLive && minutes <= 0
-        ? 'ARRIVING NOW'
-        : 'ARRIVING IN';
+  // When 'passed' fires, the `entry` prop is the post-rollover arrival — i.e.
+  // the *next* bus. Frame the eyebrow to acknowledge the miss while keeping
+  // the next-bus countdown visible so the user has something actionable.
+  const eyebrow = isPassed
+    ? 'PREVIOUS BUS PASSED · NEXT IN'
+    : isArrived
+      ? 'ARRIVED'
+      : isArriving
+        ? 'ARRIVING'
+        : isLive && minutes <= 0
+          ? 'ARRIVING NOW'
+          : 'ARRIVING IN';
 
-  const projectedClock = formatClockHHMM(liveProjectedEpochMs ?? entry.epochMs);
+  const projectedClock = formatClockHHMM(entry.epochMs);
   // Inline headline shown next to the big minutes value — only when the
   // schedule compare row isn't already displaying the same clock time. Hides
   // on "arriving now" / "arrived" where the eyebrow already says everything.
+  // "Arrives HH:MM" reads as a live-derived projection; reserve it for live
+  // primary arrivals. Standalone sched entries use "at HH:MM" to make clear
+  // the clock is the schedule, not a live-projected arrival — even when a
+  // different live bus is being tracked elsewhere on the route.
   const inlineClockLabel =
     minutes <= 0 || isArrived
       ? null
-      : isLive
+      : entry.live != null
         ? `Arrives ${projectedClock}`
         : `at ${projectedClock}`;
 
@@ -178,12 +183,15 @@ export function CurrentBusCard({
 
   const delayLabel = formatDelayLabel(delay);
   const schedClock = sched ? formatClockHHMM(sched.departureEpochMs) : null;
-  const liveProjectedClock = isLive && sched ? projectedClock : null;
+  // Only surface a "live projected" clock when the primary row is itself live —
+  // otherwise `projectedClock` is just the scheduled time dressed up, which
+  // reads as a lie to downstream consumers of this value.
+  const liveProjectedClock = entry.live != null && sched ? projectedClock : null;
 
   // Only show the compare row when we have a live-vs-schedule comparison worth
-  // making. For schedule-only entries the clock is already implied by the
-  // inline "at HH:MM" headline — no need to repeat it.
-  const hasCompareRow = isLive && sched != null;
+  // making. Requires both a live primary and a paired sched row; standalone
+  // sched entries use the inline "at HH:MM" headline and don't need a compare.
+  const hasCompareRow = entry.live != null && sched != null;
   // And when the compare row is rendering the live clock, suppress the inline
   // "Arrives HH:MM" next to the big minutes to avoid showing the same time
   // twice.
@@ -759,18 +767,27 @@ function StatusRow({
 
   const isArrived = arrivalStatus === 'arrived';
   const isArriving = arrivalStatus === 'arriving';
+  const isPassed = arrivalStatus === 'passed';
 
-  const tone: 'live' | 'stale' | 'neutral' | 'arrived' | 'arriving' = isArrived
-    ? 'arrived'
-    : isArriving
-      ? 'arriving'
-      : effectivelyRefreshing
-        ? 'live'
-        : isLive
-          ? isStale
-            ? 'stale'
-            : 'live'
-          : 'neutral';
+  const tone:
+    | 'live'
+    | 'stale'
+    | 'neutral'
+    | 'arrived'
+    | 'arriving'
+    | 'passed' = isPassed
+    ? 'passed'
+    : isArrived
+      ? 'arrived'
+      : isArriving
+        ? 'arriving'
+        : effectivelyRefreshing
+          ? 'live'
+          : isLive
+            ? isStale
+              ? 'stale'
+              : 'live'
+            : 'neutral';
 
   const dotColor =
     tone === 'arrived'
@@ -781,7 +798,9 @@ function StatusRow({
           ? sourceColor.live
           : tone === 'stale'
             ? sourceColor.stale
-            : (PlatformColor('tertiaryLabel') as unknown as string);
+            : tone === 'passed'
+              ? sourceColor.scheduled
+              : (PlatformColor('tertiaryLabel') as unknown as string);
   const dotStatic = tone !== 'live' && tone !== 'arriving';
   const labelColor =
     tone === 'arrived'
@@ -792,21 +811,25 @@ function StatusRow({
           ? sourceColor.live
           : tone === 'stale'
             ? sourceColor.stale
-            : (PlatformColor('secondaryLabel') as unknown as string);
+            : tone === 'passed'
+              ? sourceColor.scheduled
+              : (PlatformColor('secondaryLabel') as unknown as string);
 
-  const primary = isArrived
-    ? 'Arrived'
-    : isArriving
-      ? 'Arriving'
-      : effectivelyRefreshing
-        ? 'Refreshing…'
-        : isLive
-          ? isStale
-            ? 'Stale'
-            : 'Live'
-          : lastUpdated == null
-            ? 'Waiting for live data'
-            : 'Timetable';
+  const primary = isPassed
+    ? 'Passed'
+    : isArrived
+      ? 'Arrived'
+      : isArriving
+        ? 'Arriving'
+        : effectivelyRefreshing
+          ? 'Refreshing…'
+          : isLive
+            ? isStale
+              ? 'Stale'
+              : 'Live'
+            : lastUpdated == null
+              ? 'Waiting for live data'
+              : 'Timetable';
 
   const secondary = effectivelyRefreshing
     ? null
@@ -820,6 +843,14 @@ function StatusRow({
       <Text style={[styles.statusText, { color: labelColor }]} selectable>
         {primary}
       </Text>
+      {tone === 'stale' ? (
+        <SymbolView
+          name="exclamationmark.triangle.fill"
+          size={11}
+          tintColor={labelColor}
+          weight="semibold"
+        />
+      ) : null}
       {secondary ? (
         <>
           <Text style={styles.statusDot}>·</Text>

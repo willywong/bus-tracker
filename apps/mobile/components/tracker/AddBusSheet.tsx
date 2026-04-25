@@ -1,4 +1,8 @@
 import type { GtfsStop, RouteSearchHit, T816Bundle } from '@bus-tracker/shared';
+import {
+  orderStopsByTrip,
+  pickRepresentativeTrip,
+} from '@bus-tracker/shared';
 import { useRouter } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -657,23 +661,16 @@ function StopPickerStep({
 
   const { matched, rest } = useMemo(() => {
     if (!bundle) return { matched: [] as GtfsStop[], rest: [] as GtfsStop[] };
+    const repTrip = pickRepresentativeTrip(bundle);
+    const ordered = orderStopsByTrip(bundle, repTrip?.tripId ?? null);
     const matchedIds = new Set(
       (route.matchedStops ?? []).map((s) => s.stop_id),
     );
-    // Loop routes revisit the same stop multiple times; dedupe by stop_id so
-    // the list renders each stop once and avoids duplicate React keys.
-    const seen = new Set<string>();
     const m: GtfsStop[] = [];
     const r: GtfsStop[] = [];
-    for (const s of bundle.stops) {
-      if (seen.has(s.stop_id)) continue;
-      seen.add(s.stop_id);
+    for (const s of ordered) {
       (matchedIds.has(s.stop_id) ? m : r).push(s);
     }
-    const byName = (a: GtfsStop, b: GtfsStop) =>
-      a.stop_name.localeCompare(b.stop_name);
-    m.sort(byName);
-    r.sort(byName);
     return { matched: m, rest: r };
   }, [bundle, route.matchedStops]);
 

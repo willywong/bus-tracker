@@ -3,6 +3,7 @@ import { PlatformColor, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { AlertBanner } from '@/components/alerts/AlertBanner';
 import { formatStopName } from '@/components/map/format';
 import { CurrentBusCard } from '@/components/tracker/CurrentBusCard';
 import { CurrentBusCardSkeleton } from '@/components/tracker/CurrentBusCardSkeleton';
@@ -31,6 +32,7 @@ import {
   type StopRow,
   type TrafficSignalRow,
 } from '@/db/queries';
+import { useAlerts } from '@/hooks/useAlerts';
 import { useBusLiveActivity } from '@/hooks/useBusLiveActivity';
 import { useBusPosition } from '@/hooks/useBusPosition';
 import { useEta } from '@/hooks/useEta';
@@ -71,6 +73,19 @@ function TrackerActive({ onAddBus }: { onAddBus: () => void }) {
     stopId: settings.preferredStopId,
     routeCode: activeRoute,
     trafficProvider: settings.trafficProvider,
+  });
+  const alertRouteCodes = useMemo(
+    () => (activeRoute ? [activeRoute] : []),
+    [activeRoute],
+  );
+  const alertStopIds = useMemo(
+    () =>
+      settings.preferredStopId ? [settings.preferredStopId] : [],
+    [settings.preferredStopId],
+  );
+  const { alerts } = useAlerts({
+    routeCodes: alertRouteCodes,
+    stopIds: alertStopIds,
   });
   const {
     minutesToStop,
@@ -358,6 +373,11 @@ function TrackerActive({ onAddBus }: { onAddBus: () => void }) {
 
   return (
     <TrackerCanvas onRefresh={handleRefresh} refreshing={refreshing}>
+      {alerts.length > 0 ? (
+        <View style={{ paddingHorizontal: trackerSpacing.screenH, marginBottom: 12 }}>
+          <AlertBanner alerts={alerts} />
+        </View>
+      ) : null}
       {isTransitioning ? (
         <Animated.View
           key="hero-skel"
