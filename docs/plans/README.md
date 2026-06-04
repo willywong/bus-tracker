@@ -1,6 +1,6 @@
-# T816 Bus Tracker — Phased Implementation Plans
+# T816 BusBuddy — Phased Implementation Plans
 
-This folder contains the step-by-step build plan for the T816 Bus Tracker iOS app. Each subfolder is one phase; each markdown file inside is one executable task.
+This folder contains the step-by-step build plan for the T816 BusBuddy iOS app. Each subfolder is one phase; each markdown file inside is one executable task.
 
 ## Reading order
 1. `00-foundation/` — monorepo, Expo SDK 54, @expo/ui, EAS simulator build

@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Bus Tracker",
+    "name": "BusBuddy",
     "slug": "bus-tracker",
     "version": "1.1.0",
     "orientation": "portrait",
@@ -18,7 +18,9 @@
       "bundleIdentifier": "com.willywong.bustracker",
       "supportsTablet": false,
       "infoPlist": {
-        "UIBackgroundModes": ["fetch"],
+        "UIBackgroundModes": [
+          "fetch"
+        ],
         "ITSAppUsesNonExemptEncryption": false,
         "NSSupportsLiveActivities": true
       }
@@ -34,8 +36,13 @@
         "android.permission.RECEIVE_BOOT_COMPLETED",
         "android.permission.WAKE_LOCK",
         "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.WAKE_LOCK",
+        "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION"
-      ]
+      ],
+      "package": "com.willywong.bustracker"
     },
     "web": {
       "bundler": "metro",
@@ -51,7 +58,7 @@
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "Allow Bus Tracker to show bus and user location on the map."
+          "locationAlwaysAndWhenInUsePermission": "Allow BusBuddy to show bus and user location on the map."
         }
       ],
       "expo-web-browser",

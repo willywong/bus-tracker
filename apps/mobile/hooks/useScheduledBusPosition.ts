@@ -11,6 +11,15 @@ import { getStopTimesForTrip, type TripStopTimeRow } from '@/db/queries';
 const TICK_MS = 15_000;
 
 export interface UseScheduledBusPositionArgs {
+  /**
+   * Must be a STATIC trip_id (i.e. one that exists in the on-device GTFS
+   * bundle), not a live realtime trip_id. The hook does a direct
+   * `WHERE trip_id = ?` lookup on `stop_times` and has no drift-resolution
+   * fallback — use `resolveStaticTripId` upstream first if you need to
+   * derive this from a realtime VehiclePosition. Today the only caller
+   * passes `ScheduledDeparture.tripId` from `getNextScheduledDepartures`,
+   * which is always static.
+   */
   tripId: string | null;
   polyline: readonly LatLng[];
   stopsById: ReadonlyMap<string, LatLng>;

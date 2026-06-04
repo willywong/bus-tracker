@@ -103,6 +103,42 @@ test("entitiesToPositions rejects entries without trip_id, position, or mapping"
   assert.equal(positions[0].vehicleId, "ok");
 });
 
+test("entitiesToPositions falls back to trip.route_id when trip_id lookup misses", () => {
+  // Mirrors the Prasarana data-drift case: static bundle's trip_ids carry one
+  // date prefix (e.g. 260313...), realtime emits a different date prefix
+  // (e.g. 260420...). The realtime entity still tags the route short-name
+  // ("T816") on `trip.route_id`, which we trust when it's in the favorited set.
+  const map = tripMap([["260313010076S10", "T816" as RouteId]]);
+  const allowed = new Set(["T816"]) as ReadonlySet<RouteId>;
+  const positions = entitiesToPositions(
+    feed([
+      {
+        id: "e-fallback",
+        vehicle: {
+          trip: { trip_id: "260420010076S4", route_id: "T816" },
+          vehicle: { id: "VH4643" },
+          position: { latitude: 3.12, longitude: 101.64, bearing: 105, speed: 15 },
+          timestamp: 1_713_000_010,
+        },
+      },
+      {
+        id: "e-not-favorited",
+        vehicle: {
+          trip: { trip_id: "260420010099S4", route_id: "T999" },
+          position: { latitude: 3.13, longitude: 101.65 },
+        },
+      },
+    ]),
+    map,
+    FALLBACK,
+    allowed,
+  );
+  assert.equal(positions.length, 1);
+  assert.equal(positions[0].vehicleId, "VH4643");
+  assert.equal(positions[0].routeId, "T816");
+  assert.equal(positions[0].tripId, "260420010076S4");
+});
+
 test("entitiesToPositions drops NaN lat/lng (sanity)", () => {
   const map = tripMap([["T816-1", "T816"]]);
   const positions = entitiesToPositions(

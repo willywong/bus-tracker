@@ -27,8 +27,9 @@ import type { SFSymbol } from 'sf-symbols-typescript';
 import { formatStopName } from '@/components/map/format';
 import { openDb } from '@/db/database';
 import {
-  getTripStopsWithNames,
+  resolveTripStops,
   type TripStopWithName,
+  type TripStopsSource,
 } from '@/db/queries';
 import { useTripUpdates } from '@/hooks/useTripUpdates';
 
@@ -52,18 +53,27 @@ export interface TripStopsSheetContext {
  */
 export function TripStopsBody({ context }: { context: TripStopsSheetContext }) {
   const [stops, setStops] = useState<TripStopWithName[] | null>(null);
+  const [stopsSource, setStopsSource] = useState<TripStopsSource>('exact');
   const [error, setError] = useState<Error | null>(null);
   const { byTrip } = useTripUpdates();
 
   useEffect(() => {
     let cancelled = false;
     setStops(null);
+    setStopsSource('exact');
     setError(null);
     (async () => {
       try {
         const db = await openDb();
-        const rows = await getTripStopsWithNames(db, context.tripId);
-        if (!cancelled) setStops(rows);
+        const resolved = await resolveTripStops(
+          db,
+          context.tripId,
+          context.routeCode,
+        );
+        if (!cancelled) {
+          setStops(resolved.stops);
+          setStopsSource(resolved.source);
+        }
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err : new Error(String(err)));
@@ -73,7 +83,7 @@ export function TripStopsBody({ context }: { context: TripStopsSheetContext }) {
     return () => {
       cancelled = true;
     };
-  }, [context.tripId]);
+  }, [context.tripId, context.routeCode]);
 
   const tripUpdate = byTrip.get(context.tripId);
   const todayMidnight = useMemo(
@@ -198,6 +208,8 @@ export function TripStopsBody({ context }: { context: TripStopsSheetContext }) {
         ? nextUpIndex - 1
         : -1;
 
+  const fallbackCaption = describeFallbackSource(stopsSource, !!tripUpdate);
+
   return (
     <VStack spacing={6} alignment="leading">
       <HStack spacing={8}>
@@ -221,6 +233,23 @@ export function TripStopsBody({ context }: { context: TripStopsSheetContext }) {
           </Text>
         ) : null}
       </HStack>
+      {fallbackCaption ? (
+        <HStack spacing={6} alignment="center">
+          <Image
+            systemName="info.circle"
+            size={11}
+            color="#8E8E93"
+          />
+          <Text
+            modifiers={[
+              foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
+              font({ size: 11 }),
+            ]}
+          >
+            {fallbackCaption}
+          </Text>
+        </HStack>
+      ) : null}
       <VStack
         spacing={0}
         alignment="leading"
@@ -546,6 +575,21 @@ function formatClockHM(ms: number): string {
   const h = String(d.getHours()).padStart(2, '0');
   const m = String(d.getMinutes()).padStart(2, '0');
   return `${h}:${m}`;
+}
+
+function describeFallbackSource(
+  source: TripStopsSource,
+  hasTripUpdates: boolean,
+): string | null {
+  if (source === 'exact') return null;
+  if (source === 'suffix') {
+    return hasTripUpdates
+      ? 'Schedule from a sibling trip — live ETAs shown when available.'
+      : 'Schedule from a sibling trip — times may be off by a few minutes.';
+  }
+  return hasTripUpdates
+    ? 'Stops from a representative trip — live ETAs shown when available.'
+    : 'Stops from a representative trip — schedule is approximate.';
 }
 
 function formatDelay(

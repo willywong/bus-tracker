@@ -211,7 +211,14 @@ export function createRealtimeStore(
       const bytes = await cfg.fetchFeed(ctrl.signal);
       if (ctrl.signal.aborted) return;
       const feed = decodeFeed(bytes);
-      const raw = entitiesToPositions(feed, tripMap, cfg.now());
+      // Allow `vehicle.trip.route_id` (route short-name e.g. "T816") to
+      // resolve a position when the static `trip_id` lookup misses, so
+      // upstream date-prefix drift between the static bundle and the
+      // realtime feed doesn't drop every vehicle on the floor.
+      const allowed = new Set(
+        routeCodes as readonly VehiclePosition["routeId"][],
+      );
+      const raw = entitiesToPositions(feed, tripMap, cfg.now(), allowed);
       const filtered = positionFilter(raw);
       // Dedup by vehicleId — keep the latest-observed entry per id. The GTFS-RT
       // fallback chain in entitiesToPositions drops to trip_id when all vehicle

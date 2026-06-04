@@ -45,6 +45,7 @@ import {
   getScheduledStopTimeForTrip,
   getStops,
   getTrafficSignals,
+  resolveStaticTripId,
   type PolylinePoint,
   type StopRow,
   type TrafficSignalRow,
@@ -311,10 +312,10 @@ export default function MapScreen() {
     [mapRegion, staticData],
   );
 
-  // Per-bus scheduled arrival (for BusCallout). Keyed by vehicleId. We look up
-  // the scheduled departure from the user's stop for each visible trip. If a
-  // live vehicle's tripId doesn't match our static cache (the GTFS-RT doc
-  // warns matching can be flaky), we silently omit the schedule line.
+  // Per-bus scheduled arrival (for BusCallout). Keyed by live vehicle tripId.
+  // We resolve the live trip_id to a static one (drift-tolerant) before the
+  // schedule lookup, then key the result by the original live tripId so the
+  // callout consumer can look it up directly.
   const [tripSeconds, setTripSeconds] = useState<Record<string, number>>({});
   const tripIds = useMemo(
     () => [...new Set(positions.map((p) => p.tripId).filter(Boolean))],
@@ -322,14 +323,17 @@ export default function MapScreen() {
   );
   useEffect(() => {
     let cancelled = false;
+    if (!activeRoute || !settings.preferredStopId) return;
     (async () => {
       try {
         const db = await openDb();
         const entries: [string, number][] = [];
         for (const tripId of tripIds) {
+          const resolved = await resolveStaticTripId(db, tripId, activeRoute);
+          const lookupTripId = resolved?.tripId ?? tripId;
           const s = await getScheduledStopTimeForTrip(
             db,
-            tripId,
+            lookupTripId,
             settings.preferredStopId,
           );
           if (s != null) entries.push([tripId, s]);
@@ -352,7 +356,7 @@ export default function MapScreen() {
     return () => {
       cancelled = true;
     };
-  }, [tripIds, settings.preferredStopId]);
+  }, [tripIds, settings.preferredStopId, activeRoute]);
 
   // Pick the next scheduled departure that no live vehicle is broadcasting
   // for. When a real bus eventually picks up that tripId, this returns null

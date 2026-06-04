@@ -18,6 +18,7 @@ import {
   getRoutes,
   getScheduledStopTimeForTrip,
   getStops,
+  resolveStaticTripId,
   type PolylinePoint,
   type ScheduledDeparture,
   type StopRow,
@@ -389,14 +390,18 @@ export function useEta({
   >(null);
   useEffect(() => {
     let cancelled = false;
-    if (!currentTripId) {
+    if (!currentTripId || !routeCode) {
       setCurrentScheduledSeconds(null);
       return;
     }
     (async () => {
       try {
         const db = await openDb();
-        const secs = await getScheduledStopTimeForTrip(db, currentTripId, stopId);
+        // Drift-resolve live → static trip_id before the schedule lookup.
+        // See `resolveStaticTripId` for the fallback ladder.
+        const resolved = await resolveStaticTripId(db, currentTripId, routeCode);
+        const lookupTripId = resolved?.tripId ?? currentTripId;
+        const secs = await getScheduledStopTimeForTrip(db, lookupTripId, stopId);
         if (!cancelled) setCurrentScheduledSeconds(secs);
       } catch {
         if (!cancelled) setCurrentScheduledSeconds(null);
@@ -405,7 +410,7 @@ export function useEta({
     return () => {
       cancelled = true;
     };
-  }, [currentTripId, stopId]);
+  }, [currentTripId, stopId, routeCode]);
 
   // Pick the scheduled departure whose wall-clock is nearest the live bus's
   // scheduled departure (used as the "anchor" chip in TimetableStrip, and as

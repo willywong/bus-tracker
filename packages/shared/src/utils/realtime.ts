@@ -50,7 +50,17 @@ export type TripRouteMap = ReadonlyMap<string, RouteId>;
  * Drops entities that:
  * - are marked `is_deleted`
  * - have no `vehicle.position.latitude/longitude`
- * - have no `vehicle.trip.trip_id`, OR whose `trip_id` isn't in the map.
+ * - have no `vehicle.trip.trip_id`, OR whose `trip_id` isn't in the map
+ *   AND whose `trip.route_id` isn't in `allowedRouteCodes`.
+ *
+ * Resolution order for the route code: tripToRoute lookup first, then a
+ * fallback to `vehicle.trip.route_id` when it matches `allowedRouteCodes`.
+ * The fallback exists because Prasarana's GTFS feeds use date-prefixed
+ * trip_ids (e.g. `260313010076S10`) and the realtime feed rotates that
+ * date prefix daily, so static-vs-realtime trip_ids drift apart whenever
+ * the static bundle is older than the current service day. The realtime
+ * `trip.route_id` is the route short-name (e.g. "T816") and matches the
+ * `routes.code` we store on-device.
  *
  * `observedAt` is the entity's per-vehicle `timestamp` (seconds → ms)
  * when present, otherwise the caller-provided `fallbackNow`.
@@ -59,10 +69,11 @@ export function entitiesToPositions(
   feed: DecodedFeed,
   tripToRoute: TripRouteMap,
   fallbackNow: number,
+  allowedRouteCodes?: ReadonlySet<RouteId>,
 ): VehiclePosition[] {
   const out: VehiclePosition[] = [];
   for (const entity of feed.entity) {
-    const pos = toPosition(entity, tripToRoute, fallbackNow);
+    const pos = toPosition(entity, tripToRoute, fallbackNow, allowedRouteCodes);
     if (pos) out.push(pos);
   }
   return out;
@@ -72,12 +83,19 @@ function toPosition(
   entity: DecodedEntity,
   tripToRoute: TripRouteMap,
   fallbackNow: number,
+  allowedRouteCodes?: ReadonlySet<RouteId>,
 ): VehiclePosition | null {
   if (entity.is_deleted) return null;
   const v = entity.vehicle;
   if (!v || !v.position || !v.trip?.trip_id) return null;
 
-  const routeId = tripToRoute.get(v.trip.trip_id);
+  let routeId = tripToRoute.get(v.trip.trip_id);
+  if (!routeId) {
+    const fallback = v.trip.route_id as RouteId | undefined;
+    if (fallback && allowedRouteCodes?.has(fallback)) {
+      routeId = fallback;
+    }
+  }
   if (!routeId) return null;
 
   const { latitude, longitude, bearing, speed } = v.position;

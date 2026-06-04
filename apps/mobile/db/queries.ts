@@ -518,6 +518,225 @@ export async function getTripStopsWithNames(
   }));
 }
 
+export type TripStopsSource = "exact" | "suffix" | "representative";
+
+export interface ResolvedStaticTripId {
+  tripId: string;
+  source: TripStopsSource;
+}
+
+export interface ResolvedTripStops {
+  stops: TripStopWithName[];
+  source: TripStopsSource;
+  /** The static trip_id whose stop_times we actually loaded. Null when no static trip matched and we returned []. */
+  resolvedTripId: string | null;
+}
+
+/**
+ * Resolves a live `trip_id` (from a realtime VehiclePosition / TripUpdate) to
+ * a `trip_id` that exists in our on-device static GTFS bundle. Necessary
+ * whenever the static feed and the realtime feed drift apart — Prasarana's
+ * static `prasarana.zip` is regenerated infrequently while the realtime feed
+ * rotates a `YYMMDD` date prefix daily, so any direct `WHERE trip_id = ?`
+ * lookup against static silently misses on stale-static days.
+ *
+ * Three-tier resolution, returns the first match:
+ *   1. **exact**     — the live trip_id is already in `trips`. Happy path.
+ *   2. **suffix**    — strip leading `YYMMDD` and find a static trip on the
+ *                      same route whose trip_id ends with the same suffix.
+ *                      Handles "only the date prefix changed" drift.
+ *   3. **representative** — pick a representative trip for the route (most
+ *                      common shape, prefer direction_id=0). Handles "trip
+ *                      patterns themselves rotated upstream" drift. Per-stop
+ *                      schedules will be from a different trip and may be off
+ *                      by a few minutes; live TripUpdates (matched on stop_id)
+ *                      still flow through accurately.
+ *
+ * Returns `null` when even tier 3 finds no trip for the route — i.e. the route
+ * isn't in the static bundle at all (route was just favorited and the bundle
+ * hasn't bootstrapped yet, or upstream genuinely dropped the route).
+ */
+export async function resolveStaticTripId(
+  db: Db,
+  liveTripId: string,
+  routeCode: string,
+): Promise<ResolvedStaticTripId | null> {
+  // Tier 1: exact (primary-key lookup, near-free).
+  const exact = await db.getFirstAsync<{ trip_id: string }>(
+    `SELECT trip_id FROM trips WHERE trip_id = ? LIMIT 1;`,
+    liveTripId,
+  );
+  if (exact?.trip_id) {
+    return { tripId: exact.trip_id, source: "exact" };
+  }
+
+  // Tier 2: strip leading YYMMDD if present and look for any static trip on
+  // this route whose trip_id ends with the same suffix.
+  const suffix = stripTripIdDatePrefix(liveTripId);
+  if (suffix && suffix !== liveTripId) {
+    const row = await db.getFirstAsync<{ trip_id: string }>(
+      `SELECT t.trip_id
+         FROM trips t
+         JOIN routes r ON r.route_id = t.route_id
+        WHERE r.code = ?
+          AND substr(t.trip_id, -length(?)) = ?
+        LIMIT 1;`,
+      routeCode,
+      suffix,
+      suffix,
+    );
+    if (row?.trip_id) {
+      warnDriftOnce(routeCode, "suffix", liveTripId, row.trip_id);
+      return { tripId: row.trip_id, source: "suffix" };
+    }
+  }
+
+  // Tier 3: representative trip for the route.
+  // Mirrors the rep-trip selection in `getStopsForRouteOrdered`: most-common
+  // shape; within ties, prefer direction_id=0; then any trip_id deterministically.
+  const repTrip = await db.getFirstAsync<{ trip_id: string }>(
+    `WITH rep_shape AS (
+       SELECT t.shape_id
+         FROM trips t
+         JOIN routes r ON r.route_id = t.route_id
+        WHERE r.code = ? AND t.shape_id IS NOT NULL
+        GROUP BY t.shape_id
+        ORDER BY COUNT(*) DESC,
+                 MIN(CASE WHEN t.direction_id = 0 THEN 0 ELSE 1 END) ASC,
+                 t.shape_id ASC
+        LIMIT 1
+     )
+     SELECT t.trip_id
+       FROM trips t
+       JOIN routes r ON r.route_id = t.route_id
+       LEFT JOIN rep_shape rs ON 1=1
+      WHERE r.code = ?
+        AND (rs.shape_id IS NULL OR t.shape_id = rs.shape_id)
+      ORDER BY CASE WHEN t.direction_id = 0 THEN 0 ELSE 1 END,
+               t.trip_id
+      LIMIT 1;`,
+    routeCode,
+    routeCode,
+  );
+  if (repTrip?.trip_id) {
+    warnDriftOnce(routeCode, "representative", liveTripId, repTrip.trip_id);
+    return { tripId: repTrip.trip_id, source: "representative" };
+  }
+
+  return null;
+}
+
+/**
+ * Loads stop_times for a live `tripId`, with the same drift-resolution ladder
+ * as `resolveStaticTripId` plus a stop-count guard at each tier — if a tier
+ * resolves to a trip whose `stop_times` happen to be empty (orphan-trip row,
+ * partial bundle import) we fall through to the next tier rather than
+ * showing the user an empty list.
+ *
+ * Caller signals fallback usage to the user via the returned `source`.
+ */
+export async function resolveTripStops(
+  db: Db,
+  liveTripId: string,
+  routeCode: string,
+): Promise<ResolvedTripStops> {
+  const exact = await getTripStopsWithNames(db, liveTripId);
+  if (exact.length > 0) {
+    return { stops: exact, source: "exact", resolvedTripId: liveTripId };
+  }
+
+  // Tier 2: strip leading YYMMDD if present and look for any static trip
+  // (constrained to this route) whose trip_id ends with the same suffix.
+  const suffix = stripTripIdDatePrefix(liveTripId);
+  if (suffix && suffix !== liveTripId) {
+    const row = await db.getFirstAsync<{ trip_id: string }>(
+      `SELECT t.trip_id
+         FROM trips t
+         JOIN routes r ON r.route_id = t.route_id
+        WHERE r.code = ?
+          AND substr(t.trip_id, -length(?)) = ?
+        LIMIT 1;`,
+      routeCode,
+      suffix,
+      suffix,
+    );
+    if (row?.trip_id) {
+      const stops = await getTripStopsWithNames(db, row.trip_id);
+      if (stops.length > 0) {
+        warnDriftOnce(routeCode, "suffix", liveTripId, row.trip_id);
+        return { stops, source: "suffix", resolvedTripId: row.trip_id };
+      }
+    }
+  }
+
+  // Tier 3: representative trip for the route.
+  // Mirrors the rep-trip selection in `getStopsForRouteOrdered`: most-common
+  // shape; within ties, prefer direction_id=0; then any trip_id deterministically.
+  const repTrip = await db.getFirstAsync<{ trip_id: string }>(
+    `WITH rep_shape AS (
+       SELECT t.shape_id
+         FROM trips t
+         JOIN routes r ON r.route_id = t.route_id
+        WHERE r.code = ? AND t.shape_id IS NOT NULL
+        GROUP BY t.shape_id
+        ORDER BY COUNT(*) DESC,
+                 MIN(CASE WHEN t.direction_id = 0 THEN 0 ELSE 1 END) ASC,
+                 t.shape_id ASC
+        LIMIT 1
+     )
+     SELECT t.trip_id
+       FROM trips t
+       JOIN routes r ON r.route_id = t.route_id
+       LEFT JOIN rep_shape rs ON 1=1
+      WHERE r.code = ?
+        AND (rs.shape_id IS NULL OR t.shape_id = rs.shape_id)
+      ORDER BY CASE WHEN t.direction_id = 0 THEN 0 ELSE 1 END,
+               t.trip_id
+      LIMIT 1;`,
+    routeCode,
+    routeCode,
+  );
+  if (repTrip?.trip_id) {
+    const stops = await getTripStopsWithNames(db, repTrip.trip_id);
+    if (stops.length > 0) {
+      warnDriftOnce(routeCode, "representative", liveTripId, repTrip.trip_id);
+      return {
+        stops,
+        source: "representative",
+        resolvedTripId: repTrip.trip_id,
+      };
+    }
+  }
+
+  return { stops: [], source: "exact", resolvedTripId: null };
+}
+
+/** Returns the stable suffix of a Prasarana-style trip_id with a leading
+ *  6-digit date (YYMMDD), or null when the input doesn't match that shape. */
+function stripTripIdDatePrefix(tripId: string): string | null {
+  const m = /^\d{6}(.+)$/.exec(tripId);
+  return m ? m[1] : null;
+}
+
+// Per-route+tier dedup so we log drift at most once per session per route.
+// The static bundle is upstream-controlled and out of our hands; we only need
+// the breadcrumb when investigating an actual report.
+const driftWarned = new Set<string>();
+function warnDriftOnce(
+  routeCode: string,
+  tier: "suffix" | "representative",
+  liveTripId: string,
+  resolvedTripId: string,
+): void {
+  const key = `${routeCode}:${tier}`;
+  if (driftWarned.has(key)) return;
+  driftWarned.add(key);
+  console.warn(
+    `[gtfs-drift] route ${routeCode}: live trip_id "${liveTripId}" not in static bundle; ` +
+      `resolved via ${tier} → "${resolvedTripId}". Static bundle likely stale.`,
+  );
+}
+
 /**
  * Returns every stop_times row for `tripId`, ordered by stop_sequence ascending.
  * Drives schedule-based position interpolation.
