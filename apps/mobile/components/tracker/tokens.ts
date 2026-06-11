@@ -61,3 +61,102 @@ export const trackerSpacing = {
   /** Vertical padding inside each hairline-divided section of CurrentBusCard. */
   cardSectionV: 11,
 } as const;
+
+/**
+ * Approach-trend tint colors. The live card, sparkline, and motion caption all
+ * read from here so a falling/holding/slipping ETA always speaks one color.
+ *  - approaching → green (distance falling, bus making progress)
+ *  - holding     → amber (bus not getting closer — stalled / at a signal)
+ *  - slipping    → red   (distance growing — bus moving away / looping)
+ */
+export const trendColor = {
+  approaching: '#30D158',
+  holding: '#FF9F0A',
+  slipping: '#FF453A',
+  unknown: '#8E8E93',
+} as const;
+
+/** Liquid-glass surface geometry shared by the live card, timetable chips, and islands. */
+export const glassTokens = {
+  /** Corner radius for the primary live card surface. */
+  cardRadius: 22,
+  /** Corner radius for glass chips (timetable, pills). */
+  chipRadius: 16,
+  /** Inner horizontal padding of the live card. */
+  cardPadH: 18,
+  /** Diameter of the refresh ring drawn around the live dot. */
+  ringSize: 22,
+  /** Stroke width of the refresh ring. */
+  ringStroke: 2,
+  /** Fixed height of the approach-trend sparkline Host island. */
+  trendChartHeight: 72,
+  /** Realtime poll cadence (ms) the refresh ring fills against. Mirrors POLL_INTERVAL_MS. */
+  pollIntervalMs: 30_000,
+} as const;
+
+/** Bento-grid tile geometry for the cockpit redesign. */
+export const bentoTokens = {
+  /** Corner radius for each glass tile. */
+  tileRadius: 22,
+  /** Gap between tiles in the grid. */
+  gap: 10,
+  /** Inner padding of a tile. */
+  tilePad: 14,
+  /** Hero approach-ring tick gauge. */
+  ringSize: 132,
+  ringTickCount: 28,
+  /** Span of the tick arc in degrees (gap left at the bottom). */
+  ringArcSpanDeg: 270,
+  ringTickLength: 10,
+  ringTickWidth: 2.5,
+} as const;
+
+// ---------------------------------------------------------------------------
+// Screen status → one color for the aurora glow + approach ring + accents, so
+// the whole Tracker speaks a single mood at a glance.
+// ---------------------------------------------------------------------------
+
+export type ScreenStatusKind =
+  | 'live' // fresh live signal, approaching
+  | 'holding' // stalled / at a signal / stale feed
+  | 'slipping' // bus moving away or passed
+  | 'arrived' // docked at the stop
+  | 'schedule' // timetable-only, no usable live
+  | 'walking' // user is walking to the stop
+  | 'waiting'; // no arrival to show yet
+
+export const statusPalette: Record<ScreenStatusKind, string> = {
+  live: '#30D158',
+  holding: '#FF9F0A',
+  slipping: '#FF453A',
+  arrived: '#30D158',
+  schedule: '#0A84FF',
+  walking: '#0A84FF',
+  waiting: '#8E8E93',
+} as const;
+
+export function resolveScreenStatus(input: {
+  hasArrival: boolean;
+  isLive: boolean;
+  isStale: boolean;
+  /** 'live' | 'schedule' | 'none' from useEta.resolved.mode. */
+  etaMode: string;
+  arrivalStatus: 'en-route' | 'arriving' | 'arrived' | 'passed';
+  /** Trend from useApproachHistory. */
+  trend: 'approaching' | 'holding' | 'slipping' | 'unknown';
+  isWalking: boolean;
+}): ScreenStatusKind {
+  if (input.isWalking) return 'walking';
+  if (!input.hasArrival) return 'waiting';
+  if (input.arrivalStatus === 'arrived') return 'arrived';
+  if (input.arrivalStatus === 'passed') return 'slipping';
+  if (!input.isLive || input.etaMode !== 'live') return 'schedule';
+  if (input.isStale) return 'holding';
+  if (input.trend === 'slipping') return 'slipping';
+  if (input.trend === 'holding') return 'holding';
+  return 'live';
+}
+
+export function statusColor(kind: ScreenStatusKind): string {
+  return statusPalette[kind];
+}

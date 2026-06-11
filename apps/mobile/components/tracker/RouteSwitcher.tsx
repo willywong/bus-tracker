@@ -9,10 +9,11 @@ import {
 import {
   fixedSize,
   foregroundStyle,
+  frame,
   glassEffect,
   padding,
 } from '@expo/ui/swift-ui/modifiers';
-import { Pressable } from 'react-native';
+import { Pressable, StyleSheet } from 'react-native';
 
 interface RouteSwitcherProps {
   selected: string | null;
@@ -36,6 +37,7 @@ export function RouteSwitcher({
         accessibilityLabel="Add your first bus"
         style={({ pressed }) => ({
           alignSelf: 'center',
+          flexShrink: 1,
           opacity: pressed ? 0.85 : 1,
         })}
       >
@@ -44,6 +46,7 @@ export function RouteSwitcher({
             spacing={6}
             modifiers={[
               fixedSize(),
+              frame({ maxWidth: 170 }),
               padding({ horizontal: 14, vertical: 8 }),
               glassEffect({
                 glass: { variant: 'regular', interactive: true },
@@ -68,13 +71,14 @@ export function RouteSwitcher({
   const triggerLabel = selected ?? options[0] ?? 'Bus';
 
   return (
-    <Host matchContents style={{ alignSelf: 'center' }}>
+    <Host matchContents style={styles.host}>
       <Menu
         label={
           <HStack
             spacing={6}
             modifiers={[
               fixedSize(),
+              frame({ maxWidth: 170 }),
               padding({ horizontal: 14, vertical: 8 }),
               glassEffect({
                 glass: { variant: 'regular', interactive: true },
@@ -112,3 +116,10 @@ export function RouteSwitcher({
     </Host>
   );
 }
+
+const styles = StyleSheet.create({
+  host: {
+    alignSelf: 'center',
+    flexShrink: 1,
+  },
+});

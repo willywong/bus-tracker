@@ -243,8 +243,7 @@ function AddBusFlow({
         <Image systemName="magnifyingglass" size={15} color="#8E8E93" />
         <TextField
           placeholder="Route code or stop name"
-          defaultValue=""
-          onValueChange={setQuery}
+          onTextChange={setQuery}
           onFocusChange={(focused) => {
             if (focused) onExpand();
           }}

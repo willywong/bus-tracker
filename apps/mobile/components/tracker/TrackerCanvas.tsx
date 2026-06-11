@@ -14,15 +14,18 @@ interface TrackerCanvasProps {
   /** Pull-to-refresh handler. Omit to disable the gesture. */
   onRefresh?: () => void;
   refreshing?: boolean;
+  /** Render with a transparent background so a backdrop (e.g. AuroraBackdrop) shows through. */
+  transparent?: boolean;
 }
 
 export function TrackerCanvas({
   children,
   onRefresh,
   refreshing = false,
+  transparent = false,
 }: TrackerCanvasProps) {
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, transparent && styles.transparent]}>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={styles.content}
@@ -48,9 +51,13 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: surfaceColor.canvas,
   },
+  transparent: {
+    backgroundColor: 'transparent',
+  },
   content: {
     flexGrow: 1,
     paddingHorizontal: trackerSpacing.screenH,
+    paddingTop: 12,
     paddingBottom: 48,
   },
 });

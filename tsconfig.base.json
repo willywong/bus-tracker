@@ -8,7 +8,6 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "jsx": "react-native",
-    "baseUrl": ".",
     "paths": {
       "@bus-tracker/shared": ["./packages/shared/src/index.ts"],
       "@bus-tracker/shared/*": ["./packages/shared/src/*"]

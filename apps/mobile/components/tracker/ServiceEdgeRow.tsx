@@ -1,8 +1,9 @@
 import { SymbolView } from 'expo-symbols';
 import { PlatformColor, StyleSheet, Text, View } from 'react-native';
 
+import { GlassGuard, isGlassAvailable } from '@/components/GlassGuard';
 import { formatClockHHMM } from './logic';
-import { trackerSpacing } from './tokens';
+import { bentoTokens, surfaceColor } from './tokens';
 
 export type ServiceEdgeVariant = 'before-first' | 'after-last';
 
@@ -43,7 +44,10 @@ export function ServiceEdgeRow({
   }
 
   return (
-    <View style={styles.row}>
+    <GlassGuard
+      glassEffectStyle="regular"
+      style={[styles.row, !isGlassAvailable() && styles.rowFallback]}
+    >
       <SymbolView name="clock.fill" size={22} tintColor="#8E8E93" />
       <View style={styles.textCol}>
         <Text style={styles.title} selectable>
@@ -53,7 +57,7 @@ export function ServiceEdgeRow({
           {caption}
         </Text>
       </View>
-    </View>
+    </GlassGuard>
   );
 }
 
@@ -61,10 +65,18 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: trackerSpacing.rowH,
-    paddingVertical: trackerSpacing.rowV + 2,
-    minHeight: 60,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    minHeight: 64,
     gap: 14,
+    borderRadius: bentoTokens.tileRadius,
+    borderCurve: 'continuous',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: surfaceColor.hairline,
+    overflow: 'hidden',
+  },
+  rowFallback: {
+    backgroundColor: surfaceColor.grouped,
   },
   textCol: {
     flex: 1,

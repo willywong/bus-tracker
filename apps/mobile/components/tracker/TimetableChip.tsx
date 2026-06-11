@@ -1,7 +1,8 @@
 import { PlatformColor, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { LinearTransition } from 'react-native-reanimated';
 
-import { surfaceColor, trackerSpacing } from './tokens';
+import { GlassGuard, isGlassAvailable } from '@/components/GlassGuard';
+import { glassTokens, surfaceColor } from './tokens';
 
 interface TimetableChipProps {
   /** "HH:MM" clock display. */
@@ -9,7 +10,7 @@ interface TimetableChipProps {
   /** Short countdown label ("in 12 min", "in 1h 20m", "now"). Ignored when `anchor`. */
   countdown: string;
   /** If true, this chip is the one matching the live "current" bus. The
-   * countdown is hidden for the anchor — the CurrentBusCard already shows the
+   * countdown is hidden for the anchor — the LiveTrackCard already shows the
    * authoritative live ETA, and the scheduled countdown here would contradict
    * it whenever the bus is running off-schedule. */
   anchor?: boolean;
@@ -26,29 +27,44 @@ export function TimetableChip({
   a11yLabel,
 }: TimetableChipProps) {
   const Container = onPress ? Pressable : View;
+  const glass = isGlassAvailable();
   return (
     <Animated.View layout={LinearTransition.duration(220)} style={styles.wrap}>
       <Container
-        style={[styles.chip, anchor ? styles.chipAnchor : styles.chipDefault]}
         onPress={onPress}
         accessibilityRole={onPress ? 'button' : undefined}
         accessibilityLabel={a11yLabel}
       >
-        <Text
-          style={[styles.clock, anchor && styles.clockAnchor]}
-          selectable
-          allowFontScaling={false}
-          numberOfLines={1}
-          adjustsFontSizeToFit
-          minimumFontScale={0.8}
+        <GlassGuard
+          glassEffectStyle="regular"
+          tintColor={anchor ? '#0A84FF' : undefined}
+          style={[
+            styles.chip,
+            anchor
+              ? glass
+                ? styles.chipAnchorGlass
+                : styles.chipAnchorFallback
+              : glass
+                ? styles.chipDefaultGlass
+                : styles.chipDefaultFallback,
+          ]}
         >
-          {clock}
-        </Text>
-        {!anchor ? (
-          <Text style={styles.countdown} selectable numberOfLines={1}>
-            {countdown}
+          <Text
+            style={[styles.clock, anchor && styles.clockAnchor]}
+            selectable
+            allowFontScaling={false}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.8}
+          >
+            {clock}
           </Text>
-        ) : null}
+          {!anchor ? (
+            <Text style={styles.countdown} selectable numberOfLines={1}>
+              {countdown}
+            </Text>
+          ) : null}
+        </GlassGuard>
       </Container>
     </Animated.View>
   );
@@ -61,19 +77,26 @@ const styles = StyleSheet.create({
   chip: {
     width: 92,
     height: 60,
-    borderRadius: 14,
+    borderRadius: glassTokens.chipRadius,
     borderCurve: 'continuous',
     borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 2,
     paddingHorizontal: 8,
+    overflow: 'hidden',
   },
-  chipDefault: {
+  chipDefaultGlass: {
+    borderColor: surfaceColor.hairline,
+  },
+  chipDefaultFallback: {
     backgroundColor: surfaceColor.grouped,
     borderColor: surfaceColor.hairline,
   },
-  chipAnchor: {
+  chipAnchorGlass: {
+    borderColor: 'rgba(10,132,255,0.45)',
+  },
+  chipAnchorFallback: {
     backgroundColor: surfaceColor.blueTint,
     borderColor: 'rgba(10,132,255,0.35)',
   },
@@ -82,7 +105,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
     color: PlatformColor('label'),
-    letterSpacing: -0.2,
+    letterSpacing: 0,
   },
   clockAnchor: {
     color: '#0A84FF',
@@ -94,6 +117,3 @@ const styles = StyleSheet.create({
     letterSpacing: 0.1,
   },
 });
-
-// Prevent lint from complaining about unused padding
-void trackerSpacing;

@@ -48,7 +48,7 @@ const styles = StyleSheet.create({
     boxShadow: '0 10px 28px rgba(0, 0, 0, 0.28)',
   },
   scrim: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: SCRIM_COLOR,
   },
   inner: {
