@@ -2,6 +2,7 @@ import {
   computeNextPollDelay,
   createOutlierFilter,
   decodeFeed,
+  dropImplausibleFixes,
   entitiesToPositions,
   parseRetryAfterMs,
   type TripRouteMap,
@@ -219,7 +220,10 @@ export function createRealtimeStore(
       const allowed = new Set(
         routeCodes as readonly VehiclePosition["routeId"][],
       );
-      const raw = entitiesToPositions(feed, tripMap, cfg.now(), allowed);
+      const raw = dropImplausibleFixes(
+        entitiesToPositions(feed, tripMap, cfg.now(), allowed),
+        cfg.now(),
+      );
       const filtered = positionFilter(raw);
       // Dedup by vehicleId — keep the latest-observed entry per id. The GTFS-RT
       // fallback chain in entitiesToPositions drops to trip_id when all vehicle

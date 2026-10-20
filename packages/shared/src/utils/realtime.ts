@@ -140,3 +140,26 @@ function toPosition(
     wheelchairAccessible: asWheelchair(v.vehicle?.wheelchair_accessible),
   };
 }
+
+/** A fix older than this no longer says where the bus is. */
+export const MAX_FIX_AGE_MS = 10 * 60_000;
+/** Allow for small clock skew between the bus transponder and the phone. */
+export const MAX_FIX_FUTURE_MS = 2 * 60_000;
+
+/**
+ * Drops fixes whose own timestamp can't be right for "now": in the future
+ * beyond clock skew, or older than {@link MAX_FIX_AGE_MS}. data.gov.my's
+ * Prasarana feeds carry at least one permanent ghost (plate VAL4552,
+ * timestamped 2029, on a Dec 2024 trip) that would otherwise show up as a
+ * live bus; stale fixes left over in the feed are the same problem.
+ */
+export function dropImplausibleFixes<T extends { observedAt: number }>(
+  positions: readonly T[],
+  now: number,
+  maxAgeMs: number = MAX_FIX_AGE_MS,
+  maxFutureMs: number = MAX_FIX_FUTURE_MS,
+): T[] {
+  return positions.filter(
+    (p) => p.observedAt <= now + maxFutureMs && now - p.observedAt <= maxAgeMs,
+  );
+}

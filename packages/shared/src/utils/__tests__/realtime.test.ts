@@ -156,3 +156,20 @@ test("entitiesToPositions drops NaN lat/lng (sanity)", () => {
   );
   assert.equal(positions.length, 0);
 });
+
+test("dropImplausibleFixes removes future-dated ghosts and stale fixes", async () => {
+  const { dropImplausibleFixes, MAX_FIX_AGE_MS } = await import("../realtime.js");
+  const now = Date.UTC(2026, 9, 20, 10, 0, 0);
+  const fixes = [
+    { id: "fresh", observedAt: now - 45_000 },
+    { id: "skew", observedAt: now + 60_000 },
+    // VAL4552 in the live feed: timestamp 1886017556 s (2029-10-07).
+    { id: "ghost-2029", observedAt: 1_886_017_556_000 },
+    { id: "stale", observedAt: now - MAX_FIX_AGE_MS - 1 },
+    { id: "edge", observedAt: now - MAX_FIX_AGE_MS },
+  ];
+  assert.deepEqual(
+    dropImplausibleFixes(fixes, now).map((f) => f.id),
+    ["fresh", "skew", "edge"],
+  );
+});

@@ -1,6 +1,7 @@
 import {
   computeEta,
   decodeFeed,
+  dropImplausibleFixes,
   entitiesToPositions,
   shouldNotify,
   type LatLng,
@@ -151,7 +152,10 @@ export class LeaveNowService {
     const tripMap = buildTripMap(bundle);
     const feedBytes = await this.deps.fetchRealtime();
     const feed = decodeFeed(feedBytes);
-    const positions = entitiesToPositions(feed, tripMap, now);
+    const positions = dropImplausibleFixes(
+      entitiesToPositions(feed, tripMap, now),
+      now,
+    );
     const intermediateCandidates = otherStops(bundle, stop);
 
     const eta = computeEta({

@@ -25,7 +25,13 @@ export {
   type DecodedVehicle,
   type DecodedPosition,
 } from "./protobuf.js";
-export { entitiesToPositions, type TripRouteMap } from "./realtime.js";
+export {
+  MAX_FIX_AGE_MS,
+  MAX_FIX_FUTURE_MS,
+  dropImplausibleFixes,
+  entitiesToPositions,
+  type TripRouteMap,
+} from "./realtime.js";
 export {
   createOutlierFilter,
   haversineMeters,

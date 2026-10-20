@@ -68,10 +68,14 @@ function syntheticBundle(): T816Bundle {
   };
 }
 
+const NOON_MS = new Date("2026-04-21T12:00:00+08:00").getTime();
+/** A fix 10 s old at NOON_MS — fixes outside "now" are dropped as implausible. */
+const FIX_TIMESTAMP_S = Math.floor(NOON_MS / 1000) - 10;
+
 function encodeFeed(vehicleLat: number, vehicleLng: number): Uint8Array {
   const FeedMessage = getFeedMessage();
   const payload = {
-    header: { gtfs_realtime_version: "2.0", timestamp: 1_700_000_010 },
+    header: { gtfs_realtime_version: "2.0", timestamp: FIX_TIMESTAMP_S },
     entity: [
       {
         id: "v1",
@@ -83,7 +87,7 @@ function encodeFeed(vehicleLat: number, vehicleLng: number): Uint8Array {
             longitude: vehicleLng,
             bearing: 0,
           },
-          timestamp: 1_700_000_010,
+          timestamp: FIX_TIMESTAMP_S,
         },
       },
     ],
@@ -143,7 +147,7 @@ async function makeHarness(opts: {
   return { kv, service, sent };
 }
 
-const NOON_MS = new Date("2026-04-21T12:00:00+08:00").getTime();
+
 
 test("leave-now: sends push when live ETA within threshold outside quiet hours", async () => {
   const { service, sent, kv } = await makeHarness({
