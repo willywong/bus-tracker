@@ -20,6 +20,7 @@ import { openDb } from '@/db/database';
 import { getRoutes, getStopsForRouteOrdered, type StopRow } from '@/db/queries';
 import { useSettings } from '@/hooks/useSettings';
 import { useStaticGtfs } from '@/hooks/useStaticGtfs';
+import { color } from '@/theme/design';
 
 interface RouteMeta {
   longName: string | null;
@@ -83,21 +84,17 @@ export function FavoritesSection({
   if (settings.favoritedRoutes.length === 0) {
     return (
       <Section
-        header={<Text>Favorite buses</Text>}
-        footer={
-          <Text>
-            Add favorites from the bus dropdown on Tracker to see them here.
-          </Text>
-        }
+        header={<Text>Your routes</Text>}
+        footer={<Text>Routes you add appear here and in the route menu on the map.</Text>}
       >
         <HStack spacing={12} modifiers={[padding({ vertical: 6 })]}>
-          <Image systemName="bus.fill" size={18} color="#8E8E93" />
+          <Image systemName="bus.fill" size={18} color={color.secondaryLabel} />
           <Text
             modifiers={[
               foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
             ]}
           >
-            No favorites yet
+            No routes yet
           </Text>
         </HStack>
       </Section>
@@ -106,12 +103,8 @@ export function FavoritesSection({
 
   return (
     <Section
-      header={<Text>Favorite buses</Text>}
-      footer={
-        <Text>
-          Tap a favorite to change its boarding stop, reorder, or remove it.
-        </Text>
-      }
+      header={<Text>Your routes</Text>}
+      footer={<Text>Tap a route to change where you board, reorder, or remove it.</Text>}
     >
       {settings.favoritedRoutes.map((code, index) => (
         <FavoriteRow
@@ -193,7 +186,7 @@ function FavoriteRow({
     <Menu
       label={
         <HStack spacing={12} modifiers={[padding({ vertical: 6 })]}>
-          <Image systemName="bus.fill" size={18} color="#8E8E93" />
+          <Image systemName="bus.fill" size={18} color={color.accent} />
           <VStack spacing={2} alignment="leading">
             <HStack spacing={8}>
               <Text>{code}</Text>
@@ -213,7 +206,11 @@ function FavoriteRow({
             <Text
               modifiers={[
                 font({ size: 13 }),
-                ...(bootstrapFailed ? [foregroundStyle('#FF9F0A')] : []),
+                foregroundStyle(
+                  bootstrapFailed
+                    ? color.warning
+                    : { type: 'hierarchical', style: 'secondary' },
+                ),
               ]}
             >
               {stopLabel}

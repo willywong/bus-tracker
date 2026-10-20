@@ -1,5 +1,4 @@
 import {
-  Circle,
   HStack,
   Image,
   ProgressView,
@@ -9,13 +8,15 @@ import {
 } from '@expo/ui/swift-ui';
 import {
   background,
+  contentTransition,
   font,
   foregroundStyle,
-  frame,
   labelsHidden,
+  lineLimit,
   monospacedDigit,
   padding,
   shapes,
+  tint,
 } from '@expo/ui/swift-ui/modifiers';
 import {
   createLiveActivity,
@@ -48,6 +49,12 @@ export type BusActivityProps = {
 };
 
 /**
+ * Live Activity / Dynamic Island, mirroring the in-app trip sheet:
+ *   compact  — route badge | "4 min"
+ *   minimal  — the live minutes, not a logo
+ *   expanded / Lock Screen — stop, big countdown, trip progress line, and a
+ *   status line that says live vs scheduled with a glyph and a word.
+ *
  * IMPORTANT: Everything inside this function (helpers, constants, literals)
  * must be inlined. The babel-preset-expo 'widget' plugin serializes this
  * function to a string at build time, and only identifiers available on the
@@ -60,571 +67,255 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props) => {
   'widget';
 
   // --- Palette (inlined — no module refs) --------------------------------
-  const liveBlue = '#0A84FF';
-  const scheduleCyan = '#64D2FF';
-  const staleGray = '#8E8E93';
-  const lateAmber = '#FF9F0A';
-  const onTimeGreen = '#34C759';
-  const earlyBlue = '#0A84FF';
-  const pinRed = '#FF453A';
+  const accent = '#0A84FF';
+  const live = '#30D158';
+  const warning = '#FF9F0A';
 
   const isPreService = props.kind === 'pre-service';
-
-  const accent = isPreService
-    ? scheduleCyan
-    : props.source === 'live'
-      ? liveBlue
-      : scheduleCyan;
-  const statusAccent = props.isStale ? staleGray : accent;
-  const statusLabel = isPreService
-    ? 'FIRST BUS'
-    : props.isStale
-      ? 'STALE'
-      : props.source === 'live'
-        ? 'LIVE'
-        : 'SCHEDULED';
-  const statusIcon = isPreService
-    ? 'sunrise.fill'
-    : props.isStale
-      ? 'exclamationmark.circle.fill'
-      : props.source === 'live'
-        ? 'dot.radiowaves.left.and.right'
-        : 'clock.fill';
-
-  // --- Derived values ----------------------------------------------------
-  const minutes =
-    props.minutesToStop != null ? Math.max(0, props.minutesToStop) : 0;
-  const minutesCompact = `${minutes}m`;
-
-  // Distance formatter (inline — matches components/tracker/logic.ts)
-  let distanceText: string | null = null;
-  const dm = props.distanceToStopMeters;
-  if (dm != null && Number.isFinite(dm) && dm >= 0) {
-    distanceText =
-      dm < 1000
-        ? `${Math.round(dm / 10) * 10} m`
-        : `${(dm / 1000).toFixed(1)} km`;
-  }
-
-  // Delay chip formatting
-  let delayText: string | null = null;
-  let delayHex: string | null = null;
-  if (!isPreService && props.delayTone != null && props.delayMinutes != null) {
-    const m = Math.abs(Math.round(props.delayMinutes));
-    if (props.delayTone === 'on-time') {
-      delayText = 'On time';
-      delayHex = onTimeGreen;
-    } else if (props.delayTone === 'late') {
-      delayText = `${m} min late`;
-      delayHex = lateAmber;
-    } else {
-      delayText = `${m} min early`;
-      delayHex = earlyBlue;
-    }
-  }
-
-  // Arrival-status pill (inline). Only when a live trip is ticking — not in
-  // pre-service. Arrived = green, Arriving = amber.
   const isArrived = !isPreService && props.arrivalStatus === 'arrived';
   const isArriving = !isPreService && props.arrivalStatus === 'arriving';
-  let arrivalPillText: string | null = null;
-  let arrivalPillHex: string | null = null;
-  let arrivalPillIcon:
-    | 'checkmark.circle.fill'
-    | 'figure.walk'
-    | null = null;
-  if (isArrived) {
-    arrivalPillText = 'ARRIVED';
-    arrivalPillHex = onTimeGreen;
-    arrivalPillIcon = 'checkmark.circle.fill';
-  } else if (isArriving) {
-    arrivalPillText = 'ARRIVING';
-    arrivalPillHex = lateAmber;
-    arrivalPillIcon = 'figure.walk';
-  }
+  const isLive = !isPreService && props.source === 'live' && !props.isStale;
 
-  // Arrival clock — KL timezone, 12-hour.
-  const arrivalDate = new Date(props.arrivalEpochMs);
-  const arrivalClock = arrivalDate.toLocaleTimeString('en-US', {
-    hour: 'numeric',
+  const minutes =
+    props.minutesToStop != null ? Math.max(0, Math.floor(props.minutesToStop)) : null;
+
+  const arrivalClock = new Date(props.arrivalEpochMs).toLocaleTimeString('en-GB', {
+    hour: '2-digit',
     minute: '2-digit',
-    hour12: true,
+    hour12: false,
     timeZone: 'Asia/Kuala_Lumpur',
   });
 
-  // Progress bar range — trip start → arrival.
-  const tripStartDate = new Date(props.tripStartEpochMs);
+  // The one number. Words for the moments that matter; clock time before
+  // service or an hour+ out; never "0 min" and never seconds.
+  let heroText: string;
+  let heroUnit: string | null = null;
+  if (isPreService) {
+    heroText = arrivalClock;
+  } else if (isArrived) {
+    heroText = 'Here';
+  } else if (isArriving) {
+    heroText = 'Arriving';
+  } else if (minutes == null) {
+    heroText = arrivalClock;
+  } else if (minutes < 1) {
+    heroText = 'Due';
+  } else if (minutes >= 60) {
+    heroText = arrivalClock;
+  } else {
+    heroText = String(minutes);
+    heroUnit = 'min';
+  }
+  const compactText = heroUnit ? `${heroText} ${heroUnit}` : heroText;
+  const minimalText = heroUnit ? heroText : isArrived || isArriving ? '•' : heroText;
 
-  // Inline pill helper — Capsule-shaped background + icon + small label.
-  // Must be defined inside the 'widget' function; module-scope would be
-  // undefined at widget runtime.
-  const pill = (
-    systemImage: 'dot.radiowaves.left.and.right' | 'clock.fill' | 'exclamationmark.circle.fill' | 'bus.fill' | 'location.fill' | 'clock.arrow.circlepath' | 'sunrise.fill' | 'checkmark.circle.fill' | 'figure.walk',
-    title: string,
-    tint: string,
-  ) => (
-    <HStack
-      spacing={3}
+  // Status line: glyph + word, colour only reinforces.
+  let statusIcon:
+    | 'dot.radiowaves.left.and.right'
+    | 'clock'
+    | 'clock.badge.exclamationmark'
+    | 'sunrise'
+    | 'checkmark.circle.fill' = 'clock';
+  let statusColor: string | null = null;
+  let statusText = 'Scheduled';
+  if (isPreService) {
+    statusIcon = 'sunrise';
+    statusText = 'First bus of the day';
+  } else if (isArrived) {
+    statusIcon = 'checkmark.circle.fill';
+    statusColor = live;
+    statusText = 'At your stop';
+  } else if (props.isStale && props.source === 'live') {
+    statusIcon = 'clock.badge.exclamationmark';
+    statusColor = warning;
+    statusText = 'Updating…';
+  } else if (isLive) {
+    statusIcon = 'dot.radiowaves.left.and.right';
+    statusColor = live;
+    statusText = 'Live';
+    const dm = props.distanceToStopMeters;
+    if (dm != null && Number.isFinite(dm) && dm >= 0) {
+      statusText += dm < 1000 ? ` · ${Math.round(dm / 50) * 50} m away` : ` · ${(dm / 1000).toFixed(1)} km away`;
+    }
+    if (props.delayTone === 'late' && props.delayMinutes != null) {
+      statusText += ` · ${Math.abs(Math.round(props.delayMinutes))} min late`;
+    }
+  }
+  const trailingText = isPreService || heroUnit == null ? '' : `Arrives ${arrivalClock}`;
+
+  const tripStartDate = new Date(props.tripStartEpochMs);
+  const arrivalDate = new Date(props.arrivalEpochMs);
+
+  const badge = (size: number) => (
+    <Text
       modifiers={[
-        padding({ horizontal: 7, vertical: 3 }),
-        background(`${tint}26`, shapes.capsule()),
+        font({ size, weight: 'bold', design: 'rounded' }),
+        foregroundStyle('#FFFFFF'),
+        padding({ horizontal: size * 0.5, vertical: size * 0.2 }),
+        background(accent, shapes.capsule()),
+        lineLimit(1),
       ]}
     >
+      {props.routeCode}
+    </Text>
+  );
+
+  const statusRow = (size: number) => (
+    <HStack spacing={5}>
       <Image
-        systemName={systemImage}
-        size={9}
-        modifiers={[foregroundStyle(tint)]}
+        systemName={statusIcon}
+        size={size}
+        modifiers={[
+          foregroundStyle(
+            statusColor ?? { type: 'hierarchical', style: 'secondary' },
+          ),
+        ]}
       />
       <Text
         modifiers={[
-          font({ size: 11, weight: 'semibold', design: 'rounded' }),
-          foregroundStyle(tint),
+          font({ size: size + 2, weight: isLive ? 'semibold' : 'medium' }),
+          foregroundStyle(
+            isLive ? { type: 'hierarchical', style: 'primary' } : { type: 'hierarchical', style: 'secondary' },
+          ),
+          lineLimit(1),
         ]}
       >
-        {title}
+        {statusText}
       </Text>
+      <Spacer />
+      {trailingText ? (
+        <Text
+          modifiers={[
+            font({ size: size + 1, weight: 'medium' }),
+            monospacedDigit(),
+            foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
+          ]}
+        >
+          {trailingText}
+        </Text>
+      ) : null}
     </HStack>
   );
 
-  // --- Compact: idle notch ----------------------------------------------
-  // Tiny status dot + bus glyph, live/cyan/gray-stale coded.
-  const compactLeading = (
-    <HStack spacing={4} modifiers={[padding({ leading: 4 })]}>
-      <Circle
-        modifiers={[
-          frame({ width: 5, height: 5 }),
-          foregroundStyle(statusAccent),
-        ]}
+  const progressRow = isPreService ? null : (
+    <HStack spacing={8}>
+      <Image systemName="bus.fill" size={13} modifiers={[foregroundStyle(accent)]} />
+      <ProgressView
+        timerInterval={{ lower: tripStartDate, upper: arrivalDate }}
+        countsDown={false}
+        modifiers={[labelsHidden(), tint(accent)]}
       />
-      <Image
-        systemName={isPreService ? 'sunrise.fill' : 'bus.fill'}
-        size={15}
-        modifiers={[foregroundStyle(accent)]}
-      />
+      <Image systemName="mappin.circle.fill" size={15} modifiers={[foregroundStyle(accent)]} />
     </HStack>
   );
-  const compactTrailingText = isPreService
-    ? arrivalClock
-    : isArrived
-      ? 'Here'
-      : isArriving
-        ? 'Soon'
-        : minutesCompact;
-  const compactTrailingColor = isArrived
-    ? onTimeGreen
-    : isArriving
-      ? lateAmber
-      : accent;
-  const compactTrailing = (
-    <HStack spacing={0} modifiers={[padding({ trailing: 4 })]}>
+
+  const hero = (size: number) => (
+    <HStack spacing={4} alignment="firstTextBaseline">
       <Text
         modifiers={[
-          font({ size: 15, weight: 'semibold', design: 'rounded' }),
+          font({ size: heroUnit ? size : size * 0.7, weight: isPreService || !isLive ? 'semibold' : 'bold', design: 'rounded' }),
           monospacedDigit(),
-          foregroundStyle(compactTrailingColor),
+          contentTransition('numericText', { countsDown: true }),
+          foregroundStyle(isArrived ? live : { type: 'hierarchical', style: 'primary' }),
+          lineLimit(1),
         ]}
       >
-        {compactTrailingText}
+        {heroText}
       </Text>
+      {heroUnit ? (
+        <Text
+          modifiers={[
+            font({ size: size * 0.42, weight: 'semibold', design: 'rounded' }),
+            foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
+          ]}
+        >
+          {heroUnit}
+        </Text>
+      ) : null}
     </HStack>
   );
 
-  // --- Minimal: focus-compact ------------------------------------------
+  // --- Dynamic Island ------------------------------------------------------
+  const compactLeading = (
+    <HStack modifiers={[padding({ leading: 2 })]}>{badge(12)}</HStack>
+  );
+  const compactTrailing = (
+    <Text
+      modifiers={[
+        font({ size: 15, weight: 'semibold', design: 'rounded' }),
+        monospacedDigit(),
+        contentTransition('numericText', { countsDown: true }),
+        foregroundStyle(isArrived ? live : accent),
+        padding({ trailing: 2 }),
+        lineLimit(1),
+      ]}
+    >
+      {compactText}
+    </Text>
+  );
   const minimal = (
-    <Image
-      systemName={isPreService ? 'sunrise.fill' : 'bus.fill'}
-      size={14}
-      modifiers={[foregroundStyle(accent)]}
-    />
+    <Text
+      modifiers={[
+        font({ size: 15, weight: 'bold', design: 'rounded' }),
+        monospacedDigit(),
+        foregroundStyle(isArrived ? live : accent),
+        lineLimit(1),
+      ]}
+    >
+      {minimalText}
+    </Text>
   );
 
-  // --- Expanded: long-press island -------------------------------------
-  const expandedBottom = isPreService ? (
-    <VStack spacing={10} modifiers={[padding({ horizontal: 12, top: 2, bottom: 6 })]}>
-      <HStack spacing={6} alignment="firstTextBaseline">
+  const expandedBottom = (
+    <VStack spacing={10} modifiers={[padding({ horizontal: 12, top: 2, bottom: 8 })]}>
+      <HStack spacing={8} alignment="center">
+        {badge(13)}
         <Text
           modifiers={[
-            font({ size: 20, weight: 'semibold', design: 'rounded' }),
-          ]}
-        >
-          First bus at
-        </Text>
-        <Text
-          modifiers={[
-            font({ size: 20, weight: 'semibold', design: 'rounded' }),
-            monospacedDigit(),
-            foregroundStyle(accent),
-          ]}
-        >
-          {arrivalClock}
-        </Text>
-        <Spacer />
-      </HStack>
-
-      <HStack spacing={6}>
-        <Text
-          modifiers={[
-            font({ size: 11, weight: 'semibold', design: 'rounded' }),
-            foregroundStyle(accent),
-          ]}
-        >
-          {props.routeCode}
-        </Text>
-        <Spacer />
-        <Text
-          modifiers={[
-            font({ size: 11, weight: 'regular' }),
-            foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
+            font({ size: 15, weight: 'semibold' }),
+            lineLimit(1),
           ]}
         >
           {props.stopName}
         </Text>
-      </HStack>
-
-      <HStack spacing={6}>
-        {pill(statusIcon, statusLabel, statusAccent)}
         <Spacer />
+        {hero(30)}
       </HStack>
-    </VStack>
-  ) : (
-    <VStack spacing={10} modifiers={[padding({ horizontal: 12, top: 2, bottom: 6 })]}>
-      {isArrived ? (
-        <HStack spacing={6} alignment="firstTextBaseline">
-          <Text
-            modifiers={[
-              font({ size: 20, weight: 'semibold', design: 'rounded' }),
-              foregroundStyle(onTimeGreen),
-            ]}
-          >
-            Arrived
-          </Text>
-          <Text
-            modifiers={[
-              font({ size: 14, weight: 'regular', design: 'rounded' }),
-              foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
-            ]}
-          >
-            at your stop
-          </Text>
-          <Spacer />
-        </HStack>
-      ) : isArriving ? (
-        <HStack spacing={6} alignment="firstTextBaseline">
-          <Text
-            modifiers={[
-              font({ size: 20, weight: 'semibold', design: 'rounded' }),
-              foregroundStyle(lateAmber),
-            ]}
-          >
-            Arriving…
-          </Text>
-          <Text
-            modifiers={[
-              font({ size: 14, weight: 'regular', design: 'rounded' }),
-              foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
-            ]}
-          >
-            {`~ ${arrivalClock}`}
-          </Text>
-          <Spacer />
-        </HStack>
-      ) : (
-        <HStack spacing={6} alignment="firstTextBaseline">
-          <Text
-            modifiers={[
-              font({ size: 20, weight: 'semibold', design: 'rounded' }),
-            ]}
-          >
-            Arrives in
-          </Text>
-          <Text
-            modifiers={[
-              font({ size: 20, weight: 'semibold', design: 'rounded' }),
-              monospacedDigit(),
-              foregroundStyle(accent),
-            ]}
-          >
-            {`${minutes} min`}
-          </Text>
-          <Text
-            modifiers={[
-              font({ size: 14, weight: 'regular', design: 'rounded' }),
-              foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
-            ]}
-          >
-            {`at ${arrivalClock}`}
-          </Text>
-          <Spacer />
-        </HStack>
-      )}
-
-      <VStack spacing={4}>
-        <HStack spacing={8}>
-          <Image
-            systemName="bus.fill"
-            size={13}
-            modifiers={[foregroundStyle(accent)]}
-          />
-          <ProgressView
-            timerInterval={{ lower: tripStartDate, upper: arrivalDate }}
-            countsDown={false}
-            modifiers={[labelsHidden()]}
-          />
-          <Image
-            systemName="signpost.right.fill"
-            size={15}
-            modifiers={[foregroundStyle(pinRed)]}
-          />
-        </HStack>
-        <HStack spacing={6}>
-          <Text
-            modifiers={[
-              font({ size: 11, weight: 'semibold', design: 'rounded' }),
-              foregroundStyle(accent),
-            ]}
-          >
-            {props.routeCode}
-          </Text>
-          <Spacer />
-          <Text
-            modifiers={[
-              font({ size: 11, weight: 'regular' }),
-              foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
-            ]}
-          >
-            {props.stopName}
-          </Text>
-        </HStack>
-      </VStack>
-
-      <HStack spacing={6}>
-        {pill(statusIcon, statusLabel, statusAccent)}
-        {arrivalPillText && arrivalPillHex && arrivalPillIcon
-          ? pill(arrivalPillIcon, arrivalPillText, arrivalPillHex)
-          : null}
-        {props.busPlate ? pill('bus.fill', props.busPlate, staleGray) : null}
-        {distanceText ? pill('location.fill', distanceText, staleGray) : null}
-        {delayText && delayHex
-          ? pill('clock.arrow.circlepath', delayText, delayHex)
-          : null}
-        <Spacer />
-      </HStack>
+      {progressRow}
+      {statusRow(12)}
     </VStack>
   );
 
-  // --- Banner: lock screen / notification center ------------------------
-  const banner = isPreService ? (
-    <VStack
-      spacing={10}
-      modifiers={[padding({ horizontal: 16, vertical: 14 })]}
-    >
-      <HStack spacing={6}>
-        <Image
-          systemName={statusIcon}
-          size={11}
-          modifiers={[foregroundStyle(statusAccent)]}
-        />
-        <Text
-          modifiers={[
-            font({ size: 12, weight: 'semibold', design: 'rounded' }),
-            foregroundStyle(statusAccent),
-          ]}
-        >
-          {`${statusLabel} · ${props.routeCode}`}
-        </Text>
-        <Spacer />
-      </HStack>
-
-      <HStack spacing={6} alignment="firstTextBaseline">
-        <Text
-          modifiers={[
-            font({ size: 40, weight: 'bold', design: 'rounded' }),
-            monospacedDigit(),
-            foregroundStyle(accent),
-          ]}
-        >
-          {arrivalClock}
-        </Text>
-        <Spacer />
-      </HStack>
-
-      <HStack spacing={6}>
-        <Text
-          modifiers={[
-            font({ size: 13, weight: 'regular' }),
-            foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
-          ]}
-        >
-          First bus of the day
-        </Text>
-        <Spacer />
-        <Text
-          modifiers={[
-            font({ size: 13, weight: 'regular' }),
-            foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
-          ]}
-        >
-          {props.stopName}
-        </Text>
-      </HStack>
-    </VStack>
-  ) : (
-    <VStack
-      spacing={8}
-      modifiers={[padding({ horizontal: 16, vertical: 12 })]}
-    >
-      <HStack spacing={6}>
-        <Image
-          systemName={statusIcon}
-          size={11}
-          modifiers={[foregroundStyle(statusAccent)]}
-        />
-        <Text
-          modifiers={[
-            font({ size: 12, weight: 'semibold', design: 'rounded' }),
-            foregroundStyle(statusAccent),
-          ]}
-        >
-          {`${statusLabel} · ${props.routeCode}`}
-        </Text>
-        <Spacer />
-        <Text
-          modifiers={[
-            font({ size: 13, weight: 'regular' }),
-            foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
-          ]}
-        >
-          {`Arrives ${arrivalClock}`}
-        </Text>
-      </HStack>
-
-      {isArrived ? (
-        <HStack
-          spacing={8}
-          alignment="firstTextBaseline"
-          modifiers={[padding({ top: 2, bottom: 2 })]}
-        >
+  // --- Lock Screen ---------------------------------------------------------
+  const banner = (
+    <VStack spacing={10} modifiers={[padding({ horizontal: 16, vertical: 14 })]}>
+      <HStack spacing={8} alignment="center">
+        {badge(14)}
+        <VStack spacing={0} alignment="leading">
           <Text
             modifiers={[
-              font({ size: 34, weight: 'bold', design: 'rounded' }),
-              foregroundStyle(onTimeGreen),
-            ]}
-          >
-            Arrived
-          </Text>
-          <Text
-            modifiers={[
-              font({ size: 15, weight: 'medium', design: 'rounded' }),
-              foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
-            ]}
-          >
-            at your stop
-          </Text>
-          <Spacer />
-          <Text
-            modifiers={[
-              font({ size: 13, weight: 'regular' }),
-              foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
+              font({ size: 15, weight: 'semibold' }),
+              lineLimit(1),
             ]}
           >
             {props.stopName}
           </Text>
-        </HStack>
-      ) : isArriving ? (
-        <HStack
-          spacing={8}
-          alignment="firstTextBaseline"
-          modifiers={[padding({ top: 2, bottom: 2 })]}
-        >
-          <Text
-            modifiers={[
-              font({ size: 34, weight: 'bold', design: 'rounded' }),
-              foregroundStyle(lateAmber),
-            ]}
-          >
-            Arriving…
-          </Text>
-          <Text
-            modifiers={[
-              font({ size: 15, weight: 'medium', design: 'rounded' }),
-              foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
-            ]}
-          >
-            near your stop
-          </Text>
-          <Spacer />
-          <Text
-            modifiers={[
-              font({ size: 13, weight: 'regular' }),
-              foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
-            ]}
-          >
-            {props.stopName}
-          </Text>
-        </HStack>
-      ) : (
-        <HStack
-          spacing={6}
-          alignment="firstTextBaseline"
-          modifiers={[padding({ top: 2, bottom: 2 })]}
-        >
-          <Text
-            modifiers={[
-              font({ size: 44, weight: 'bold', design: 'rounded' }),
-              monospacedDigit(),
-            ]}
-          >
-            {String(minutes)}
-          </Text>
-          <Text
-            modifiers={[
-              font({ size: 17, weight: 'medium', design: 'rounded' }),
-              foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
-            ]}
-          >
-            min away
-          </Text>
-          <Spacer />
-          <Text
-            modifiers={[
-              font({ size: 13, weight: 'regular' }),
-              foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
-            ]}
-          >
-            {props.stopName}
-          </Text>
-        </HStack>
-      )}
-
-      <HStack spacing={10}>
-        <Image
-          systemName="bus.fill"
-          size={14}
-          modifiers={[foregroundStyle(accent)]}
-        />
-        <ProgressView
-          timerInterval={{ lower: tripStartDate, upper: arrivalDate }}
-          countsDown={false}
-          modifiers={[labelsHidden()]}
-        />
-        <Image
-          systemName="signpost.right.fill"
-          size={17}
-          modifiers={[foregroundStyle(pinRed)]}
-        />
-      </HStack>
-
-      <HStack spacing={6}>
-        {arrivalPillText && arrivalPillHex && arrivalPillIcon
-          ? pill(arrivalPillIcon, arrivalPillText, arrivalPillHex)
-          : null}
-        {props.busPlate ? pill('bus.fill', props.busPlate, staleGray) : null}
-        {distanceText ? pill('location.fill', distanceText, staleGray) : null}
-        {delayText && delayHex
-          ? pill('clock.arrow.circlepath', delayText, delayHex)
-          : null}
+          {isPreService ? (
+            <Text
+              modifiers={[
+                font({ size: 13 }),
+                foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
+              ]}
+            >
+              First bus
+            </Text>
+          ) : null}
+        </VStack>
         <Spacer />
+        {hero(40)}
       </HStack>
+      {progressRow}
+      {statusRow(12)}
     </VStack>
   );
 

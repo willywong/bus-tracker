@@ -7,18 +7,14 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "test": "tsx --test \"components/**/__tests__/*.test.ts\""
   },
   "dependencies": {
     "@bus-tracker/shared": "workspace:*",
     "@expo/dom-webview": "~58.0.2",
     "@expo/metro-runtime": "~58.0.14",
     "@expo/ui": "58.0.21",
-    "@expo/vector-icons": "^15.0.3",
-    "@turf/distance": "^7.3.5",
-    "@turf/helpers": "^7.3.5",
-    "@turf/nearest-point-on-line": "^7.3.5",
-    "date-fns": "^4.1.0",
     "expo": "~58.0.16",
     "expo-background-fetch": "~58.0.11",
     "expo-blur": "~58.0.5",
@@ -56,8 +52,8 @@
   "devDependencies": {
     "@types/react": "~19.3.0",
     "prettier-plugin-tailwindcss": "^0.7.2",
-    "react-test-renderer": "19.3.0",
     "tailwindcss": "^3.4.19",
+    "tsx": "^4.22.4",
     "typescript": "~6.0.3"
   },
   "private": true

@@ -2,6 +2,8 @@
 
 This folder contains the step-by-step build plan for the T816 BusBuddy iOS app. Each subfolder is one phase; each markdown file inside is one executable task.
 
+> **Superseded UI.** Phases 04–07 describe the original tab-based UI (Tracker / Map / Settings tabs, glass cards, HERE traffic ETAs). The app now uses a single map screen with a persistent Liquid Glass trip sheet and GTFS-only ETAs — see [`docs/design/README.md`](../design/README.md) for the current design and the research behind it.
+
 ## Reading order
 1. `00-foundation/` — monorepo, Expo SDK 54, @expo/ui, EAS simulator build
 2. `01-static-data/` — GTFS static ingest, parse, SQLite cache

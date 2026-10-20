@@ -1,11 +1,20 @@
 {
-  "extends": ["expo/tsconfig.base", "../../tsconfig.base.json"],
+  "extends": [
+    "expo/tsconfig.base",
+    "../../tsconfig.base.json"
+  ],
   "compilerOptions": {
     "strict": true,
     "paths": {
-      "@/*": ["./*"],
-      "@bus-tracker/shared": ["../../packages/shared/src/index.ts"],
-      "@bus-tracker/shared/*": ["../../packages/shared/src/*"]
+      "@/*": [
+        "./*"
+      ],
+      "@bus-tracker/shared": [
+        "../../packages/shared/src/index.ts"
+      ],
+      "@bus-tracker/shared/*": [
+        "../../packages/shared/src/*"
+      ]
     }
   },
   "include": [
@@ -14,5 +23,9 @@
     ".expo/types/**/*.ts",
     "expo-env.d.ts",
     "nativewind-env.d.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "**/__tests__/**"
   ]
 }

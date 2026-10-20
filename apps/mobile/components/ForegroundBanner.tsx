@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { GlassGuard } from '@/components/GlassGuard';
+import { color, type } from '@/theme/design';
 
 export interface BannerContent {
   title: string;
@@ -41,7 +42,7 @@ export function ForegroundBanner({
       style={[styles.overlay, { paddingTop: insets.top + 8 }]}
     >
       <GlassGuard style={styles.card}>
-        <View style={styles.content}>
+        <View style={styles.content} accessibilityRole="alert">
           <Text style={styles.title} numberOfLines={1}>
             {banner.title}
           </Text>
@@ -67,20 +68,22 @@ const styles = StyleSheet.create({
   card: {
     width: '100%',
     maxWidth: 480,
-    borderRadius: 20,
-    overflow: 'hidden',
+    borderRadius: 24,
+    borderCurve: 'continuous',
   },
   content: {
     paddingVertical: 12,
     paddingHorizontal: 16,
   },
   title: {
+    ...type.headline,
     fontSize: 15,
-    fontWeight: '600',
+    color: color.label,
     marginBottom: 2,
   },
   body: {
+    ...type.status,
     fontSize: 14,
-    opacity: 0.75,
+    color: color.secondaryLabel,
   },
 });

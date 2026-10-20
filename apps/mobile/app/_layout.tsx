@@ -1,23 +1,16 @@
-import FontAwesome from '@expo/vector-icons/FontAwesome';
-import { useFonts } from 'expo-font';
-import {
-  DarkTheme,
-  DefaultTheme,
-  ThemeProvider,
-  usePathname,
-} from 'expo-router';
-import { NativeTabs } from 'expo-router/unstable-native-tabs';
+import { DarkTheme, DefaultTheme, ThemeProvider, Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
-import { DynamicColorIOS, Platform, useColorScheme } from 'react-native';
+import { useColorScheme } from 'react-native';
 import 'react-native-reanimated';
 import '../global.css';
 
 import { PushRegistrationProvider } from '@/hooks/PushRegistrationContext';
 import { useRealtimeRoutes } from '@/hooks/useRealtimeRoutes';
-import { SettingsProvider } from '@/hooks/useSettings';
+import { SettingsProvider, useSettings } from '@/hooks/useSettings';
 import { StaticGtfsProvider } from '@/hooks/useStaticGtfs';
-import { tokens } from '@/theme/tokens';
+import { TripProvider } from '@/state/TripContext';
+import { SHEET_DETENTS, SHEET_INITIAL_DETENT } from '@/theme/design';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -26,73 +19,81 @@ export {
 
 SplashScreen.preventAutoHideAsync();
 
+/**
+ * One map-backed screen with a persistent trip sheet (Apple Maps / Find My
+ * pattern) — no tab bar. See docs/design/README.md §2.
+ */
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
-  const pathname = usePathname();
-  const [loaded, error] = useFonts({
-    SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
-    ...FontAwesome.font,
-  });
-
-  useEffect(() => {
-    if (error) throw error;
-  }, [error]);
-
-  useEffect(() => {
-    if (loaded) {
-      SplashScreen.hideAsync();
-    }
-  }, [loaded]);
-
-  if (!loaded) {
-    return null;
-  }
-
-  const tabTintColor =
-    Platform.OS === 'ios'
-      ? DynamicColorIOS({ light: tokens.color.accent, dark: '#64D2FF' })
-      : tokens.color.accent;
-  const hidesTabsForToolbarDemo =
-    pathname === '/liquid-glass-demo/stack-toolbar';
-
   return (
     <SettingsProvider>
       <StaticGtfsProvider>
         <RealtimeRoutesRunner />
         <PushRegistrationProvider>
-          <ThemeProvider
-            value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}
-          >
-            <NativeTabs
-              hidden={hidesTabsForToolbarDemo}
-              tintColor={tabTintColor}
-              labelStyle={{ fontSize: 11 }}
-              minimizeBehavior="onScrollDown"
-            >
-              <NativeTabs.Trigger name="(tracker)">
-                <NativeTabs.Trigger.Icon sf="tram.fill" md="directions_bus" />
-                <NativeTabs.Trigger.Label>Tracker</NativeTabs.Trigger.Label>
-              </NativeTabs.Trigger>
-              <NativeTabs.Trigger name="map">
-                <NativeTabs.Trigger.Icon sf="map.fill" md="map" />
-                <NativeTabs.Trigger.Label>Map</NativeTabs.Trigger.Label>
-              </NativeTabs.Trigger>
-              <NativeTabs.Trigger name="liquid-glass-demo">
-                <NativeTabs.Trigger.Icon
-                  sf="sparkles"
-                  md="auto_awesome"
-                />
-                <NativeTabs.Trigger.Label>Glass</NativeTabs.Trigger.Label>
-              </NativeTabs.Trigger>
-              <NativeTabs.Trigger name="settings">
-                <NativeTabs.Trigger.Icon sf="gear" md="settings" />
-                <NativeTabs.Trigger.Label>Settings</NativeTabs.Trigger.Label>
-              </NativeTabs.Trigger>
-            </NativeTabs>
-          </ThemeProvider>
+          <TripProvider>
+            <AppStack />
+          </TripProvider>
         </PushRegistrationProvider>
       </StaticGtfsProvider>
     </SettingsProvider>
+  );
+}
+
+function AppStack() {
+  const colorScheme = useColorScheme();
+  const { ready } = useSettings();
+
+  useEffect(() => {
+    if (ready) void SplashScreen.hideAsync();
+  }, [ready]);
+
+  return (
+    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen
+          name="index"
+          options={{ headerShown: true, headerTransparent: true, title: '' }}
+        />
+        <Stack.Screen
+          name="trip"
+          options={{
+            presentation: 'formSheet',
+            sheetAllowedDetents: [...SHEET_DETENTS],
+            sheetInitialDetentIndex: SHEET_INITIAL_DETENT,
+            // The map stays interactive behind the peek and glance detents.
+            sheetLargestUndimmedDetentIndex: 1,
+            sheetGrabberVisible: true,
+            // Persistent: the sheet resizes but can't be swiped away.
+            gestureEnabled: false,
+            // Transparent content lets iOS 26 draw the Liquid Glass sheet.
+            contentStyle: { backgroundColor: 'transparent' },
+          }}
+        />
+        <Stack.Screen
+          name="add-route"
+          options={{
+            presentation: 'formSheet',
+            sheetAllowedDetents: [1],
+            sheetGrabberVisible: true,
+            headerShown: true,
+            headerTransparent: true,
+            title: 'Add Route',
+            contentStyle: { backgroundColor: 'transparent' },
+          }}
+        />
+        <Stack.Screen
+          name="settings"
+          options={{
+            presentation: 'formSheet',
+            sheetAllowedDetents: [1],
+            sheetGrabberVisible: true,
+            headerShown: true,
+            headerTransparent: true,
+            title: 'Settings',
+            contentStyle: { backgroundColor: 'transparent' },
+          }}
+        />
+      </Stack>
+    </ThemeProvider>
   );
 }
 
