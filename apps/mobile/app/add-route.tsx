@@ -2,6 +2,7 @@ import type { GtfsStop, RouteSearchHit, T816Bundle } from '@bus-tracker/shared';
 import { orderStopsByTrip, pickRepresentativeTrip } from '@bus-tracker/shared';
 import {
   Button,
+  ContentUnavailableView,
   HStack,
   Host,
   Image,
@@ -15,6 +16,7 @@ import {
 import {
   background,
   buttonStyle,
+  controlSize,
   disabled,
   font,
   foregroundStyle,
@@ -29,9 +31,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { Alert, useColorScheme } from 'react-native';
 
 import { formatStopName } from '@/components/map/format';
-import { useRouteSearch } from '@/hooks/useRouteSearch';
+import { useRouteSearch, type RouteSearchApi } from '@/hooks/useRouteSearch';
 import { MAX_FAVORITES, useSettings } from '@/hooks/useSettings';
-import { fetchRouteBundle } from '@/services/routeBundle';
+import { getRouteBundle } from '@/services/gtfsFeed';
 import { color, hex, pick } from '@/theme/design';
 import { haptics } from '@/utils/haptics';
 
@@ -109,8 +111,8 @@ export default function AddRouteScreen() {
       ) : null}
 
       <Host style={{ flex: 1 }} useViewportSizeMeasurement>
-        <List modifiers={[listStyle('insetGrouped'), scrollContentBackground('hidden')]}>
-          {route ? (
+        {route ? (
+          <List modifiers={[listStyle('insetGrouped'), scrollContentBackground('hidden')]}>
             <StopSections
               code={route.code}
               matchedStopIds={route.matched}
@@ -118,88 +120,106 @@ export default function AddRouteScreen() {
               accent={accent}
               onPick={pickStop}
             />
-          ) : (
-            <SearchSections
-              query={query.trim()}
-              results={search.results}
-              loading={search.loading}
-              error={search.error}
-              favorites={favorites}
-              accent={accent}
-              onPick={(hit) =>
-                setRoute({
-                  code: hit.code,
-                  longName: hit.long_name,
-                  matched: hit.matchedStops?.map((s) => s.stop_id),
-                })
-              }
-            />
-          )}
-        </List>
+          </List>
+        ) : (
+          <SearchContent
+            query={query.trim()}
+            search={search}
+            favorites={favorites}
+            accent={accent}
+            onPick={(hit) =>
+              setRoute({
+                code: hit.code,
+                longName: hit.long_name,
+                matched: hit.matchedStops?.map((s) => s.stop_id),
+              })
+            }
+          />
+        )}
       </Host>
     </>
   );
 }
 
-function SearchSections({
+/**
+ * Search states. Empty / error / no-match use the system empty-state view —
+ * the only text field on screen is the native search bar.
+ */
+function SearchContent({
   query,
-  results,
-  loading,
-  error,
+  search,
   favorites,
   accent,
   onPick,
 }: {
   query: string;
-  results: RouteSearchHit[];
-  loading: boolean;
-  error: Error | null;
+  search: RouteSearchApi;
   favorites: ReadonlySet<string>;
   accent: string;
   onPick: (hit: RouteSearchHit) => void;
 }) {
   if (query.length === 0) {
     return (
-      <Section footer={<Text>Try a route like T816, or a stop such as “Phileo Damansara”.</Text>}>
-        <HStack spacing={12} modifiers={[padding({ vertical: 6 })]}>
-          <Image systemName="magnifyingglass" size={17} color={color.secondaryLabel} />
-          <Text modifiers={[foregroundStyle({ type: 'hierarchical', style: 'secondary' })]}>
-            Search Rapid KL feeder routes
-          </Text>
-        </HStack>
-      </Section>
+      <ContentUnavailableView
+        systemImage="bus.fill"
+        title="Find your route"
+        description="Type a route number like T816, or the name of the stop you board at."
+      />
     );
   }
-  if (error) {
+  if (search.error) {
     return (
-      <Section>
+      <VStack spacing={16}>
+        <ContentUnavailableView
+          systemImage="wifi.exclamationmark"
+          title="Can’t load routes"
+          description="BusBuddy couldn’t download the Rapid KL timetable from data.gov.my. Check your connection, then try again."
+        />
+        <Button
+          label="Try Again"
+          onPress={search.retry}
+          modifiers={[buttonStyle('bordered'), controlSize('large')]}
+        />
+      </VStack>
+    );
+  }
+  if (search.loading && search.results.length === 0) {
+    return (
+      <VStack spacing={10}>
+        <ProgressView />
         <Text modifiers={[foregroundStyle({ type: 'hierarchical', style: 'secondary' })]}>
-          Couldn’t search right now. Check your connection and try again.
+          Loading Rapid KL routes…
         </Text>
-      </Section>
+      </VStack>
     );
   }
-  if (loading && results.length === 0) {
+  if (search.results.length === 0) {
     return (
-      <Section>
-        <HStack spacing={10}>
-          <ProgressView />
-          <Text modifiers={[foregroundStyle({ type: 'hierarchical', style: 'secondary' })]}>
-            Searching…
-          </Text>
-        </HStack>
-      </Section>
+      <ContentUnavailableView
+        systemImage="magnifyingglass"
+        title={`No results for “${query}”`}
+        description="Check the route number, or try part of a stop name."
+      />
     );
   }
-  if (results.length === 0) {
-    return (
-      <Section>
-        <Text modifiers={[foregroundStyle({ type: 'hierarchical', style: 'secondary' })]}>
-          {`No routes match “${query}”.`}
-        </Text>
-      </Section>
-    );
-  }
+  return (
+    <List modifiers={[listStyle('insetGrouped'), scrollContentBackground('hidden')]}>
+      <SearchResults results={search.results} favorites={favorites} accent={accent} onPick={onPick} />
+    </List>
+  );
+}
+
+function SearchResults({
+  results,
+  favorites,
+  accent,
+  onPick,
+}: {
+  results: RouteSearchHit[];
+  favorites: ReadonlySet<string>;
+  accent: string;
+  onPick: (hit: RouteSearchHit) => void;
+}) {
   return (
     <Section title="Routes">
       {results.map((hit) => {
@@ -283,7 +303,7 @@ function StopSections({
     const ctrl = new AbortController();
     setBundle(null);
     setError(null);
-    fetchRouteBundle(code, ctrl.signal)
+    getRouteBundle(code, ctrl.signal)
       .then(setBundle)
       .catch((err: unknown) => {
         if (err instanceof Error && err.name === 'AbortError') return;
@@ -306,7 +326,7 @@ function StopSections({
     return (
       <Section>
         <Text modifiers={[foregroundStyle({ type: 'hierarchical', style: 'secondary' })]}>
-          Couldn’t load stops for this route. Check your connection and try again.
+          Couldn’t load stops from data.gov.my. Check your connection and try again.
         </Text>
       </Section>
     );

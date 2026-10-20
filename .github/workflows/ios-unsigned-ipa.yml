@@ -12,9 +12,11 @@ on:
   workflow_dispatch:
     inputs:
       api_base_url:
-        description: Backend URL baked into the app (EXPO_PUBLIC_API_BASE_URL)
-        required: true
-        default: https://bus-tracker-api.vercel.app
+        description: >-
+          Optional BusBuddy backend URL (only for server-sent push alerts).
+          Leave empty — the app reads GTFS straight from data.gov.my.
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -131,7 +133,7 @@ jobs:
           echo "name=$IPA" >> "$GITHUB_OUTPUT"
           ls -lh "$RUNNER_TEMP/ipa/$IPA"
           echo "### Built \`$IPA\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "Unsigned — re-sign before installing. API: \`$EXPO_PUBLIC_API_BASE_URL\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Unsigned — re-sign before installing. Backend: \`${EXPO_PUBLIC_API_BASE_URL:-none (GTFS direct from data.gov.my)}\`" >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
         with:

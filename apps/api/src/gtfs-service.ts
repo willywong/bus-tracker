@@ -4,8 +4,8 @@ import {
   parseGtfsZip,
   type ParsedGtfs,
   type T816Bundle,
+  TRAFFIC_SIGNALS,
 } from "@bus-tracker/shared";
-import { TRAFFIC_SIGNALS } from "./data/traffic-signals.js";
 
 const UPSTREAM_URL =
   "https://api.data.gov.my/gtfs-static/prasarana?category=rapid-bus-mrtfeeder";

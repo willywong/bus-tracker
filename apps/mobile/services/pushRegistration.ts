@@ -22,6 +22,7 @@ export interface RegisterPushResult {
 export async function registerPushToken(
   args: RegisterPushArgs,
 ): Promise<RegisterPushResult> {
+  if (!API_BASE_URL) throw new Error('No BusBuddy backend configured');
   const res = await fetch(`${API_BASE_URL}/api/push/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

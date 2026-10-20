@@ -8,14 +8,14 @@ import {
   type VehiclePosition,
 } from "@bus-tracker/shared";
 import { AppState, type AppStateStatus } from "react-native";
-import { API_BASE_URL } from "@/config/env";
 import { openDb } from "@/db/database";
 import { getTripToRouteMap } from "@/db/queries";
+import { GTFS_VEHICLE_POSITIONS_URL } from "@/services/gtfsFeed";
 
-// Polls our backend proxy (Edge + Upstash KV, 30s TTL) rather than the
-// provider feed directly, so N clients collapse to ~2 req/min upstream and
-// stay inside the provider's 4 req/min rate limit.
-const ENDPOINT = `${API_BASE_URL}/api/gtfs-realtime`;
+// Polls data.gov.my's GTFS Realtime vehicle-position feed directly. One poll
+// per 30 s matches the feed's update cadence; 429 / Retry-After responses
+// back off via computeNextPollDelay.
+const ENDPOINT = GTFS_VEHICLE_POSITIONS_URL;
 const POLL_INTERVAL_MS = 30_000;
 
 export interface RealtimeSnapshot {

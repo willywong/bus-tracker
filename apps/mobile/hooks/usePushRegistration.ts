@@ -5,6 +5,7 @@ import * as SecureStore from 'expo-secure-store';
 import { useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 
+import { API_BASE_URL } from '@/config/env';
 import { registerPushToken } from '@/services/pushRegistration';
 import { useSettings, type SettingsApi } from '@/hooks/useSettings';
 
@@ -90,7 +91,9 @@ export function usePushRegistration(): PushRegistrationState {
     let cancelled = false;
 
     (async () => {
-      if (!Device.isDevice) {
+      // Push only reaches the phone through the optional backend — without
+      // one, don't ask for notification permission at all.
+      if (!API_BASE_URL || !Device.isDevice) {
         if (!cancelled) {
           setState((s) => ({ ...s, permission: 'unavailable' }));
         }

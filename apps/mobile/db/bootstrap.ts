@@ -1,6 +1,6 @@
 import type { T816Bundle } from "@bus-tracker/shared";
 import { gtfsTimeToSeconds } from "@bus-tracker/shared";
-import { API_BASE_URL } from "@/config/env";
+import { getRouteBundle, RouteNotFoundError } from "@/services/gtfsFeed";
 import { openDb, type Db } from "./database";
 import { META_KEYS } from "./schema";
 
@@ -11,12 +11,7 @@ function isDev(): boolean {
   return g.__DEV__ ?? false;
 }
 
-export class RouteNotFoundError extends Error {
-  constructor(code: string) {
-    super(`route ${code} not found`);
-    this.name = "RouteNotFoundError";
-  }
-}
+export { RouteNotFoundError };
 
 export async function getMeta(db: Db, key: string): Promise<string | null> {
   const row = await db.getFirstAsync<{ value: string }>(
@@ -351,22 +346,12 @@ export async function mergeBundle(
   });
 }
 
-export async function fetchRouteBundle(
+/** One route's static data, cut from the data.gov.my GTFS feed on device. */
+export function fetchRouteBundle(
   code: string,
-  baseUrl: string = API_BASE_URL,
   signal?: AbortSignal,
 ): Promise<T816Bundle> {
-  const res = await fetch(
-    `${baseUrl}/api/route/${encodeURIComponent(code)}`,
-    { signal },
-  );
-  if (res.status === 404) throw new RouteNotFoundError(code);
-  if (!res.ok) {
-    const e = new Error(`route ${code}: ${res.status}`);
-    (e as Error & { status?: number }).status = res.status;
-    throw e;
-  }
-  return (await res.json()) as T816Bundle;
+  return getRouteBundle(code, signal);
 }
 
 export interface BootstrapResult {
@@ -402,7 +387,7 @@ export async function bootstrapStaticGtfs(opts: {
     const db = opts.db ?? (await openDb());
     const now = (opts.now ?? Date.now)();
     const fetchBundle =
-      opts.fetchBundle ?? ((code, signal) => fetchRouteBundle(code, undefined, signal));
+      opts.fetchBundle ?? ((code, signal) => fetchRouteBundle(code, signal));
 
     if (opts.routes.length === 0) {
       const gen = await getMeta(db, META_KEYS.generatedAt);

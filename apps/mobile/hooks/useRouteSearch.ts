@@ -1,6 +1,6 @@
 import type { RouteSearchHit } from "@bus-tracker/shared";
-import { useEffect, useRef, useState } from "react";
-import { searchRoutes } from "@/services/routesSearch";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { searchFeedRoutes } from "@/services/gtfsFeed";
 
 const DEBOUNCE_MS = 250;
 
@@ -10,14 +10,21 @@ export interface RouteSearchState {
   error: Error | null;
 }
 
+export interface RouteSearchApi extends RouteSearchState {
+  /** Re-run the current query (after an error). */
+  retry: () => void;
+}
+
 const EMPTY: RouteSearchState = {
   results: [],
   loading: false,
   error: null,
 };
 
-export function useRouteSearch(query: string): RouteSearchState {
+export function useRouteSearch(query: string): RouteSearchApi {
   const [state, setState] = useState<RouteSearchState>(EMPTY);
+  const [attempt, setAttempt] = useState(0);
+  const retry = useCallback(() => setAttempt((n) => n + 1), []);
   const trimmed = query.trim();
 
   // Guard state updates against an unmounted consumer.
@@ -41,7 +48,7 @@ export function useRouteSearch(query: string): RouteSearchState {
     const timer = setTimeout(() => {
       (async () => {
         try {
-          const hits = await searchRoutes(trimmed, ctrl.signal);
+          const hits = await searchFeedRoutes(trimmed, ctrl.signal);
           if (ctrl.signal.aborted || !mountedRef.current) return;
           setState({ results: hits, loading: false, error: null });
         } catch (err) {
@@ -60,7 +67,7 @@ export function useRouteSearch(query: string): RouteSearchState {
       clearTimeout(timer);
       ctrl.abort();
     };
-  }, [trimmed]);
+  }, [trimmed, attempt]);
 
-  return state;
+  return { ...state, retry };
 }

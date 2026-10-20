@@ -32,6 +32,15 @@ three research reports kept alongside it in [`research/`](./research):
    SwiftUI text and buttons via `@expo/ui`, and SF Symbols. Hand-rolled chrome is
    avoided.
 
+### Data: straight from data.gov.my
+
+The app needs no BusBuddy server. `services/gtfsFeed.ts` downloads the
+official GTFS static feed (`rapid-bus-mrtfeeder`) once per session and parses
+it on the device. Route search, the stop picker and the per-route SQLite
+bootstrap all read from that. Live positions are polled from the GTFS
+Realtime vehicle-position feed every 30 s. `apps/api` is now optional and
+only needed for server-sent push alerts (`EXPO_PUBLIC_API_BASE_URL`).
+
 ## 2. Information architecture
 
 ```
