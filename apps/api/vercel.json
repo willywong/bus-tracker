@@ -1,5 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "git": {
+    "deploymentEnabled": false
+  },
   "buildCommand": "cd ../.. && pnpm --filter=@bus-tracker/shared build",
   "crons": [
     { "path": "/api/cron/refresh-gtfs", "schedule": "0 20 * * *" }
