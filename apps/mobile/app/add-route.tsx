@@ -89,7 +89,11 @@ export default function AddRouteScreen() {
       <Stack.Screen options={{ title }} />
       {route && !changeMode && !params.code ? (
         <Stack.Toolbar placement="left">
-          <Stack.Toolbar.Button icon="chevron.left" accessibilityLabel="Back" onPress={() => setRoute(null)} />
+          <Stack.Toolbar.Button icon="chevron.left" accessibilityLabel="Back" onPress={() => {
+              setQuery('');
+              setRoute(null);
+            }}
+          />
         </Stack.Toolbar>
       ) : null}
       <Stack.Toolbar placement="right">

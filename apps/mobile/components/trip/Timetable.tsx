@@ -38,7 +38,7 @@ export function Timetable({
           const isLive = d.tripId === liveTripId;
           return (
             <View
-              key={d.tripId}
+              key={`${d.tripId}-${d.serviceDayMidnightUtcMs}`}
               style={styles.cell}
               accessible
               accessibilityLabel={`${formatClock(d.departureEpochMs)}${isLive ? ', live bus' : ''}${i === 0 ? ', next' : ''}`}

@@ -1,6 +1,7 @@
 import { Stack, useRootNavigationState, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Easing,
   Share,
   StyleSheet,
   useColorScheme,
@@ -16,8 +17,9 @@ import { useLocationPermission } from '@/hooks/useLocationPermission';
 import { useScheduledBusPosition } from '@/hooks/useScheduledBusPosition';
 import { useSettings, type MapType } from '@/hooks/useSettings';
 import { useTrip } from '@/state/TripContext';
-import { hex, motion, pick, SHEET_DETENTS } from '@/theme/design';
+import { hex, pick, SHEET_DETENTS } from '@/theme/design';
 import { haptics } from '@/utils/haptics';
+import type { VehiclePosition } from '@bus-tracker/shared';
 
 /** Greater Kuala Lumpur — where the map opens before a route is chosen. */
 const KL_REGION = {
@@ -29,7 +31,12 @@ const KL_REGION = {
 
 /** Markers glide between fixes over one poll interval. */
 const POSITION_TWEEN_MS = 30_000;
+/** Half-size (degrees, ~280 m) of the box framed around a lone point. */
+const SINGLE_POINT_SPAN = 0.0025;
 const EMPTY_STOPS = new Map<string, { lat: number; lng: number }>();
+const NO_POSITIONS: VehiclePosition[] = [];
+
+type Coord = { latitude: number; longitude: number };
 
 /**
  * The map canvas. Everything about the trip lives in the persistent sheet
@@ -56,18 +63,17 @@ export default function MapScreen() {
     [route],
   );
 
-  // Sheet-aware camera padding: keep the trip visible above the sheet. At the
-  // large detent the map is hidden anyway, so keep the glance framing.
+  // The sheet covers the bottom of the map. At the large detent the map is
+  // hidden anyway, so keep the glance framing.
   const sheetHeight = windowHeight * SHEET_DETENTS[Math.min(trip.detent, 1)];
-  const topChrome = insets.top + 56;
-  const mapPadding = useMemo(
-    () => ({ top: topChrome, right: 0, bottom: sheetHeight, left: 0 }),
-    [topChrome, sheetHeight],
+  const legalLabelInsets = useMemo(
+    () => ({ top: 0, right: 16, bottom: sheetHeight + 8, left: 16 }),
+    [sheetHeight],
   );
 
   // --- Live bus markers ----------------------------------------------------
-  const positions = trip.bus.positions;
-  const regions = useAnimatedRegions(positions, trip.routeCode);
+  const positions = route ? trip.bus.positions : NO_POSITIONS;
+  const markers = useGlidingMarkers(positions, trip.routeCode);
   const primaryVehicleId =
     trip.eta.primaryArrival?.kind === 'live'
       ? trip.eta.primaryArrival.live?.vehicleId ?? null
@@ -86,77 +92,100 @@ export default function MapScreen() {
   });
 
   // --- Camera ---------------------------------------------------------------
+  // Frames your stop + the bus heading to it in the area left visible above
+  // the sheet and below the toolbar.
   const frameTrip = useCallback(
-    (animated = true) => {
+    (animated: boolean) => {
       const map = mapRef.current;
       if (!map || !route) return;
-      const coords: { latitude: number; longitude: number }[] = [];
+      const coords: Coord[] = [];
       if (route.userStop) {
         coords.push({
           latitude: route.userStop.stop_lat,
           longitude: route.userStop.stop_lon,
         });
       }
-      const busCoord = primaryPosition
-        ? { latitude: primaryPosition.lat, longitude: primaryPosition.lng }
-        : ghost.coord
-          ? { latitude: ghost.coord.lat, longitude: ghost.coord.lng }
-          : null;
-      if (busCoord) coords.push(busCoord);
-
-      if (coords.length === 1) {
-        map.animateCamera(
-          { center: coords[0], altitude: 1600, heading: 0, pitch: 0 },
-          { duration: animated ? motion.reposition : 0 },
-        );
-        return;
+      if (primaryPosition) {
+        coords.push({ latitude: primaryPosition.lat, longitude: primaryPosition.lng });
+      } else if (ghost.coord) {
+        coords.push({ latitude: ghost.coord.lat, longitude: ghost.coord.lng });
       }
-      const target = coords.length > 0 ? coords : polyline;
+
+      let target: Coord[] = coords.length > 0 ? coords : polyline;
+      if (target.length === 1) {
+        const c = target[0];
+        target = [
+          { latitude: c.latitude - SINGLE_POINT_SPAN, longitude: c.longitude - SINGLE_POINT_SPAN },
+          { latitude: c.latitude + SINGLE_POINT_SPAN, longitude: c.longitude + SINGLE_POINT_SPAN },
+        ];
+      }
       if (target.length === 0) return;
       map.fitToCoordinates(target, {
-        edgePadding: { top: 64, right: 56, bottom: 64, left: 56 },
+        edgePadding: {
+          top: insets.top + 80,
+          right: 56,
+          bottom: sheetHeight + 32,
+          left: 56,
+        },
         animated,
       });
     },
-    [route, primaryPosition, ghost.coord, polyline],
+    [route, primaryPosition, ghost.coord, polyline, insets.top, sheetHeight],
   );
+  const frameRef = useRef(frameTrip);
+  frameRef.current = frameTrip;
 
-  // Frame once per route/stop as soon as geometry arrives, then again when
-  // the bus we're tracking changes or the sheet changes height — unless the
-  // user has taken over the camera.
+  // Frame once per route/stop as soon as geometry arrives. The key is only
+  // recorded when the frame actually runs, so a re-render that cancels the
+  // pending timer just reschedules it.
   const framedKey = useRef<string | null>(null);
   useEffect(() => {
     if (!route) return;
     const key = `${route.routeCode}|${route.stopId}`;
     if (framedKey.current === key) return;
-    framedKey.current = key;
-    setUserPanned(false);
-    // Let the map apply the new padding first.
-    const t = setTimeout(() => frameTrip(false), 50);
+    const t = setTimeout(() => {
+      framedKey.current = key;
+      setUserPanned(false);
+      frameRef.current(false);
+    }, 50);
     return () => clearTimeout(t);
-  }, [route, frameTrip]);
+  }, [route]);
 
+  // Re-frame when the tracked bus or the sheet height changes — unless the
+  // user has taken over the camera.
   useEffect(() => {
     if (userPanned) return;
-    frameTrip(true);
-    // Intentionally keyed on identity changes, not every position tick.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    frameRef.current(true);
   }, [primaryVehicleId, trip.detent, userPanned]);
 
   const recenter = useCallback(() => {
     haptics.light();
     setUserPanned(false);
-    frameTrip(true);
-  }, [frameTrip]);
+    frameRef.current(true);
+  }, []);
 
-  const share = useCallback(() => {
+  // Stable callback over the latest model so the toolbar doesn't rebuild on
+  // every countdown tick.
+  const shareRef = useRef<() => void>(() => {});
+  shareRef.current = () => {
     const m = trip.model;
     if (!m.compact || !trip.stopName) return;
     const how = m.source === 'scheduled' ? 'scheduled' : 'live estimate';
     void Share.share({
       message: `${trip.routeCode} to ${trip.stopName}: ${m.compact} (${how}).`,
     });
-  }, [trip.model, trip.routeCode, trip.stopName]);
+  };
+  const share = useCallback(() => shareRef.current(), []);
+
+  const selectRoute = useCallback(
+    (code: string) => {
+      if (code === settings.preferredRouteCode) return;
+      haptics.selection();
+      settings.setPreferredRouteCode(code);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [settings.preferredRouteCode, settings.setPreferredRouteCode],
+  );
 
   const mapType: MapType = settings.mapType;
   const casing = pick(hex.casing, scheme);
@@ -166,9 +195,15 @@ export default function MapScreen() {
   return (
     <View style={styles.root}>
       <MapToolbar
-        onRecenter={recenter}
+        favorites={settings.favoritedRoutes}
+        activeRoute={settings.preferredRouteCode}
+        mapType={mapType}
         userPanned={userPanned}
-        onShare={trip.model.compact ? share : undefined}
+        canShare={trip.model.compact != null}
+        onRecenter={recenter}
+        onShare={share}
+        onSelectRoute={selectRoute}
+        onSetMapType={settings.setMapType}
       />
       <MapView
         ref={mapRef}
@@ -181,7 +216,7 @@ export default function MapScreen() {
         showsCompass={false}
         showsMyLocationButton={false}
         pitchEnabled={false}
-        mapPadding={mapPadding}
+        legalLabelInsets={legalLabelInsets}
         onPanDrag={() => {
           if (!userPanned) setUserPanned(true);
         }}
@@ -206,60 +241,62 @@ export default function MapScreen() {
             background={pick(hex.stopFill, scheme)}
           />
         ) : null}
-        {route
-          ? positions.map((p) => {
-              const region = regions.get(p.vehicleId);
-              if (!region) return null;
-              const primary = p.vehicleId === primaryVehicleId;
-              const passed = trip.eta.passedVehicleIds.has(p.vehicleId);
-              return (
-                <BusMarker
-                  key={p.vehicleId}
-                  region={region}
-                  accent={accent}
-                  primary={primary}
-                  passed={passed}
-                  bearing={p.bearing}
-                  accessibilityLabel={
-                    primary
-                      ? `Your bus, ${trip.model.compact ?? ''}, live`
-                      : passed
-                        ? 'Bus that has passed your stop'
-                        : 'Another bus on this route, live'
-                  }
-                />
-              );
-            })
-          : null}
+        {markers.map(({ vehicle, region }) => {
+          const primary = vehicle.vehicleId === primaryVehicleId;
+          const passed = trip.eta.passedVehicleIds.has(vehicle.vehicleId);
+          return (
+            <BusMarker
+              key={vehicle.vehicleId}
+              region={region}
+              accent={accent}
+              primary={primary}
+              passed={passed}
+              bearing={vehicle.bearing}
+              accessibilityLabel={
+                primary
+                  ? `Your bus, ${trip.model.compact ?? ''}, live`
+                  : passed
+                    ? 'Bus that has passed your stop'
+                    : 'Another bus on this route, live'
+              }
+            />
+          );
+        })}
       </MapView>
     </View>
   );
 }
 
+interface MapToolbarProps {
+  favorites: string[];
+  activeRoute: string | null;
+  mapType: MapType;
+  userPanned: boolean;
+  canShare: boolean;
+  onRecenter: () => void;
+  onShare: () => void;
+  onSelectRoute: (code: string) => void;
+  onSetMapType: (t: MapType) => void;
+}
+
 /**
  * Native glass toolbar over the map: the route switcher (leading) and the
  * recenter / more cluster (trailing). System-drawn, so it gets Liquid Glass,
- * grouping, sizing and accessibility for free.
+ * grouping, sizing and accessibility for free. Memoised on primitive props so
+ * live data ticks don't rebuild the header items (and close an open menu).
  */
-function MapToolbar({
-  onRecenter,
+const MapToolbar = memo(function MapToolbar({
+  favorites,
+  activeRoute,
+  mapType,
   userPanned,
+  canShare,
+  onRecenter,
   onShare,
-}: {
-  onRecenter: () => void;
-  userPanned: boolean;
-  onShare?: () => void;
-}) {
+  onSelectRoute,
+  onSetMapType,
+}: MapToolbarProps) {
   const router = useRouter();
-  const settings = useSettings();
-  const trip = useTrip();
-  const favorites = settings.favoritedRoutes;
-
-  const selectRoute = (code: string) => {
-    if (code === settings.preferredRouteCode) return;
-    haptics.selection();
-    settings.setPreferredRouteCode(code);
-  };
 
   return (
     <>
@@ -269,17 +306,15 @@ function MapToolbar({
             <Stack.Toolbar.Label>Add Route</Stack.Toolbar.Label>
           </Stack.Toolbar.Button>
         ) : (
-          <Stack.Toolbar.Menu
-            accessibilityLabel={`Route ${trip.routeCode}. Switch route`}
-          >
-            <Stack.Toolbar.Label>{trip.routeCode || 'Route'}</Stack.Toolbar.Label>
+          <Stack.Toolbar.Menu accessibilityLabel={`Route ${activeRoute ?? ''}. Switch route`}>
+            <Stack.Toolbar.Label>{activeRoute ?? 'Route'}</Stack.Toolbar.Label>
             <Stack.Toolbar.Menu inline title="Your routes">
               {favorites.map((code) => (
                 <Stack.Toolbar.MenuAction
                   key={code}
                   icon="bus.fill"
-                  isOn={code === settings.preferredRouteCode}
-                  onPress={() => selectRoute(code)}
+                  isOn={code === activeRoute}
+                  onPress={() => onSelectRoute(code)}
                 >
                   {code}
                 </Stack.Toolbar.MenuAction>
@@ -304,20 +339,20 @@ function MapToolbar({
           <Stack.Toolbar.Menu inline title="Map">
             <Stack.Toolbar.MenuAction
               icon="map"
-              isOn={settings.mapType === 'standard'}
-              onPress={() => settings.setMapType('standard')}
+              isOn={mapType === 'standard'}
+              onPress={() => onSetMapType('standard')}
             >
               Standard
             </Stack.Toolbar.MenuAction>
             <Stack.Toolbar.MenuAction
               icon="globe.asia.australia"
-              isOn={settings.mapType === 'satellite'}
-              onPress={() => settings.setMapType('satellite')}
+              isOn={mapType === 'satellite'}
+              onPress={() => onSetMapType('satellite')}
             >
               Satellite
             </Stack.Toolbar.MenuAction>
           </Stack.Toolbar.Menu>
-          {onShare ? (
+          {canShare ? (
             <Stack.Toolbar.MenuAction icon="square.and.arrow.up" onPress={onShare}>
               Share Arrival
             </Stack.Toolbar.MenuAction>
@@ -329,46 +364,56 @@ function MapToolbar({
       </Stack.Toolbar>
     </>
   );
+});
+
+type NavStateLike = { routes?: { name: string; state?: NavStateLike }[] } | undefined;
+
+function containsRoute(state: NavStateLike, name: string): boolean {
+  if (!state?.routes) return false;
+  return state.routes.some((r) => r.name === name || containsRoute(r.state, name));
 }
 
-/** Presents the persistent trip sheet once the navigator is ready. */
+/**
+ * Presents the persistent trip sheet whenever it isn't on the stack — on
+ * launch, and again if anything (e.g. Android back) ever pops it.
+ */
 function usePresentTripSheet() {
   const router = useRouter();
   const nav = useRootNavigationState();
-  const hasTrip = nav?.routes?.some((r) => r.name === 'trip') ?? false;
   const ready = nav?.key != null;
+  const hasTrip = containsRoute(nav as NavStateLike, 'trip');
   useEffect(() => {
     if (!ready || hasTrip) return;
     router.push('/trip');
   }, [ready, hasTrip, router]);
 }
 
+interface GlidingMarker {
+  vehicle: VehiclePosition;
+  region: AnimatedRegion;
+}
+
 /**
- * One AnimatedRegion per vehicle so markers glide between fixes. Regions are
- * stopped before they're dropped — unmounting a marker mid-animation trips
- * Fabric's view-recycle assertion — and all cleared on route change so a
- * previous route's buses never flash on the new one.
+ * One AnimatedRegion per vehicle so markers glide linearly between fixes.
+ *
+ * A bus that drops out of the feed keeps its marker for one more commit: its
+ * animation is stopped first, then it's removed on the following render.
+ * Unmounting a marker while its native timing animation is still running
+ * trips Fabric's view-recycle assertion. Everything is cleared on route
+ * change.
  */
-function useAnimatedRegions(
-  positions: { vehicleId: string; lat: number; lng: number }[],
+function useGlidingMarkers(
+  positions: VehiclePosition[],
   routeCode: string,
-): Map<string, AnimatedRegion> {
-  const ref = useRef(new Map<string, AnimatedRegion>());
+): GlidingMarker[] {
+  const regions = useRef(new Map<string, AnimatedRegion>());
+  const lastSeen = useRef(new Map<string, VehiclePosition>());
+  const [, setPruneTick] = useState(0);
 
-  useEffect(() => {
-    const regions = ref.current;
-    for (const id of Array.from(regions.keys())) {
-      stop(regions.get(id));
-      regions.delete(id);
-    }
-  }, [routeCode]);
-
-  const regions = ref.current;
-  const seen = new Set<string>();
   for (const p of positions) {
-    seen.add(p.vehicleId);
-    if (!regions.has(p.vehicleId)) {
-      regions.set(
+    lastSeen.current.set(p.vehicleId, p);
+    if (!regions.current.has(p.vehicleId)) {
+      regions.current.set(
         p.vehicleId,
         new AnimatedRegion({
           latitude: p.lat,
@@ -381,31 +426,54 @@ function useAnimatedRegions(
   }
 
   useEffect(() => {
+    const live = new Set(positions.map((p) => p.vehicleId));
+    let pruned = false;
     for (const p of positions) {
-      const region = regions.get(p.vehicleId);
-      region
+      regions.current
+        .get(p.vehicleId)
         ?.timing({
           latitude: p.lat,
           longitude: p.lng,
           latitudeDelta: 0,
           longitudeDelta: 0,
           duration: POSITION_TWEEN_MS,
+          easing: Easing.linear,
           useNativeDriver: false,
         } as Parameters<AnimatedRegion['timing']>[0])
         .start();
     }
-    for (const id of Array.from(regions.keys())) {
-      if (seen.has(id)) continue;
-      stop(regions.get(id));
-      regions.delete(id);
+    for (const id of Array.from(regions.current.keys())) {
+      if (live.has(id)) continue;
+      stopAnimation(regions.current.get(id));
+      regions.current.delete(id);
+      lastSeen.current.delete(id);
+      pruned = true;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Drop the now-stopped markers on the next render.
+    if (pruned) setPruneTick((n) => n + 1);
   }, [positions]);
 
-  return regions;
+  // Route switch: stop and drop every region (cleanup), then re-render so
+  // the previous route's markers unmount with their animations already
+  // stopped.
+  useEffect(() => {
+    setPruneTick((n) => n + 1);
+    return () => {
+      for (const r of regions.current.values()) stopAnimation(r);
+      regions.current.clear();
+      lastSeen.current.clear();
+    };
+  }, [routeCode]);
+
+  const out: GlidingMarker[] = [];
+  for (const [id, region] of regions.current) {
+    const vehicle = lastSeen.current.get(id);
+    if (vehicle) out.push({ vehicle, region });
+  }
+  return out;
 }
 
-function stop(region: AnimatedRegion | undefined) {
+function stopAnimation(region: AnimatedRegion | undefined) {
   try {
     (region as unknown as { stopAnimation?: () => void })?.stopAnimation?.();
   } catch {

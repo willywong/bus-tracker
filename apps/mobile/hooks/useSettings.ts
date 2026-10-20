@@ -408,11 +408,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Sync the module-level clock preference used by pure formatters
-  // (`formatClockHHMM`, `formatArrivalClock`) whenever the stored setting
-  // changes. Runs on initial load and on any user toggle.
-  useEffect(() => {
-    setClockUse24h(state.clockFormat === '24h');
-  }, [state.clockFormat]);
+  // (`formatClockHHMM`). Done during render (idempotent) rather than in an
+  // effect so providers and screens rendered below in the same pass already
+  // format with the new setting.
+  setClockUse24h(state.clockFormat === '24h');
 
   const api: SettingsApi = {
     ...state,

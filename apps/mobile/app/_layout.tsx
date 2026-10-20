@@ -1,10 +1,11 @@
 import { DarkTheme, DefaultTheme, ThemeProvider, Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
-import { useColorScheme } from 'react-native';
+import { PlatformColor, Platform, useColorScheme } from 'react-native';
 import 'react-native-reanimated';
 import '../global.css';
 
+import { isGlassAvailable } from '@/components/GlassGuard';
 import { PushRegistrationProvider } from '@/hooks/PushRegistrationContext';
 import { useRealtimeRoutes } from '@/hooks/useRealtimeRoutes';
 import { SettingsProvider, useSettings } from '@/hooks/useSettings';
@@ -18,6 +19,17 @@ export {
 } from 'expo-router';
 
 SplashScreen.preventAutoHideAsync();
+
+// Deep links (e.g. the Live Activity's t816://) always land with the map at
+// the root of the stack, so sheets have something to sit on and return to.
+export const unstable_settings = { initialRouteName: 'index' };
+
+// iOS 26 draws Liquid Glass behind a transparent sheet; older systems draw
+// nothing, so give them the standard opaque sheet background instead.
+const SHEET_BACKGROUND =
+  Platform.OS === 'ios' && !isGlassAvailable()
+    ? PlatformColor('systemBackground')
+    : 'transparent';
 
 /**
  * One map-backed screen with a persistent trip sheet (Apple Maps / Find My
@@ -64,8 +76,8 @@ function AppStack() {
             sheetGrabberVisible: true,
             // Persistent: the sheet resizes but can't be swiped away.
             gestureEnabled: false,
-            // Transparent content lets iOS 26 draw the Liquid Glass sheet.
-            contentStyle: { backgroundColor: 'transparent' },
+            // Transparent on iOS 26 so the system draws the Liquid Glass sheet.
+            contentStyle: { backgroundColor: SHEET_BACKGROUND },
           }}
         />
         <Stack.Screen
@@ -77,7 +89,7 @@ function AppStack() {
             headerShown: true,
             headerTransparent: true,
             title: 'Add Route',
-            contentStyle: { backgroundColor: 'transparent' },
+            contentStyle: { backgroundColor: SHEET_BACKGROUND },
           }}
         />
         <Stack.Screen
@@ -89,7 +101,7 @@ function AppStack() {
             headerShown: true,
             headerTransparent: true,
             title: 'Settings',
-            contentStyle: { backgroundColor: 'transparent' },
+            contentStyle: { backgroundColor: SHEET_BACKGROUND },
           }}
         />
       </Stack>
