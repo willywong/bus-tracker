@@ -12,48 +12,37 @@ import {
 } from '@expo/ui/swift-ui/modifiers';
 import { SymbolView } from 'expo-symbols';
 import { StyleSheet, Text, View } from 'react-native';
-import { useReducedMotion } from 'react-native-reanimated';
 
 import type { SourceKind, TripModel } from '@/components/trip/model';
 import { color, space, type } from '@/theme/design';
 
 /**
- * The one primary number. Rendered natively so digit changes use SwiftUI's
- * `numericText` roll; live is bold label colour, scheduled is regular and
- * secondary so the two can never be confused (weight + glyph + word).
+ * The one number: thin, very large, tabular, in full ink whether live or
+ * scheduled (contrast first). Live vs scheduled is told by the status line's
+ * glyph and word, never by greying the number. Rendered natively so digit
+ * changes use SwiftUI's `numericText` roll.
  */
 export function Hero({ model }: { model: TripModel }) {
   const hero = model.hero;
   if (!hero) return null;
-  const isLive = model.source !== 'scheduled';
   const isWord = hero.kind === 'word';
 
   return (
-    <View style={styles.wrap}>
-      {model.heroEyebrow ? (
-        <Text style={styles.eyebrow}>{model.heroEyebrow}</Text>
-      ) : null}
+    <View>
+      {model.heroEyebrow ? <Text style={styles.eyebrow}>{model.heroEyebrow}</Text> : null}
       <Host matchContents>
         <HStack
-          spacing={6}
+          spacing={8}
           alignment="firstTextBaseline"
           modifiers={[accessibilityLabel(model.accessibilityLabel)]}
         >
           <SwiftText
             modifiers={[
-              font({
-                size: isWord ? 56 : type.hero.fontSize,
-                weight: isLive ? 'bold' : 'regular',
-                design: 'rounded',
-              }),
+              font({ size: isWord ? 64 : type.hero.fontSize, weight: 'thin' }),
               monospacedDigit(),
               lineLimit(1),
               minimumScaleFactor(0.5),
-              foregroundStyle(
-                isLive
-                  ? { type: 'hierarchical', style: 'primary' }
-                  : { type: 'hierarchical', style: 'secondary' },
-              ),
+              foregroundStyle({ type: 'hierarchical', style: 'primary' }),
               contentTransition('numericText', { countsDown: true }),
               animation(Animation.smooth({ duration: 0.35 }), hashText(hero.text)),
             ]}
@@ -63,7 +52,7 @@ export function Hero({ model }: { model: TripModel }) {
           {hero.unit ? (
             <SwiftText
               modifiers={[
-                font({ size: type.heroUnit.fontSize, weight: 'semibold', design: 'rounded' }),
+                font({ size: type.heroUnit.fontSize, weight: 'regular' }),
                 foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
               ]}
             >
@@ -76,21 +65,13 @@ export function Hero({ model }: { model: TripModel }) {
   );
 }
 
-/** Live / ageing / scheduled glyph + copy. Never colour alone. */
+/** Glyph + word for where the number comes from, and how fresh it is. */
 export function StatusLine({ model }: { model: TripModel }) {
-  const reduceMotion = useReducedMotion();
   return (
     <View style={styles.statusBlock}>
       <View style={styles.statusRow}>
-        <SourceGlyph source={model.source} animate={!reduceMotion} />
-        <Text
-          style={[
-            styles.status,
-            model.source === 'live' && styles.statusLive,
-            model.source === 'aging' && styles.statusAging,
-          ]}
-          numberOfLines={2}
-        >
+        <SourceMark source={model.source} />
+        <Text style={styles.status} numberOfLines={2}>
           {model.status}
         </Text>
         {model.freshness ? (
@@ -100,63 +81,36 @@ export function StatusLine({ model }: { model: TripModel }) {
         ) : null}
       </View>
       {model.detail ? <Text style={styles.detail}>{model.detail}</Text> : null}
-      {model.then ? (
-        <Text style={styles.then} accessibilityLabel={model.then.replace('·', 'and')}>
-          {model.then}
-        </Text>
-      ) : null}
     </View>
   );
 }
 
-export function SourceGlyph({
-  source,
-  animate,
-  size = 15,
-}: {
-  source: SourceKind;
-  animate: boolean;
-  size?: number;
-}) {
-  if (source === 'live') {
+/**
+ * Live: a green dot (the app's only colour). Ageing: an orange dot.
+ * Scheduled: a clock outline. Each always sits beside its word.
+ */
+export function SourceMark({ source, size = 8 }: { source: SourceKind; size?: number }) {
+  if (source === 'scheduled') {
     return (
       <SymbolView
-        name="dot.radiowaves.left.and.right"
-        size={size}
-        weight="semibold"
-        tintColor={color.live}
-        animationSpec={
-          animate
-            ? {
-                repeating: true,
-                speed: 0.6,
-                variableAnimationSpec: { iterative: true, dimInactiveLayers: true },
-              }
-            : undefined
-        }
-        accessibilityLabel="Live"
-      />
-    );
-  }
-  if (source === 'aging') {
-    return (
-      <SymbolView
-        name="clock.badge.exclamationmark"
-        size={size}
-        weight="semibold"
-        type="hierarchical"
-        tintColor={color.warning}
-        accessibilityLabel="Live data is out of date"
+        name="clock"
+        size={size + 6}
+        weight="regular"
+        tintColor={color.secondaryLabel}
+        accessibilityLabel="Scheduled"
       />
     );
   }
   return (
-    <SymbolView
-      name="clock"
-      size={size}
-      weight="medium"
-      tintColor={color.secondaryLabel}
-      accessibilityLabel="Scheduled"
+    <View
+      accessible
+      accessibilityLabel={source === 'live' ? 'Live' : 'Live data is out of date'}
+      style={{
+        width: size,
+        height: size,
+        borderRadius: size / 2,
+        backgroundColor: source === 'live' ? color.live : color.warning,
+      }}
     />
   );
 }
@@ -169,11 +123,8 @@ function hashText(s: string): number {
 }
 
 const styles = StyleSheet.create({
-  wrap: {
-    gap: 0,
-  },
   eyebrow: {
-    ...type.headline,
+    ...type.status,
     color: color.secondaryLabel,
   },
   statusBlock: {
@@ -182,33 +133,20 @@ const styles = StyleSheet.create({
   statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: space.xs,
   },
   status: {
     ...type.status,
-    color: color.secondaryLabel,
-    flexShrink: 1,
-  },
-  statusLive: {
+    flex: 1,
     color: color.label,
-    fontWeight: '500',
-  },
-  statusAging: {
-    color: color.warning,
-    fontWeight: '500',
   },
   freshness: {
     ...type.status,
-    color: color.tertiaryLabel,
+    color: color.secondaryLabel,
     fontVariant: ['tabular-nums'],
   },
   detail: {
     ...type.status,
     color: color.secondaryLabel,
-  },
-  then: {
-    ...type.status,
-    color: color.secondaryLabel,
-    fontVariant: ['tabular-nums'],
   },
 });

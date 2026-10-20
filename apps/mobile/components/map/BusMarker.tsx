@@ -17,32 +17,44 @@ const MarkerAnimated = RawMarkerAnimated as unknown as Animated.AnimatedComponen
 
 // Marker views are hosted natively by MapKit; DynamicColorIOS / PlatformColor
 // don't survive that bridge, so colours arrive as resolved hex strings.
+// Every marker is a fixed 48pt square with its glyph at the exact centre:
+// Apple Maps ignores `anchor` and re-centres views whose size changes.
+const FRAME = 48;
 
 interface BusMarkerProps {
   /** Animated region that glides between position fixes. */
   region: AnimatedRegion;
-  accent: string;
-  /** The bus heading to your stop — larger and always on top. */
+  ink: string;
+  paper: string;
+  live: string;
+  /** The bus heading to your stop — larger, live dot, always on top. */
   primary: boolean;
-  /** Already past your stop — dimmed so it doesn't read as "your bus". */
+  /** Already past your stop — faded so it doesn't read as "your bus". */
   passed: boolean;
   bearing?: number | null;
   accessibilityLabel: string;
   onPress?: () => void;
 }
 
+/**
+ * A live bus in Calm Mono: a paper disc with an ink ring and a direction
+ * chevron rotated to the bus's bearing. Your bus gets the green live dot
+ * (the app's only colour); other buses are smaller and lighter.
+ */
 export function BusMarker({
   region,
-  accent,
+  ink,
+  paper,
+  live,
   primary,
   passed,
   bearing,
   accessibilityLabel,
   onPress,
 }: BusMarkerProps) {
-  const size = primary ? 36 : 28;
-  const showHeading =
-    !passed && typeof bearing === 'number' && Number.isFinite(bearing);
+  const size = primary ? 34 : 28;
+  const hasHeading = typeof bearing === 'number' && Number.isFinite(bearing);
+  const inset = (FRAME - size) / 2;
 
   return (
     <MarkerAnimated
@@ -55,34 +67,53 @@ export function BusMarker({
       onPress={onPress}
       accessibilityLabel={accessibilityLabel}
     >
-      <View style={[styles.frame, { opacity: passed ? 0.45 : primary ? 1 : 0.8 }]}>
-        {showHeading ? (
-          <View
-            style={[styles.headingRing, { transform: [{ rotate: `${bearing}deg` }] }]}
-            pointerEvents="none"
-          >
-            <View style={[styles.wedge, { borderBottomColor: accent }]} />
-          </View>
-        ) : null}
+      <View style={[styles.frame, { opacity: passed ? 0.4 : primary ? 1 : 0.7 }]}>
         <View
           style={[
             styles.disc,
             {
+              left: inset,
+              top: inset,
               width: size,
               height: size,
               borderRadius: size / 2,
-              backgroundColor: passed ? '#8E8E93' : accent,
+              borderColor: ink,
+              borderWidth: primary ? 2 : 1.5,
+              backgroundColor: paper,
             },
           ]}
         >
-          <SymbolView
-            name="bus.fill"
-            size={primary ? 17 : 14}
-            weight="semibold"
-            tintColor="#FFFFFF"
-            resizeMode="scaleAspectFit"
-          />
+          {hasHeading ? (
+            <View style={{ transform: [{ rotate: `${bearing}deg` }] }}>
+              <SymbolView
+                name="location.north.fill"
+                size={primary ? 15 : 12}
+                tintColor={ink}
+                resizeMode="scaleAspectFit"
+              />
+            </View>
+          ) : (
+            <SymbolView
+              name="bus.fill"
+              size={primary ? 14 : 11}
+              tintColor={ink}
+              resizeMode="scaleAspectFit"
+            />
+          )}
         </View>
+        {primary && !passed ? (
+          <View
+            style={[
+              styles.liveDot,
+              {
+                left: inset + size - 9,
+                top: inset - 3,
+                backgroundColor: live,
+                borderColor: paper,
+              },
+            ]}
+          />
+        ) : null}
       </View>
     </MarkerAnimated>
   );
@@ -96,7 +127,8 @@ interface GhostBusMarkerProps {
 
 /**
  * Where the next *scheduled* bus should be when nothing live is reporting.
- * Hollow + dashed so it can never be mistaken for a live bus.
+ * A dashed ring with a dot: never filled, never a chevron, so it can't be
+ * mistaken for a live bus.
  */
 export function GhostBusMarker({ coordinate, color, background }: GhostBusMarkerProps) {
   return (
@@ -107,61 +139,49 @@ export function GhostBusMarker({ coordinate, color, background }: GhostBusMarker
       accessibilityLabel="Scheduled bus position, not live"
     >
       <View style={styles.frame}>
-        <View
-          style={[
-            styles.ghost,
-            { borderColor: color, backgroundColor: background },
-          ]}
-        >
-          <SymbolView
-            name="clock"
-            size={13}
-            weight="semibold"
-            tintColor={color}
-            resizeMode="scaleAspectFit"
-          />
+        <View style={[styles.ghost, { borderColor: color, backgroundColor: background }]}>
+          <View style={[styles.ghostDot, { backgroundColor: color }]} />
         </View>
       </View>
     </Marker>
   );
 }
 
+const GHOST = 28;
+
 const styles = StyleSheet.create({
   frame: {
-    width: 48,
-    height: 48,
-    alignItems: 'center',
-    justifyContent: 'center',
+    width: FRAME,
+    height: FRAME,
   },
   disc: {
+    position: 'absolute',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 2.5,
-    borderColor: '#FFFFFF',
-    boxShadow: '0 1px 3px rgba(0, 0, 0, 0.3)',
+    boxShadow: '0 1px 3px rgba(0, 0, 0, 0.35)',
   },
-  headingRing: {
+  liveDot: {
     position: 'absolute',
-    width: 48,
-    height: 48,
-    alignItems: 'center',
-  },
-  wedge: {
-    width: 0,
-    height: 0,
-    borderLeftWidth: 5,
-    borderRightWidth: 5,
-    borderBottomWidth: 7,
-    borderLeftColor: 'transparent',
-    borderRightColor: 'transparent',
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 2.5,
   },
   ghost: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    position: 'absolute',
+    left: (FRAME - GHOST) / 2,
+    top: (FRAME - GHOST) / 2,
+    width: GHOST,
+    height: GHOST,
+    borderRadius: GHOST / 2,
     borderWidth: 2,
     borderStyle: 'dashed',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  ghostDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
   },
 });

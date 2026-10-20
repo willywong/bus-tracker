@@ -12,14 +12,15 @@ import MapView, { AnimatedRegion, PROVIDER_DEFAULT } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BusMarker, GhostBusMarker } from '@/components/map/BusMarker';
-import { RouteLayer } from '@/components/map/RouteLayer';
+import { RouteLayer, type RailStationMark } from '@/components/map/RouteLayer';
 import { useLocationPermission } from '@/hooks/useLocationPermission';
 import { useScheduledBusPosition } from '@/hooks/useScheduledBusPosition';
 import { useSettings, type MapType } from '@/hooks/useSettings';
+import { useRide } from '@/state/RideContext';
 import { useTrip } from '@/state/TripContext';
 import { hex, pick, SHEET_DETENTS } from '@/theme/design';
 import { haptics } from '@/utils/haptics';
-import type { VehiclePosition } from '@bus-tracker/shared';
+import { nearbyRailStations, type VehiclePosition } from '@bus-tracker/shared';
 
 /** Greater Kuala Lumpur — where the map opens before a route is chosen. */
 const KL_REGION = {
@@ -55,7 +56,7 @@ export default function MapScreen() {
   const mapRef = useRef<MapView>(null);
   const [userPanned, setUserPanned] = useState(false);
 
-  const accent = pick(hex.accent, scheme);
+  const ride = useRide();
   const route = trip.route;
   const polyline = useMemo(
     () =>
@@ -70,6 +71,19 @@ export default function MapScreen() {
     () => ({ top: 0, right: 16, bottom: sheetHeight + 8, left: 16 }),
     [sheetHeight],
   );
+
+  // --- Rail stations within a short walk of your stop ------------------------
+  const railStations = useMemo<RailStationMark[]>(() => {
+    const u = route?.userStop;
+    if (!u) return [];
+    return nearbyRailStations({ lat: u.stop_lat, lng: u.stop_lon }).map(({ station }) => ({
+      id: station.id,
+      name: station.name,
+      lat: station.lat,
+      lng: station.lng,
+      colors: [...new Set(station.lines.map((l) => l.color))],
+    }));
+  }, [route?.userStop]);
 
   // --- Live bus markers ----------------------------------------------------
   const positions = route ? trip.bus.positions : NO_POSITIONS;
@@ -188,9 +202,13 @@ export default function MapScreen() {
   );
 
   const mapType: MapType = settings.mapType;
-  const casing = pick(hex.casing, scheme);
-  const labelColor = scheme === 'dark' ? '#FFFFFF' : '#1C1C1E';
-  const labelHalo = scheme === 'dark' ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.95)';
+  // Satellite imagery is dark and busy whatever the system scheme, so map
+  // overlays use the dark (white ink) palette on it.
+  const mapScheme = mapType === 'satellite' ? 'dark' : scheme;
+  const ink = pick(hex.ink, mapScheme);
+  const mapPaper = pick(hex.mapPaper, mapScheme);
+  const casing = pick(hex.casing, mapScheme);
+  const labelHalo = mapScheme === 'dark' ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.95)';
 
   return (
     <View style={styles.root}>
@@ -227,18 +245,23 @@ export default function MapScreen() {
             polyline={polyline}
             stops={route.stops}
             userStop={route.userStop}
-            accent={accent}
+            destination={
+              ride.active && ride.destination
+                ? { lat: ride.destination.lat, lng: ride.destination.lng, name: ride.destination.name }
+                : null
+            }
+            railStations={railStations}
+            ink={ink}
             casing={casing}
-            stopFill={pick(hex.stopFill, scheme)}
-            labelColor={labelColor}
+            paper={mapPaper}
             labelHalo={labelHalo}
           />
         ) : null}
         {route && ghost.coord && positions.length === 0 ? (
           <GhostBusMarker
             coordinate={{ latitude: ghost.coord.lat, longitude: ghost.coord.lng }}
-            color={pick(hex.secondaryLabel, scheme)}
-            background={pick(hex.stopFill, scheme)}
+            color={ink}
+            background={mapPaper}
           />
         ) : null}
         {markers.map(({ vehicle, region }) => {
@@ -248,7 +271,9 @@ export default function MapScreen() {
             <BusMarker
               key={vehicle.vehicleId}
               region={region}
-              accent={accent}
+              ink={ink}
+              paper={mapPaper}
+              live={pick(hex.live, mapScheme)}
               primary={primary}
               passed={passed}
               bearing={vehicle.bearing}

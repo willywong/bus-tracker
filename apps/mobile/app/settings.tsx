@@ -17,9 +17,11 @@ import {
   pickerStyle,
   scrollContentBackground,
   tag,
+  tint,
 } from '@expo/ui/swift-ui/modifiers';
 import Constants from 'expo-constants';
 import { Stack, useRouter } from 'expo-router';
+import { useColorScheme } from 'react-native';
 
 import { FavoritesSection } from '@/components/settings/FavoritesSection';
 import { RemindersSection } from '@/components/settings/RemindersSection';
@@ -31,7 +33,7 @@ import {
   type MapType,
 } from '@/hooks/useSettings';
 import { useTrip } from '@/state/TripContext';
-import { color } from '@/theme/design';
+import { color, hex, pick } from '@/theme/design';
 import { haptics } from '@/utils/haptics';
 
 const clockFormatLabel: Record<ClockFormat, string> = {
@@ -52,6 +54,7 @@ export default function SettingsScreen() {
   const router = useRouter();
   const settings = useSettings();
   const trip = useTrip();
+  const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
 
   if (!settings.ready) return null;
 
@@ -78,6 +81,7 @@ export default function SettingsScreen() {
               systemImage="plus"
               label="Add Route"
               onPress={() => router.push('/add-route')}
+              modifiers={[tint(pick(hex.ink, scheme))]}
             />
           </Section>
 

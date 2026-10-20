@@ -22,6 +22,7 @@ import {
   foregroundStyle,
   frame,
   listStyle,
+  monospacedDigit,
   padding,
   scrollContentBackground,
   shapes,
@@ -220,6 +221,8 @@ function SearchResults({
   accent: string;
   onPick: (hit: RouteSearchHit) => void;
 }) {
+  const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
+  const paper = pick(hex.paper, scheme);
   return (
     <Section title="Routes">
       {results.map((hit) => {
@@ -234,11 +237,12 @@ function SearchResults({
             <HStack spacing={12} modifiers={[padding({ vertical: 4 })]}>
               <Text
                 modifiers={[
-                  font({ size: 15, weight: 'bold', design: 'rounded' }),
-                  foregroundStyle('#FFFFFF'),
-                  padding({ horizontal: 10, vertical: 5 }),
-                  frame({ minWidth: 56 }),
-                  background(accent, shapes.capsule()),
+                  font({ size: 13, weight: 'semibold' }),
+                  monospacedDigit(),
+                  foregroundStyle(paper),
+                  padding({ horizontal: 8, vertical: 4 }),
+                  frame({ minWidth: 52 }),
+                  background(accent, shapes.roundedRectangle({ cornerRadius: 6 })),
                 ]}
               >
                 {hit.code}

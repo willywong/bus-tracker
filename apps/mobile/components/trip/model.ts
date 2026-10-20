@@ -97,12 +97,23 @@ export interface TripNote {
     | 'last-bus'
     | 'rain'
     | 'bunching'
-    | 'miss-cost'
     | 'where-from';
   /** SF Symbol name. */
   icon: string;
   text: string;
   tone: 'info' | 'warning';
+  /** Key/value form for a hairline row ("Last bus" · "23:41"); else `text` is shown. */
+  label?: string;
+  value?: string;
+}
+
+/** The bus after the one in the hero, and what missing the hero costs. */
+export interface NextBus {
+  /** Clock time, "21:41". */
+  clock: string;
+  /** Wait after the hero bus, "+39 min" — the cost of missing it. */
+  wait: string;
+  live: boolean;
 }
 
 export interface TripModel {
@@ -116,6 +127,8 @@ export interface TripModel {
   then: string | null;
   /** One-line ETA for the peek detent and the toolbar. */
   compact: string | null;
+  /** The following bus, shown as the "Then" row. */
+  next: NextBus | null;
   action: TripAction;
   accessibilityLabel: string;
   /** "as of 08:41" next to a live status, so a frozen number can't pass as fresh. */
@@ -131,8 +144,6 @@ export const AGING_AFTER_MS = 60_000;
 export const LEAVE_NOW_WINDOW_MIN = 2;
 /** A scheduled bus this close with nothing on the route reporting may not run. */
 export const GHOST_WINDOW_MIN = 15;
-/** Missing a bus is worth a note when the next one is at least this far behind. */
-export const MISS_COST_MIN = 15;
 /** Two live buses closer than this are bunched. */
 export const BUNCHED_MIN = 5;
 /** Start mentioning the last bus this long before it leaves. */
@@ -206,6 +217,7 @@ export function buildTripModel(input: TripModelInput): TripModel {
     status: statusFor(shownSource, input),
     detail: shownSource === 'scheduled' ? null : detailFor(input),
     then: thenFor(input),
+    next: nextFor(input),
     compact: hero.unit ? `${hero.text} ${hero.unit}` : hero.text,
     action: actionFor(minutes, hero, input),
     accessibilityLabel: a11yFor(hero, shownSource, input),
@@ -232,6 +244,7 @@ function base(
     detail: null,
     then: null,
     compact: null,
+    next: null,
     action:
       input.walkRemainingSeconds != null
         ? { kind: 'walking', remainingSeconds: input.walkRemainingSeconds }
@@ -376,7 +389,6 @@ function arrivalNotes(
   const primary = input.primaryArrival;
   if (!primary) return [];
   const later = distinctLater(input);
-  const next = later[0] ?? null;
   const lastBus = input.lastBusToday;
   const isLast =
     lastBus != null &&
@@ -418,20 +430,7 @@ function arrivalNotes(
     notes.push({ id: 'rain', icon: 'cloud.rain', text: input.rainNudge, tone: 'warning' });
   }
 
-  const bunch = bunchingNote(isLive, later, input);
-  notes.push(bunch);
-
-  if (!bunch && next && !isLast) {
-    const gap = Math.round((next.epochMs - primary.epochMs) / 60_000);
-    if (gap >= MISS_COST_MIN) {
-      notes.push({
-        id: 'miss-cost',
-        icon: 'hourglass',
-        text: `Miss it and you wait ${formatDuration(gap)} for the next one`,
-        tone: 'info',
-      });
-    }
-  }
+  notes.push(bunchingNote(isLive, later, input));
 
   if (
     isLive &&
@@ -463,6 +462,8 @@ function lastBusNote(input: TripModelInput, finalRunAt: number | null): TripNote
       icon: 'moon.stars',
       text: 'This is the last bus today',
       tone: 'warning',
+      label: 'Last bus',
+      value: 'This one',
     };
   }
   const last = input.lastBusToday;
@@ -473,6 +474,8 @@ function lastBusNote(input: TripModelInput, finalRunAt: number | null): TripNote
     icon: 'moon.stars',
     text: `Last bus today at ${input.formatClock(last)}`,
     tone: 'info',
+    label: 'Last bus',
+    value: input.formatClock(last),
   };
 }
 
@@ -498,6 +501,18 @@ function bunchingNote(
         ? `Next two buses are ${apartText}, then a ${formatDuration(gap)} gap`
         : `Next two buses are ${apartText}`,
     tone: 'info',
+  };
+}
+
+function nextFor(input: TripModelInput): NextBus | null {
+  const primary = input.primaryArrival;
+  const next = distinctLater(input)[0];
+  if (!primary || !next) return null;
+  const gap = Math.max(1, Math.round((next.epochMs - primary.epochMs) / 60_000));
+  return {
+    clock: input.formatClock(next.epochMs),
+    wait: `+${formatDuration(gap)}`,
+    live: next.kind === 'live',
   };
 }
 

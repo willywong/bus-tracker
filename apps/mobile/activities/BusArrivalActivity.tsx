@@ -15,6 +15,7 @@ import {
   lineLimit,
   monospacedDigit,
   padding,
+  rotationEffect,
   shapes,
   tint,
 } from '@expo/ui/swift-ui/modifiers';
@@ -75,7 +76,13 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props, envi
   'widget';
 
   // --- Palette (inlined — no module refs) --------------------------------
-  const accent = '#0A84FF';
+  // Calm Mono: ink on paper, green only for "live". The Dynamic Island is
+  // always black, so it always uses light ink; the Lock Screen follows the
+  // system appearance.
+  const dark = environment?.colorScheme !== 'light';
+  const ink = dark ? '#F5F5F7' : '#111114';
+  const paper = dark ? '#0E0E10' : '#FFFFFF';
+  const islandInk = '#F5F5F7';
   const live = '#30D158';
   const warning = '#FF9F0A';
 
@@ -164,13 +171,14 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props, envi
   const tripStartDate = new Date(props.tripStartEpochMs);
   const arrivalDate = new Date(props.arrivalEpochMs);
 
-  const badge = (size: number) => (
+  const badge = (size: number, onIsland = false) => (
     <Text
       modifiers={[
-        font({ size, weight: 'bold', design: 'rounded' }),
-        foregroundStyle('#FFFFFF'),
+        font({ size, weight: 'semibold' }),
+        monospacedDigit(),
+        foregroundStyle(onIsland ? '#000000' : paper),
         padding({ horizontal: size * 0.5, vertical: size * 0.2 }),
-        background(accent, shapes.capsule()),
+        background(onIsland ? islandInk : ink, shapes.roundedRectangle({ cornerRadius: size * 0.4 })),
         lineLimit(1),
       ]}
     >
@@ -215,15 +223,15 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props, envi
     </HStack>
   );
 
-  const progressRow = isPreService ? null : (
+  const progressRow = (onIsland = false) => isPreService ? null : (
     <HStack spacing={8}>
-      <Image systemName="bus.fill" size={13} modifiers={[foregroundStyle(accent)]} />
+      <Image systemName="location.north.fill" size={12} modifiers={[foregroundStyle(onIsland ? islandInk : ink), rotationEffect(90)]} />
       <ProgressView
         timerInterval={{ lower: tripStartDate, upper: arrivalDate }}
         countsDown={false}
-        modifiers={[labelsHidden(), tint(accent)]}
+        modifiers={[labelsHidden(), tint(onIsland ? islandInk : ink)]}
       />
-      <Image systemName="mappin.circle.fill" size={15} modifiers={[foregroundStyle(accent)]} />
+      <Image systemName="smallcircle.filled.circle" size={15} modifiers={[foregroundStyle(onIsland ? islandInk : ink)]} />
     </HStack>
   );
 
@@ -231,7 +239,7 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props, envi
     <HStack spacing={4} alignment="firstTextBaseline">
       <Text
         modifiers={[
-          font({ size: heroUnit ? size : size * 0.7, weight: isPreService || !isLive ? 'semibold' : 'bold', design: 'rounded' }),
+          font({ size: heroUnit ? size : size * 0.7, weight: 'light' }),
           monospacedDigit(),
           contentTransition('numericText', { countsDown: true }),
           foregroundStyle(
@@ -247,7 +255,7 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props, envi
       {heroUnit ? (
         <Text
           modifiers={[
-            font({ size: size * 0.42, weight: 'semibold', design: 'rounded' }),
+            font({ size: size * 0.42, weight: 'regular' }),
             foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
           ]}
         >
@@ -259,15 +267,15 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props, envi
 
   // --- Dynamic Island ------------------------------------------------------
   const compactLeading = (
-    <HStack modifiers={[padding({ leading: 2 })]}>{badge(12)}</HStack>
+    <HStack modifiers={[padding({ leading: 2 })]}>{badge(12, true)}</HStack>
   );
   const compactTrailing = (
     <Text
       modifiers={[
-        font({ size: 15, weight: 'semibold', design: 'rounded' }),
+        font({ size: 15, weight: 'medium' }),
         monospacedDigit(),
         contentTransition('numericText', { countsDown: true }),
-        foregroundStyle(isArrived ? live : accent),
+        foregroundStyle(isArrived ? live : islandInk),
         padding({ trailing: 2 }),
         lineLimit(1),
       ]}
@@ -278,9 +286,9 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props, envi
   const minimal = (
     <Text
       modifiers={[
-        font({ size: 15, weight: 'bold', design: 'rounded' }),
+        font({ size: 15, weight: 'medium' }),
         monospacedDigit(),
-        foregroundStyle(isArrived ? live : accent),
+        foregroundStyle(isArrived ? live : islandInk),
         lineLimit(1),
       ]}
     >
@@ -291,7 +299,7 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props, envi
   const expandedBottom = (
     <VStack spacing={10} modifiers={[padding({ horizontal: 12, top: 2, bottom: 8 })]}>
       <HStack spacing={8} alignment="center">
-        {badge(13)}
+        {badge(13, true)}
         <Text
           modifiers={[
             font({ size: 15, weight: 'semibold' }),
@@ -303,7 +311,7 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props, envi
         <Spacer />
         {hero(30)}
       </HStack>
-      {progressRow}
+      {progressRow(true)}
       {statusRow(12)}
     </VStack>
   );
@@ -336,7 +344,7 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props, envi
         <Spacer />
         {hero(40)}
       </HStack>
-      {progressRow}
+      {progressRow()}
       {statusRow(12)}
     </VStack>
   );
@@ -345,7 +353,7 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props, envi
   const bannerSmall = (
     <VStack spacing={4} alignment="leading" modifiers={[padding({ horizontal: 10, vertical: 8 })]}>
       <HStack spacing={6} alignment="center">
-        {badge(11)}
+        {badge(11, true)}
         <Spacer />
         {hero(24)}
       </HStack>

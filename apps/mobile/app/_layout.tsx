@@ -1,11 +1,10 @@
 import { DarkTheme, DefaultTheme, ThemeProvider, Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
-import { PlatformColor, Platform, useColorScheme } from 'react-native';
+import { useColorScheme } from 'react-native';
 import 'react-native-reanimated';
 import '../global.css';
 
-import { isGlassAvailable } from '@/components/GlassGuard';
 import { PushRegistrationProvider } from '@/hooks/PushRegistrationContext';
 import { useRealtimeRoutes } from '@/hooks/useRealtimeRoutes';
 import { useQuickActions } from '@/hooks/useQuickActions';
@@ -13,7 +12,7 @@ import { SettingsProvider, useSettings } from '@/hooks/useSettings';
 import { StaticGtfsProvider } from '@/hooks/useStaticGtfs';
 import { RideProvider } from '@/state/RideContext';
 import { TripProvider } from '@/state/TripContext';
-import { SHEET_DETENTS, SHEET_INITIAL_DETENT } from '@/theme/design';
+import { color, SHEET_DETENTS, SHEET_INITIAL_DETENT } from '@/theme/design';
 import { configureNotifications } from '@/services/reminders/notifications';
 // Background tasks must be defined at module scope so iOS can run them on a
 // headless launch (commute re-plan, arrival geofence).
@@ -32,12 +31,9 @@ configureNotifications();
 // the root of the stack, so sheets have something to sit on and return to.
 export const unstable_settings = { initialRouteName: 'index' };
 
-// iOS 26 draws Liquid Glass behind a transparent sheet; older systems draw
-// nothing, so give them the standard opaque sheet background instead.
-const SHEET_BACKGROUND =
-  Platform.OS === 'ios' && !isGlassAvailable()
-    ? PlatformColor('systemBackground')
-    : 'transparent';
+// Calm Mono: every sheet is opaque paper. Text never sits on glass over a
+// busy (or satellite) map, so contrast holds at every detent.
+const SHEET_BACKGROUND = color.paper;
 
 /**
  * One map-backed screen with a persistent trip sheet (Apple Maps / Find My

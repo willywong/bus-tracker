@@ -1,4 +1,32 @@
-# BusBuddy — Liquid Glass redesign (v2)
+# BusBuddy — design spec (v3, "Calm Mono")
+
+> **v3 (October 2026): Calm Mono.** Chosen from three directions mocked up on
+> the design canvas (A Native Glass, B Transit Bold, C Calm Mono; research in
+> [`research/ui-polish.md`](./research/ui-polish.md)). What changed from v2:
+>
+> - **Ink on paper.** The UI is monochrome (`INK` / `PAPER` in
+>   `theme/design.ts`). Green is the only colour and only means "live";
+>   orange marks warnings. Rail line colours appear only for rail stations.
+> - **Opaque sheets at every detent.** Text no longer sits on glass over a
+>   busy or satellite map, which failed contrast. Glass stays for the system
+>   toolbar only.
+> - **Type does the work.** Hero: 112pt thin, tabular, full ink whether live
+>   or scheduled; live vs scheduled is the status line's glyph and word
+>   (green dot + "Live" / clock + "Scheduled"), plus "as of 20:48" freshness.
+> - **Hairline rows, no cards.** "Then 21:41 +39 min" (the cost of missing
+>   this bus) and notes under the hero; sections are a 13pt sentence-case
+>   label over hairline rows; options are plain rows with ink switches.
+> - **Outlined route chip** (inverted ink chip in SwiftUI lists).
+> - **Map markers:** thin ink line with a soft casing; hollow stop rings; your
+>   stop is a ring with a dot and its name; buses are paper discs with an ink
+>   chevron on their bearing, green dot on yours; the scheduled bus is a
+>   dashed ring; rail stations are small squares with line-colour dots; where
+>   you get off is a square. All marker views are fixed-size and centred
+>   (Apple Maps ignores `anchor`). Over satellite the dark palette is used.
+> - **Peek detent is 14%**: the header only (stop, status, thin compact number).
+>
+> Sections below describe v2; where they mention glass sheets, blue accent,
+> filled badges or the 88pt rounded bold hero, v3 above wins.
 
 Design spec for the iOS 26 / Liquid Glass overhaul of the mobile app. It distils
 three research reports kept alongside it in [`research/`](./research):

@@ -1,55 +1,48 @@
-import { SymbolView, type SFSymbol } from 'expo-symbols';
-import { StyleSheet, Text, View } from 'react-native';
+import type { SFSymbol } from 'expo-symbols';
+import type { ReactNode } from 'react';
+import { View } from 'react-native';
 
-import type { TripNote } from '@/components/trip/model';
-import { color, space, type } from '@/theme/design';
+import type { TripModel } from '@/components/trip/model';
+import { Hairline, KeyValueRow, NoteRow } from '@/components/trip/Rows';
 
 /**
- * Supporting facts under the hero ("Miss it and the next is at 08:42…").
- * Plain rows with a glyph, not cards: they're content, and the hero stays
- * the one thing that shouts. Warnings tint the glyph, never the text alone.
+ * Under the hero: the following bus ("Then · 21:41 · +39 min", the cost of
+ * missing this one) and the supporting notes, as hairline rows. Key/value
+ * notes (last bus) line up with the "Then" row; sentences get a small glyph,
+ * orange for warnings.
  */
-export function Notes({ notes }: { notes: readonly TripNote[] }) {
-  if (notes.length === 0) return null;
+export function TripRows({ model }: { model: TripModel }) {
+  const rows: ReactNode[] = [];
+  if (model.next) {
+    rows.push(
+      <KeyValueRow
+        key="then"
+        label="Then"
+        value={model.next.clock}
+        trailing={model.next.wait}
+        accessibilityLabel={`Then ${model.next.clock}, ${model.next.wait.replace('+', '')} later`}
+      />,
+    );
+  }
+  for (const n of model.notes) {
+    rows.push(
+      n.label && n.value ? (
+        <KeyValueRow key={n.id} label={n.label} value={n.value} accessibilityLabel={n.text} />
+      ) : (
+        <NoteRow key={n.id} icon={n.icon as SFSymbol} text={n.text} warning={n.tone === 'warning'} />
+      ),
+    );
+  }
+  if (rows.length === 0) return null;
   return (
-    <View style={styles.list}>
-      {notes.map((n) => (
-        <View key={n.id} style={styles.row} accessible accessibilityLabel={n.text}>
-          <SymbolView
-            name={n.icon as SFSymbol}
-            size={15}
-            weight="medium"
-            type="hierarchical"
-            tintColor={n.tone === 'warning' ? color.warning : color.secondaryLabel}
-            style={styles.icon}
-          />
-          <Text style={[styles.text, n.tone === 'warning' && styles.warning]}>{n.text}</Text>
+    <View>
+      <Hairline />
+      {rows.map((r, i) => (
+        <View key={i}>
+          {r}
+          <Hairline />
         </View>
       ))}
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  list: {
-    gap: space.xs,
-  },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: space.xs,
-  },
-  icon: {
-    width: 18,
-    height: 18,
-    marginTop: 1,
-  },
-  text: {
-    ...type.status,
-    color: color.secondaryLabel,
-    flex: 1,
-  },
-  warning: {
-    color: color.label,
-  },
-});

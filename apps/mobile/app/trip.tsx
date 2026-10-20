@@ -4,20 +4,14 @@ import {
   buttonStyle,
   controlSize,
   font,
+  foregroundStyle,
+  tint,
 } from '@expo/ui/swift-ui/modifiers';
 import { nearbyRailStations } from '@bus-tracker/shared';
 import { SymbolView, type SFSymbol } from 'expo-symbols';
 import { useNavigation, useRouter } from 'expo-router';
 import { useEffect, useMemo, type ReactNode } from 'react';
-import {
-  Linking,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  useColorScheme,
-  View,
-} from 'react-native';
+import { Linking, ScrollView, StyleSheet, Text, useColorScheme, View } from 'react-native';
 import Animated, { FadeIn, useReducedMotion } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -25,17 +19,26 @@ import { formatClockHHMM } from '@/components/tracker/logic';
 import { RideBody } from '@/components/ride/RideBody';
 import { Connections } from '@/components/trip/Connections';
 import { Hero, StatusLine } from '@/components/trip/Hero';
-import { Notes } from '@/components/trip/Notes';
+import { TripRows } from '@/components/trip/Notes';
 import { OnTheWay } from '@/components/trip/OnTheWay';
 import { PrimaryAction } from '@/components/trip/PrimaryAction';
+import { Hairline, LinkRow, SectionLabel, ToggleRow } from '@/components/trip/Rows';
 import { SheetHeader } from '@/components/trip/SheetHeader';
 import { Timetable } from '@/components/trip/Timetable';
 import { useSettings } from '@/hooks/useSettings';
 import { ensureNotificationPermission } from '@/services/reminders/notifications';
-import { RowButton } from '@/components/ui/RowButton';
 import { useRide } from '@/state/RideContext';
 import { useTrip } from '@/state/TripContext';
-import { color, MARGIN, motion, space, type, type DetentIndex } from '@/theme/design';
+import {
+  color,
+  hex,
+  MARGIN,
+  motion,
+  pick,
+  space,
+  type,
+  type DetentIndex,
+} from '@/theme/design';
 
 type DetentListener = (
   event: 'sheetDetentChange',
@@ -43,9 +46,10 @@ type DetentListener = (
 ) => () => void;
 
 /**
- * The persistent trip sheet over the map. Peek shows the header row, glance
- * the hero + one action, large adds the approach timeline and timetable.
- * Content only — the sheet itself is the (system) glass.
+ * The persistent trip sheet over the map, in Calm Mono: opaque paper, ink
+ * type, hairline rows. Peek shows the header row; glance the thin hero
+ * number, the status line, "Then" and notes, and one action; large adds the
+ * approach, today's times, rail nearby and the trip options.
  */
 export default function TripSheet() {
   const trip = useTrip();
@@ -77,15 +81,18 @@ export default function TripSheet() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navigation]);
 
+  const scrollStyle = [styles.scroll, { paddingBottom: insets.bottom + space.xl }];
+
   if (model.state === 'empty') {
     return (
-      <ScrollView contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + space.xl }]}>
+      <ScrollView contentContainerStyle={scrollStyle}>
         <EmptyState
-          icon="bus.fill"
+          icon="bus"
           title="Track your bus"
           message="Pick a route and the stop you board at. Live buses and your countdown appear here."
           actionLabel="Choose Route"
           onAction={() => router.push('/add-route')}
+          scheme={scheme}
         />
       </ScrollView>
     );
@@ -94,25 +101,22 @@ export default function TripSheet() {
   if (ride.active) {
     const p = ride.progress;
     return (
-      <ScrollView
-        contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + space.xl }]}
-        showsVerticalScrollIndicator={false}
-      >
+      <ScrollView contentContainerStyle={scrollStyle} showsVerticalScrollIndicator={false}>
         <SheetHeader
           routeCode={trip.routeCode}
-          stopName={ride.destination ? `To ${ride.destination.name}` : trip.stopName}
-          subtitle={trip.route?.longName ?? null}
+          title={ride.destination ? `To ${ride.destination.name}` : trip.stopName}
+          peek={peek}
+          status={p?.nextStop ? `Next: ${p.nextStop.name}` : null}
+          source="live"
           compact={
             p == null
               ? null
               : p.phase === 'arrived'
-                ? 'Here'
+                ? { text: 'Here', unit: null, kind: 'word' }
                 : p.phase === 'next-is-yours'
-                  ? 'Next stop'
-                  : `${p.stopsToGo} stops`
+                  ? { text: 'Next', unit: null, kind: 'word' }
+                  : { text: String(p.stopsToGo), unit: 'stops', kind: 'minutes' }
           }
-          showCompact={trip.detent === 0}
-          compactIsLive
         />
         <View style={[styles.body, peek && styles.hidden]} accessibilityElementsHidden={peek}>
           <RideBody ride={ride} base={model} />
@@ -123,30 +127,27 @@ export default function TripSheet() {
 
   const isLive = model.source !== 'scheduled';
   const liveTripId = trip.eta.primaryArrival?.sched?.tripId ?? null;
-  const showJourney =
-    model.state === 'arrival' && trip.eta.primaryArrival?.kind === 'live';
+  const showJourney = model.state === 'arrival' && trip.eta.primaryArrival?.kind === 'live';
+  const hasLastBus = model.notes.some((n) => n.id === 'last-bus');
 
   return (
-    <ScrollView
-      contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + space.xl }]}
-      showsVerticalScrollIndicator={false}
-    >
+    <ScrollView contentContainerStyle={scrollStyle} showsVerticalScrollIndicator={false}>
       <SheetHeader
         routeCode={trip.routeCode}
-        stopName={trip.stopName}
-        subtitle={trip.route?.longName ?? null}
-        compact={model.compact}
-        showCompact={trip.detent === 0}
-        compactIsLive={isLive}
+        title={trip.stopName}
+        peek={peek}
+        status={model.state === 'arrival' || model.state === 'before-service' ? model.status : null}
+        source={model.source}
+        compact={model.hero}
       />
 
       {/* The peek detent shows the header row only; the body stays mounted
           (no SwiftUI host re-creation) but invisible so nothing peeks out
           clipped under it. */}
       <View style={[styles.body, peek && styles.hidden]} accessibilityElementsHidden={peek}>
-        <StateBody />
+        <StateBody scheme={scheme} />
 
-        <Notes notes={model.notes} />
+        <TripRows model={model} />
 
         {model.state === 'arrival' || model.action.kind === 'walking' ? (
           <PrimaryAction
@@ -167,7 +168,7 @@ export default function TripSheet() {
         ) : null}
 
         {trip.eta.scheduledUpcoming.length > 0 && model.state !== 'service-ended' ? (
-          <Section title={trip.stopName ? `Today at ${trip.stopName}` : 'Today'}>
+          <Section title="Today">
             <Timetable
               departures={trip.eta.scheduledUpcoming}
               formatClock={formatClockHHMM}
@@ -178,76 +179,62 @@ export default function TripSheet() {
           </Section>
         ) : null}
 
-        {stopPoint ? (
-          <Section title="Getting there">
-            <RowButton
-              onPress={() => openWalkingDirections(stopPoint)}
-              accessibilityHint="Opens Apple Maps"
-              style={styles.linkRow}
-            >
-              <SymbolView name="figure.walk" size={18} tintColor={color.accent} />
-              <Text style={styles.linkText}>Walking directions to your stop</Text>
-              <SymbolView name="arrow.up.right" size={13} tintColor={color.tertiaryLabel} />
-            </RowButton>
-            {ride.destinations.length > 0 ? (
-              <RowButton onPress={() => router.push('/ride')} style={styles.linkRow}>
-                <SymbolView name="bell.badge" size={18} tintColor={color.accent} />
-                <Text style={styles.linkText}>On the bus? Alert me before my stop</Text>
-                <SymbolView name="chevron.right" size={13} tintColor={color.tertiaryLabel} />
-              </RowButton>
-            ) : null}
-          </Section>
-        ) : null}
-
         {stopPoint && hasRail ? (
           <Section title="Rail nearby">
             <Connections stop={stopPoint} />
           </Section>
         ) : null}
 
-        {model.notes.some((n) => n.id === 'last-bus') ? (
-          <Section title="Last bus">
-            <View style={styles.toggleRow}>
-              <View style={styles.toggleText}>
-                <Text style={styles.toggleTitle}>Remind me to leave</Text>
-                <Text style={styles.toggleCaption}>
-                  A notification {10 + settings.walkMinutes} min before the last bus, from the timetable.
-                </Text>
-              </View>
-              <Switch
+        <View style={styles.options}>
+          <Hairline />
+          {model.state === 'arrival' ? (
+            <>
+              <ToggleRow
+                title="Follow on Lock Screen"
+                value={trip.isFollowing}
+                onValueChange={(on) => (on ? trip.follow() : trip.unfollow())}
+                accessibilityLabel="Follow this bus on the Lock Screen"
+              />
+              <Hairline />
+            </>
+          ) : null}
+          {hasLastBus ? (
+            <>
+              <ToggleRow
+                title="Remind me before the last bus"
+                caption={`${10 + settings.walkMinutes} min before it leaves, from the timetable`}
                 value={trip.lastBusReminder}
                 onValueChange={(on) => {
                   trip.setLastBusReminder(on);
                   if (on) void ensureNotificationPermission().catch(() => {});
                 }}
-                accessibilityLabel="Remind me to leave for the last bus"
               />
-            </View>
-          </Section>
-        ) : null}
-
-        {model.state === 'arrival' ? (
-          <Section title="Lock Screen">
-            <View style={styles.toggleRow}>
-              <View style={styles.toggleText}>
-                <Text style={styles.toggleTitle}>Follow this bus</Text>
-                <Text style={styles.toggleCaption}>
-                  Countdown and stops away in a Live Activity.
-                </Text>
-              </View>
-              <Switch
-                value={trip.isFollowing}
-                onValueChange={(on) => (on ? trip.follow() : trip.unfollow())}
-                accessibilityLabel="Follow this bus on the Lock Screen"
+              <Hairline />
+            </>
+          ) : null}
+          {ride.destinations.length > 0 ? (
+            <>
+              <LinkRow title="Alert me before my stop" onPress={() => router.push('/ride')} />
+              <Hairline />
+            </>
+          ) : null}
+          {stopPoint ? (
+            <>
+              <LinkRow
+                title="Walking directions"
+                value={`${settings.walkMinutes} min`}
+                external
+                onPress={() => openWalkingDirections(stopPoint)}
+                accessibilityHint="Opens Apple Maps"
               />
-            </View>
-          </Section>
-        ) : null}
+              <Hairline />
+            </>
+          ) : null}
+        </View>
 
         <Text style={styles.about}>
-          Live bus positions from data.gov.my GTFS Realtime. Live times are
-          estimated from each bus’s position; scheduled times come from the
-          timetable.
+          Live bus positions from data.gov.my. Live times are estimated from
+          each bus’s position; scheduled times come from the timetable.
         </Text>
       </View>
     </ScrollView>
@@ -260,7 +247,7 @@ function openWalkingDirections(stop: { lat: number; lng: number }) {
 }
 
 /** Hero area for the current state — the map above never changes. */
-function StateBody() {
+function StateBody({ scheme }: { scheme: 'light' | 'dark' }) {
   const trip = useTrip();
   const { model } = trip;
   const reduceMotion = useReducedMotion();
@@ -275,6 +262,7 @@ function StateBody() {
             message="The timetable didn’t download. Check your connection and try again."
             actionLabel="Try Again"
             onAction={trip.retryRouteLoad}
+            scheme={scheme}
             compact
           />
         );
@@ -288,9 +276,10 @@ function StateBody() {
     case 'service-ended':
       return (
         <EmptyState
-          icon="moon.zzz.fill"
-          title="No more buses today"
+          icon="moon.zzz"
+          title="No more buses tonight"
           message={model.detail ?? 'Check back in the morning for the first bus.'}
+          scheme={scheme}
           compact
         />
       );
@@ -299,7 +288,8 @@ function StateBody() {
         <EmptyState
           icon="bus"
           title={model.status}
-          message="Scheduled times will appear here as soon as the next run is due."
+          message="Scheduled times appear here as soon as the next run is due."
+          scheme={scheme}
           compact
         />
       );
@@ -320,20 +310,20 @@ function StateBody() {
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <View style={styles.section}>
-      <Text style={styles.sectionTitle} accessibilityRole="header" numberOfLines={1}>
-        {title}
-      </Text>
+      <SectionLabel>{title}</SectionLabel>
       {children}
     </View>
   );
 }
 
+/** Thin SF Symbol, plain type, one ink button. No illustration chrome. */
 function EmptyState({
   icon,
   title,
   message,
   actionLabel,
   onAction,
+  scheme,
   compact = false,
 }: {
   icon: SFSymbol;
@@ -341,15 +331,16 @@ function EmptyState({
   message: string;
   actionLabel?: string;
   onAction?: () => void;
+  scheme: 'light' | 'dark';
   compact?: boolean;
 }) {
   return (
     <View style={[styles.empty, compact && styles.emptyCompact]}>
       <SymbolView
         name={icon}
-        size={compact ? 32 : 44}
-        type="hierarchical"
-        tintColor={color.secondaryLabel}
+        size={compact ? 36 : 56}
+        weight="ultraLight"
+        tintColor={color.label}
       />
       <Text style={styles.emptyTitle} accessibilityRole="header">
         {title}
@@ -363,9 +354,15 @@ function EmptyState({
               buttonStyle('borderedProminent'),
               buttonBorderShape('capsule'),
               controlSize('large'),
+              tint(pick(hex.ink, scheme)),
             ]}
           >
-            <SwiftText modifiers={[font({ size: 17, weight: 'semibold' })]}>
+            <SwiftText
+              modifiers={[
+                font({ size: 17, weight: 'semibold' }),
+                foregroundStyle(pick(hex.paper, scheme)),
+              ]}
+            >
               {actionLabel}
             </SwiftText>
           </Button>
@@ -381,7 +378,7 @@ const styles = StyleSheet.create({
   },
   body: {
     paddingHorizontal: MARGIN,
-    paddingTop: space.md,
+    paddingTop: space.xxs,
     gap: space.lg,
   },
   hidden: {
@@ -392,7 +389,7 @@ const styles = StyleSheet.create({
   },
   placeholderNumber: {
     width: 120,
-    height: 72,
+    height: 96,
     borderRadius: 16,
     borderCurve: 'continuous',
     backgroundColor: color.fill,
@@ -402,55 +399,15 @@ const styles = StyleSheet.create({
     color: color.secondaryLabel,
   },
   section: {
-    gap: space.sm,
+    gap: space.xxs,
     marginTop: space.sm,
   },
-  sectionTitle: {
-    ...type.headline,
-    fontSize: 20,
-    lineHeight: 25,
-    fontWeight: '700',
-    color: color.label,
-  },
-  toggleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.sm,
-    padding: space.md,
-    borderRadius: 20,
-    borderCurve: 'continuous',
-    backgroundColor: color.fill,
-  },
-  toggleText: {
-    flex: 1,
-    gap: 2,
-  },
-  toggleTitle: {
-    ...type.body,
-    color: color.label,
-  },
-  toggleCaption: {
-    ...type.footnote,
-    color: color.secondaryLabel,
-  },
-  linkRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.sm,
-    padding: space.md,
-    borderRadius: 20,
-    borderCurve: 'continuous',
-    backgroundColor: color.fill,
-  },
-  linkText: {
-    ...type.body,
-    color: color.accent,
-    flex: 1,
+  options: {
+    marginTop: space.sm,
   },
   about: {
     ...type.footnote,
-    color: color.tertiaryLabel,
-    marginTop: space.xs,
+    color: color.secondaryLabel,
   },
   empty: {
     alignItems: 'center',
@@ -464,6 +421,7 @@ const styles = StyleSheet.create({
   },
   emptyTitle: {
     ...type.title,
+    fontWeight: '500',
     color: color.label,
     textAlign: 'center',
     marginTop: space.xs,

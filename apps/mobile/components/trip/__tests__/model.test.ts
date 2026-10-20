@@ -241,23 +241,24 @@ test('ghost guard: bus due soon, nothing on the route reporting, feed healthy', 
   assert.ok(!ids(later).includes('ghost'));
 });
 
-test('miss cost shows when the next bus is a long wait away', () => {
-  const m = buildTripModel(input({ laterArrivals: [sched(44)] }));
-  assert.equal(
-    m.notes.find((n) => n.id === 'miss-cost')?.text,
-    'Miss it and you wait 30 min for the next one',
-  );
-  assert.ok(!ids(buildTripModel(input({ laterArrivals: [sched(24)] }))).includes('miss-cost'));
+test('"Then" row: the following bus and the wait if you miss this one', () => {
+  assert.deepEqual(buildTripModel(input({ laterArrivals: [sched(44)] })).next, {
+    clock: '02:44',
+    wait: '+30 min',
+    live: false,
+  });
+  assert.equal(buildTripModel(input()).next, null);
 });
 
 test('last bus: heads-up late in the day, and a firm note on the final run', () => {
   const headsUp = buildTripModel(input({ laterArrivals: [sched(44)], lastBusToday: min(120) }));
-  assert.equal(headsUp.notes.find((n) => n.id === 'last-bus')?.text, 'Last bus today at 04:00');
+  const lastNote = headsUp.notes.find((n) => n.id === 'last-bus');
+  assert.equal(lastNote?.text, 'Last bus today at 04:00');
+  assert.equal(lastNote?.value, '04:00');
   assert.ok(!ids(buildTripModel(input({ lastBusToday: min(300) }))).includes('last-bus'));
 
   const final = buildTripModel(input({ lastBusToday: min(12), laterArrivals: [sched(24 * 60)] }));
   assert.equal(final.notes.find((n) => n.id === 'last-bus')?.text, 'This is the last bus today');
-  assert.ok(!ids(final).includes('miss-cost'));
 });
 
 test('bunching: two live buses close together, then a gap', () => {
@@ -273,7 +274,6 @@ test('bunching: two live buses close together, then a gap', () => {
     m.notes.find((n) => n.id === 'bunching')?.text,
     'Next two buses are 3 min apart, then a 43 min gap',
   );
-  assert.ok(!ids(m).includes('miss-cost'));
 });
 
 test('where-from names the stop the live bus is near; notes are capped', () => {

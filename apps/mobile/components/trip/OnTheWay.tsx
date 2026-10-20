@@ -2,15 +2,18 @@ import { SymbolView } from 'expo-symbols';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { formatStopName } from '@/components/map/format';
+import { Hairline } from '@/components/trip/Rows';
 import type { JourneyData, JourneyStopNode } from '@/hooks/useJourneyStops';
-import { color, radius, space, type } from '@/theme/design';
+import { color, space, type } from '@/theme/design';
 
 const MAX_BETWEEN = 6;
+const GLYPH_COL = 28;
 
 /**
- * Stop-by-stop approach (Flighty / Transit style): where the bus is, the
- * stops it still has to serve, and your stop as the terminal node. A route
- * colour rail ties them together; your stop is the only emphasised row.
+ * Stop-by-stop approach as hairline rows: where the bus is now, the stops it
+ * still has to serve, and your stop (ring) with its arrival. The same glyphs
+ * as the map: a chevron for the bus, hollow rings for stops, a ring with a
+ * dot for yours.
  */
 export function OnTheWay({
   journey,
@@ -28,155 +31,118 @@ export function OnTheWay({
   const shown = hidden > 0 ? between.slice(hidden) : between;
 
   return (
-    <View style={styles.group}>
-      <Row kind="bus" stop={journey.busStop} isFirst />
+    <View>
+      <Row kind="bus" stop={journey.busStop} trailing="now" />
       {hidden > 0 ? (
-        <Row kind="collapsed" label={`${hidden} more ${hidden === 1 ? 'stop' : 'stops'}`} />
+        <>
+          <Hairline inset={GLYPH_COL} />
+          <Row kind="collapsed" label={`${hidden} more ${hidden === 1 ? 'stop' : 'stops'}`} />
+        </>
       ) : null}
       {shown.map((s) => (
-        <Row key={`${s.stopId}-${s.sequence}`} kind="stop" stop={s} />
+        <View key={`${s.stopId}-${s.sequence}`}>
+          <Hairline inset={GLYPH_COL} />
+          <Row kind="stop" stop={s} />
+        </View>
       ))}
-      <Row kind="user" stop={journey.userStop} trailing={arrivalLabel} isLast />
+      <Hairline inset={GLYPH_COL} />
+      <Row kind="user" stop={journey.userStop} trailing={arrivalLabel} />
     </View>
   );
 }
 
 type RowProps =
-  | { kind: 'bus'; stop: JourneyStopNode; isFirst?: boolean; isLast?: boolean; trailing?: null }
-  | { kind: 'stop'; stop: JourneyStopNode; isFirst?: boolean; isLast?: boolean; trailing?: null }
-  | { kind: 'user'; stop: JourneyStopNode; isFirst?: boolean; isLast?: boolean; trailing: string | null }
-  | { kind: 'collapsed'; label: string; isFirst?: boolean; isLast?: boolean; trailing?: null };
+  | { kind: 'bus' | 'stop'; stop: JourneyStopNode; trailing?: string | null }
+  | { kind: 'user'; stop: JourneyStopNode; trailing: string | null }
+  | { kind: 'collapsed'; label: string; trailing?: null };
 
 function Row(props: RowProps) {
-  const { kind, isFirst, isLast } = props;
   const title =
-    props.kind === 'collapsed'
-      ? props.label
+    props.kind === 'collapsed' ? props.label : formatStopName(props.stop.name);
+  const a11y =
+    props.kind === 'user'
+      ? `Your stop, ${title}${props.trailing ? `, ${props.trailing}` : ''}`
       : props.kind === 'bus'
-        ? `Bus near ${formatStopName(props.stop.name)}`
-        : formatStopName(props.stop.name);
+        ? `Bus now near ${title}`
+        : title;
 
   return (
-    <View
-      style={styles.row}
-      accessible
-      accessibilityLabel={
-        kind === 'user'
-          ? `Your stop, ${title}${props.trailing ? `, ${props.trailing}` : ''}`
-          : title
-      }
-    >
-      <View style={styles.railCol}>
-        <View style={[styles.rail, isFirst && styles.railHiddenTop]} />
-        <View style={[styles.rail, isLast && styles.railHiddenBottom]} />
-        <View style={styles.nodeWrap}>
-          {kind === 'bus' ? (
-            <View style={styles.busNode}>
-              <SymbolView name="bus.fill" size={11} tintColor="#FFFFFF" weight="semibold" />
-            </View>
-          ) : kind === 'user' ? (
-            <View style={styles.userNode}>
-              <View style={styles.userNodeCore} />
-            </View>
-          ) : kind === 'collapsed' ? (
-            <SymbolView name="ellipsis" size={12} tintColor={color.tertiaryLabel} />
-          ) : (
-            <View style={styles.stopNode} />
-          )}
-        </View>
+    <View style={styles.row} accessible accessibilityLabel={a11y}>
+      <View style={styles.glyph}>
+        {props.kind === 'bus' ? (
+          <SymbolView name="location.north.fill" size={13} tintColor={color.label} style={styles.chevron} />
+        ) : props.kind === 'user' ? (
+          <View style={styles.userRing}>
+            <View style={styles.userDot} />
+          </View>
+        ) : props.kind === 'collapsed' ? (
+          <SymbolView name="ellipsis" size={12} tintColor={color.tertiaryLabel} />
+        ) : (
+          <View style={styles.stopRing} />
+        )}
       </View>
-      <View style={styles.textCol}>
-        <Text
-          style={[
-            styles.title,
-            kind === 'user' && styles.titleUser,
-            kind === 'collapsed' && styles.titleMuted,
-          ]}
-          numberOfLines={1}
-        >
-          {title}
+      <Text
+        style={[
+          styles.title,
+          props.kind === 'user' && styles.titleUser,
+          (props.kind === 'collapsed' || props.kind === 'stop') && styles.titleMuted,
+        ]}
+        numberOfLines={1}
+      >
+        {title}
+      </Text>
+      {props.trailing ? (
+        <Text style={[styles.trailing, props.kind === 'user' && styles.trailingUser]}>
+          {props.trailing}
         </Text>
-        {kind === 'user' ? <Text style={styles.caption}>Your stop</Text> : null}
-      </View>
-      {kind === 'user' && props.trailing ? (
-        <Text style={styles.trailing}>{props.trailing}</Text>
       ) : null}
     </View>
   );
 }
 
-const RAIL_X = 22;
-
 const styles = StyleSheet.create({
-  group: {
-    borderRadius: radius.group,
-    borderCurve: 'continuous',
-    backgroundColor: color.fill,
-    paddingVertical: space.xs,
-  },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    minHeight: 44,
-    paddingRight: space.md,
+    minHeight: 42,
   },
-  railCol: {
-    width: RAIL_X * 2,
-    alignSelf: 'stretch',
-    alignItems: 'center',
+  glyph: {
+    width: GLYPH_COL,
+    alignItems: 'flex-start',
+    justifyContent: 'center',
   },
-  rail: {
-    flex: 1,
-    width: 3,
-    backgroundColor: color.accent,
-    opacity: 0.85,
+  chevron: {
+    width: 14,
+    height: 14,
+    transform: [{ rotate: '90deg' }],
   },
-  railHiddenTop: { opacity: 0 },
-  railHiddenBottom: { opacity: 0 },
-  nodeWrap: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
+  stopRing: {
+    width: 9,
+    height: 9,
+    marginLeft: 2,
+    borderRadius: 4.5,
+    borderWidth: 1.5,
+    borderColor: color.label,
+  },
+  userRing: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    borderWidth: 1.5,
+    borderColor: color.label,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  busNode: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: color.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  stopNode: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    borderWidth: 2,
-    borderColor: color.accent,
-    backgroundColor: color.background,
-  },
-  userNode: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: color.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  userNodeCore: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#FFFFFF',
-  },
-  textCol: {
-    flex: 1,
-    paddingVertical: space.xs,
+  userDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: color.label,
   },
   title: {
     ...type.body,
     fontSize: 16,
+    flex: 1,
     color: color.label,
   },
   titleUser: {
@@ -185,13 +151,14 @@ const styles = StyleSheet.create({
   titleMuted: {
     color: color.secondaryLabel,
   },
-  caption: {
-    ...type.footnote,
-    color: color.secondaryLabel,
-  },
   trailing: {
-    ...type.headline,
-    color: color.label,
+    ...type.status,
+    marginLeft: space.xs,
+    color: color.secondaryLabel,
     fontVariant: ['tabular-nums'],
+  },
+  trailingUser: {
+    color: color.label,
+    fontWeight: '600',
   },
 });

@@ -63,13 +63,15 @@ const NextBusWidget = (
   'widget';
 
   // --- Palette (inlined) ----------------------------------------------------
-  const accent = '#0A84FF';
+  // Calm Mono: ink on paper, green only for "live".
   const liveGreen = '#30D158';
 
   const family = environment.widgetFamily ?? 'systemSmall';
   const fullColor = (environment.widgetRenderingMode ?? 'fullColor') === 'fullColor';
   const dimmed = environment.isLuminanceReduced === true;
   const dark = environment.colorScheme === 'dark';
+  const ink = dark ? '#F5F5F7' : '#111114';
+  const paper = dark ? '#0E0E10' : '#FFFFFF';
   const at = environment.date ? environment.date.getTime() : Date.now();
 
   // Asia/Kuala_Lumpur is UTC+8 with no DST: plain arithmetic, no Intl needed
@@ -109,7 +111,7 @@ const NextBusWidget = (
         timerInterval={{ lower: new Date(Math.min(at, next.epochMs)), upper: new Date(next.epochMs) }}
         countsDown
         modifiers={[
-          font({ size, weight: isLive ? 'bold' : 'semibold', design: 'rounded' }),
+          font({ size, weight: 'light' }),
           monospacedDigit(),
           multilineTextAlignment(align),
           foregroundStyle(primary),
@@ -120,7 +122,7 @@ const NextBusWidget = (
     ) : (
       <Text
         modifiers={[
-          font({ size, weight: 'semibold', design: 'rounded' }),
+          font({ size, weight: 'semibold'}),
           monospacedDigit(),
           multilineTextAlignment(align),
           foregroundStyle(primary),
@@ -135,10 +137,14 @@ const NextBusWidget = (
   const badge = (size: number) => (
     <Text
       modifiers={[
-        font({ size, weight: 'bold', design: 'rounded' }),
-        foregroundStyle(fullColor && !dimmed ? '#FFFFFF' : primary),
+        font({ size, weight: 'semibold' }),
+        monospacedDigit(),
+        foregroundStyle(fullColor && !dimmed ? paper : primary),
         padding({ horizontal: size * 0.5, vertical: size * 0.2 }),
-        background(fullColor && !dimmed ? accent : { type: 'hierarchical', style: 'quaternary' }, shapes.capsule()),
+        background(
+          fullColor && !dimmed ? ink : { type: 'hierarchical', style: 'quaternary' },
+          shapes.roundedRectangle({ cornerRadius: size * 0.4 }),
+        ),
         lineLimit(1),
       ]}
     >
@@ -189,7 +195,7 @@ const NextBusWidget = (
     return message('bus', 'Open BusBuddy to choose a route', '');
   };
 
-  const systemBackground = fullColor ? (dark ? '#1C1C1E' : '#FFFFFF') : 'clear';
+  const systemBackground = fullColor ? paper : 'clear';
   const systemRoot = (content: ReturnType<typeof messageFor>) => (
     <VStack
       alignment="leading"
@@ -224,7 +230,7 @@ const NextBusWidget = (
     if (next) {
       body = (
         <VStack spacing={0}>
-          <Text modifiers={[font({ size: 11, weight: 'bold', design: 'rounded' }), lineLimit(1), minimumScaleFactor(0.6)]}>
+          <Text modifiers={[font({ size: 11, weight: 'bold'}), lineLimit(1), minimumScaleFactor(0.6)]}>
             {routeCode}
           </Text>
           {hero(withinCountdown ? 15 : 16, 'center')}
@@ -236,7 +242,7 @@ const NextBusWidget = (
         <VStack spacing={1}>
           <Image systemName={state === 'ended' ? 'moon.zzz' : 'bus'} size={15} />
           {state === 'ended' && props.firstBusMs > 0 ? (
-            <Text modifiers={[font({ size: 12, weight: 'semibold', design: 'rounded' }), monospacedDigit()]}>
+            <Text modifiers={[font({ size: 12, weight: 'semibold'}), monospacedDigit()]}>
               {clock(props.firstBusMs)}
             </Text>
           ) : null}
@@ -257,7 +263,7 @@ const NextBusWidget = (
       return accessoryRoot(
         <VStack alignment="leading" spacing={1} modifiers={[frame({ maxWidth: 10000, alignment: 'leading' })]}>
           {routeCode ? (
-            <Text modifiers={[font({ size: 15, weight: 'bold', design: 'rounded' }), lineLimit(1)]}>{routeCode}</Text>
+            <Text modifiers={[font({ size: 15, weight: 'bold'}), lineLimit(1)]}>{routeCode}</Text>
           ) : null}
           <Text modifiers={[font({ size: 13, weight: 'medium' }), lineLimit(2)]}>{title}</Text>
           {state === 'ended' && firstBusText ? caption(firstBusText, 12, secondary) : null}
@@ -268,7 +274,7 @@ const NextBusWidget = (
       <VStack alignment="leading" spacing={0} modifiers={[frame({ maxWidth: 10000, alignment: 'leading' })]}>
         <HStack spacing={4}>
           <Image systemName={statusIcon} size={11} />
-          <Text modifiers={[font({ size: 15, weight: 'bold', design: 'rounded' }), monospacedDigit(), lineLimit(1)]}>
+          <Text modifiers={[font({ size: 15, weight: 'bold'}), monospacedDigit(), lineLimit(1)]}>
             {`${routeCode} · ${nextClock}`}
           </Text>
         </HStack>
@@ -311,7 +317,7 @@ const NextBusWidget = (
             ? rows.map((d) => (
                 <HStack key={`dep-${d.epochMs}`} spacing={5}>
                   <Image systemName="clock" size={11} modifiers={[foregroundStyle(tertiary)]} />
-                  <Text modifiers={[font({ size: 17, weight: 'semibold', design: 'rounded' }), monospacedDigit(), lineLimit(1)]}>
+                  <Text modifiers={[font({ size: 17, weight: 'semibold'}), monospacedDigit(), lineLimit(1)]}>
                     {clock(d.epochMs)}
                   </Text>
                 </HStack>

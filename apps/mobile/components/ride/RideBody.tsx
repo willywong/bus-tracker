@@ -1,18 +1,20 @@
 import { Button, Host, Text as SwiftText } from '@expo/ui/swift-ui';
 import { buttonBorderShape, buttonStyle, controlSize, font, tint } from '@expo/ui/swift-ui/modifiers';
-import { SymbolView } from 'expo-symbols';
-import { StyleSheet, Switch, Text, View } from 'react-native';
+import { StyleSheet, Text, useColorScheme, View } from 'react-native';
 
-import { Hero } from '@/components/trip/Hero';
+import { Hero, SourceMark } from '@/components/trip/Hero';
 import type { HeroValue, TripModel } from '@/components/trip/model';
+import { Hairline, KeyValueRow, ToggleRow } from '@/components/trip/Rows';
 import type { RideContextValue } from '@/state/RideContext';
-import { color, radius, space, type } from '@/theme/design';
+import { color, hex, pick, space, type } from '@/theme/design';
 
 /**
- * The trip sheet while you're on the bus: stops left as the one number,
- * the next stop by name, and a way to end the ride.
+ * The trip sheet while you're on the bus: stops left as the one number, the
+ * next stop by name, the rough time left and where the position comes from,
+ * and a way to end the ride.
  */
 export function RideBody({ ride, base }: { ride: RideContextValue; base: TripModel }) {
+  const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
   const p = ride.progress;
   const dest = ride.destination;
   if (!dest) return null;
@@ -41,51 +43,49 @@ export function RideBody({ ride, base }: { ride: RideContextValue; base: TripMod
     accessibilityLabel: label,
   };
 
-  const status =
-    p == null || p.phase === 'arrived'
-      ? null
-      : p.phase === 'next-is-yours'
-        ? 'Get ready to get off'
-        : p.nextStop
-          ? `Next: ${p.nextStop.name}`
-          : null;
   const tracking =
     ride.positionSource === 'phone'
       ? 'Using your location'
       : ride.positionSource === 'bus'
         ? 'Using the bus’s live position'
         : 'Waiting for a location…';
-  const minutes =
-    ride.minutesLeft != null && p?.phase === 'riding' ? `About ${ride.minutesLeft} min · ` : '';
 
   return (
     <View style={styles.wrap}>
-      <Hero model={model} />
-      {status ? (
-        <View style={styles.statusRow}>
-          <SymbolView name="bell.fill" size={14} tintColor={color.accent} />
-          <Text style={styles.status} numberOfLines={2}>
-            {status}
-          </Text>
-        </View>
-      ) : null}
-      {p?.phase !== 'arrived' ? (
-        <Text style={styles.detail}>
-          {minutes}
-          {tracking}
-        </Text>
-      ) : null}
+      <View style={styles.heroBlock}>
+        <Hero model={model} />
+        {p?.phase !== 'arrived' ? (
+          <View style={styles.statusRow}>
+            <SourceMark source={ride.positionSource ? 'live' : 'scheduled'} />
+            <Text style={styles.status}>
+              {p?.phase === 'next-is-yours' ? 'Get ready to get off' : tracking}
+            </Text>
+          </View>
+        ) : null}
+      </View>
 
-      <View style={styles.toggleRow}>
-        <View style={styles.toggleText}>
-          <Text style={styles.toggleTitle}>Announce my stop</Text>
-          <Text style={styles.toggleCaption}>Speaks when yours is next. Best with headphones.</Text>
-        </View>
-        <Switch
+      <View>
+        <Hairline />
+        {p?.nextStop && p.phase === 'riding' ? (
+          <>
+            <KeyValueRow label="Next stop" value={p.nextStop.name} />
+            <Hairline />
+          </>
+        ) : null}
+        {ride.minutesLeft != null && p?.phase === 'riding' ? (
+          <>
+            <KeyValueRow label="Time left" value={`about ${ride.minutesLeft} min`} />
+            <Hairline />
+          </>
+        ) : null}
+        <ToggleRow
+          title="Announce my stop"
+          caption="Speaks when yours is next. Best with headphones."
           value={ride.speak}
           onValueChange={ride.setSpeak}
           accessibilityLabel="Announce my stop out loud"
         />
+        <Hairline />
       </View>
 
       <Host matchContents style={styles.end}>
@@ -95,7 +95,7 @@ export function RideBody({ ride, base }: { ride: RideContextValue; base: TripMod
             buttonStyle('bordered'),
             buttonBorderShape('capsule'),
             controlSize('large'),
-            tint(p?.phase === 'arrived' ? '#007AFF' : '#FF3B30'),
+            tint(pick(hex.ink, scheme)),
           ]}
         >
           <SwiftText modifiers={[font({ size: 17, weight: 'semibold' })]}>
@@ -109,47 +109,21 @@ export function RideBody({ ride, base }: { ride: RideContextValue; base: TripMod
 
 const styles = StyleSheet.create({
   wrap: {
+    gap: space.lg,
+  },
+  heroBlock: {
     gap: space.xs,
   },
   statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: space.xs,
   },
   status: {
     ...type.status,
     color: color.label,
-    fontWeight: '500',
-    flexShrink: 1,
-  },
-  detail: {
-    ...type.status,
-    color: color.secondaryLabel,
-  },
-  toggleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.sm,
-    padding: space.md,
-    marginTop: space.md,
-    borderRadius: radius.group,
-    borderCurve: 'continuous',
-    backgroundColor: color.fill,
-  },
-  toggleText: {
-    flex: 1,
-    gap: 2,
-  },
-  toggleTitle: {
-    ...type.body,
-    color: color.label,
-  },
-  toggleCaption: {
-    ...type.footnote,
-    color: color.secondaryLabel,
   },
   end: {
-    marginTop: space.sm,
     alignSelf: 'center',
   },
 });

@@ -1,65 +1,55 @@
 import { StyleSheet, Text, View } from 'react-native';
 
-import { color, MARGIN, motion, space, type } from '@/theme/design';
-import Animated from 'react-native-reanimated';
+import { SourceMark } from '@/components/trip/Hero';
+import type { HeroValue, SourceKind } from '@/components/trip/model';
+import { color, MARGIN, space, type } from '@/theme/design';
 
 interface SheetHeaderProps {
   routeCode: string;
-  stopName: string | null;
-  subtitle: string | null;
-  /** Compact ETA, shown only at the peek detent where the hero is off-screen. */
-  compact: string | null;
-  showCompact: boolean;
-  compactIsLive: boolean;
+  /** Headline: the boarding stop, or "To <stop>" while riding. */
+  title: string | null;
+  /** Peek detent: add the status line and the compact number, since the body is hidden. */
+  peek: boolean;
+  status: string | null;
+  source: SourceKind;
+  compact: HeroValue | null;
 }
 
 /**
- * Always-visible top row of the trip sheet — the only content at the peek
- * detent. Route badge + where you board, with a compact ETA on the trailing
- * edge that fades in when the sheet is collapsed.
+ * Top row of the trip sheet. Outlined route chip and the stop name; at the
+ * peek detent (where it is the only content) it also carries the status
+ * line and a thin compact number on the trailing edge.
  */
-export function SheetHeader({
-  routeCode,
-  stopName,
-  subtitle,
-  compact,
-  showCompact,
-  compactIsLive,
-}: SheetHeaderProps) {
+export function SheetHeader({ routeCode, title, peek, status, source, compact }: SheetHeaderProps) {
   return (
     <View style={styles.row} accessibilityRole="header">
       <RouteBadge code={routeCode} />
       <View style={styles.titles}>
         <Text style={styles.title} numberOfLines={1}>
-          {stopName ?? 'Your stop'}
+          {title ?? 'Your stop'}
         </Text>
-        {subtitle ? (
-          <Text style={styles.subtitle} numberOfLines={1}>
-            {subtitle}
-          </Text>
+        {peek && status ? (
+          <View style={styles.statusRow}>
+            <SourceMark source={source} size={6} />
+            <Text style={styles.status} numberOfLines={1}>
+              {status}
+            </Text>
+          </View>
         ) : null}
       </View>
-      {compact ? (
-        <Animated.Text
-          style={[
-            styles.compact,
-            !compactIsLive && styles.compactScheduled,
-            {
-              opacity: showCompact ? 1 : 0,
-              transitionProperty: 'opacity',
-              transitionDuration: motion.state,
-            },
-          ]}
-          accessibilityElementsHidden={!showCompact}
-          importantForAccessibility={showCompact ? 'auto' : 'no-hide-descendants'}
-        >
-          {compact}
-        </Animated.Text>
+      {peek && compact ? (
+        <View style={styles.compact} accessible accessibilityLabel={compact.unit ? `${compact.text} ${compact.unit}` : compact.text}>
+          <Text style={[styles.compactText, compact.kind === 'word' && styles.compactWord]}>
+            {compact.text}
+          </Text>
+          {compact.unit ? <Text style={styles.compactUnit}>{compact.unit}</Text> : null}
+        </View>
       ) : null}
     </View>
   );
 }
 
+/** Outlined chip: the route code in ink, no fill. */
 export function RouteBadge({ code, size = 'regular' }: { code: string; size?: 'regular' | 'small' }) {
   return (
     <View style={[styles.badge, size === 'small' && styles.badgeSmall]}>
@@ -79,55 +69,70 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: space.sm,
     paddingHorizontal: MARGIN,
-    minHeight: 52,
+    minHeight: 48,
   },
   titles: {
     flex: 1,
-    gap: 1,
+    gap: 2,
   },
   title: {
-    ...type.title,
-    fontSize: 20,
-    lineHeight: 25,
+    ...type.body,
+    fontWeight: '500',
     color: color.label,
   },
-  subtitle: {
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  status: {
     ...type.footnote,
+    flexShrink: 1,
     color: color.secondaryLabel,
   },
   compact: {
-    ...type.headline,
-    fontSize: 20,
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 4,
+  },
+  compactText: {
+    fontSize: 34,
+    lineHeight: 40,
+    fontWeight: '200',
     color: color.label,
     fontVariant: ['tabular-nums'],
   },
-  compactScheduled: {
-    fontWeight: '400',
+  compactWord: {
+    fontSize: 22,
+    fontWeight: '300',
+  },
+  compactUnit: {
+    ...type.footnote,
+    fontSize: 14,
     color: color.secondaryLabel,
   },
   badge: {
-    minWidth: 52,
-    height: 32,
-    paddingHorizontal: 10,
-    borderRadius: 16,
-    backgroundColor: color.accent,
+    height: 24,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: color.outline,
     alignItems: 'center',
     justifyContent: 'center',
   },
   badgeSmall: {
-    minWidth: 0,
-    height: 22,
-    paddingHorizontal: 8,
-    borderRadius: 11,
+    height: 20,
+    paddingHorizontal: 6,
+    borderRadius: 5,
   },
   badgeText: {
-    color: color.onAccent,
-    fontSize: 15,
-    fontWeight: '700',
-    fontFamily: 'ui-rounded',
+    color: color.label,
+    fontSize: 13,
+    fontWeight: '600',
+    letterSpacing: 0.3,
     fontVariant: ['tabular-nums'],
   },
   badgeTextSmall: {
-    fontSize: 12,
+    fontSize: 11,
   },
 });

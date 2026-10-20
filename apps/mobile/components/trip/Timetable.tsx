@@ -1,22 +1,21 @@
-import { SymbolView } from 'expo-symbols';
 import { StyleSheet, Text, View } from 'react-native';
 
 import type { ScheduledDeparture } from '@/db/queries';
-import { color, radius, space, type } from '@/theme/design';
+import { color, space, type } from '@/theme/design';
 
 interface TimetableProps {
   departures: ScheduledDeparture[];
   formatClock: (epochMs: number) => string;
-  /** Scheduled trip the live bus is matched to, marked with the live glyph. */
+  /** Scheduled trip the live bus is matched to, marked with the live dot. */
   liveTripId: string | null;
   firstBusToday: number | null;
   lastBusToday: number | null;
 }
 
 /**
- * Today's departures at your stop as a calm grid of clock times — the next
- * one emphasised, the live-matched one marked. Tabular digits so columns
- * line up.
+ * Today's remaining departures as a quiet grid of clock times: light weight,
+ * tabular digits, the next one in semibold, the live-matched one with the
+ * green dot. No box around it.
  */
 export function Timetable({
   departures,
@@ -32,7 +31,7 @@ export function Timetable({
   ].filter(Boolean);
 
   return (
-    <View style={styles.group}>
+    <View style={styles.wrap}>
       <View style={styles.grid}>
         {departures.map((d, i) => {
           const isLive = d.tripId === liveTripId;
@@ -46,32 +45,20 @@ export function Timetable({
               <Text style={[styles.time, i === 0 && styles.timeNext]}>
                 {formatClock(d.departureEpochMs)}
               </Text>
-              {isLive ? (
-                <SymbolView
-                  name="dot.radiowaves.left.and.right"
-                  size={11}
-                  tintColor={color.live}
-                  weight="semibold"
-                />
-              ) : null}
+              {isLive ? <View style={styles.liveDot} /> : null}
             </View>
           );
         })}
       </View>
-      {bounds.length > 0 ? (
-        <Text style={styles.bounds}>{bounds.join(' · ')}</Text>
-      ) : null}
+      {bounds.length > 0 ? <Text style={styles.bounds}>{bounds.join(' · ')}</Text> : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  group: {
-    borderRadius: radius.group,
-    borderCurve: 'continuous',
-    backgroundColor: color.fill,
-    padding: space.md,
+  wrap: {
     gap: space.sm,
+    paddingTop: space.xxs,
   },
   grid: {
     flexDirection: 'row',
@@ -79,19 +66,25 @@ const styles = StyleSheet.create({
     rowGap: space.sm,
   },
   cell: {
-    width: '25%',
+    width: '20%',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
   },
   time: {
     ...type.body,
-    color: color.secondaryLabel,
+    fontWeight: '300',
+    color: color.label,
     fontVariant: ['tabular-nums'],
   },
   timeNext: {
-    color: color.label,
     fontWeight: '600',
+  },
+  liveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: color.live,
   },
   bounds: {
     ...type.footnote,
