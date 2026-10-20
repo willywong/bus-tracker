@@ -141,7 +141,12 @@ function MapTypeCard({ kind, selected, onSelect }: MapTypeCardProps) {
       >
         <HStack
           modifiers={[
-            frame({ height: 76, maxWidth: Number.POSITIVE_INFINITY }),
+            // @expo/ui 58 splits fixed vs flexible frame; pin height via min/max.
+            frame({
+              minHeight: 76,
+              maxHeight: 76,
+              maxWidth: Number.POSITIVE_INFINITY,
+            }),
             background(
               fillColor,
               shapes.roundedRectangle({ cornerRadius: 11 }),

@@ -1,12 +1,20 @@
 import { SymbolView } from 'expo-symbols';
-import { StyleSheet, View, type ColorValue } from 'react-native';
+import { Animated, StyleSheet, View, type ColorValue } from 'react-native';
 import {
   AnimatedRegion,
   MapMarker,
-  MarkerAnimated,
+  MarkerAnimated as RawMarkerAnimated,
+  type MapMarkerProps,
 } from 'react-native-maps';
 
 import { tokens } from '@/theme/tokens';
+
+// react-native-maps types MarkerAnimated as `AnimatedComponent<typeof MapMarker>`,
+// but RN 0.88's `AnimatedComponent` is generic over props, not the component.
+const MarkerAnimated = RawMarkerAnimated as unknown as Animated.AnimatedComponent<
+  MapMarkerProps,
+  MapMarker
+>;
 
 interface LiveBusMarkerProps {
   /** Animated region tracking the live GPS position. */

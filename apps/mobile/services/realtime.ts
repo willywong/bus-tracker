@@ -60,7 +60,8 @@ export interface RealtimeStore {
 }
 
 export interface AppStateLike {
-  readonly currentState: AppStateStatus;
+  /** RN 0.88 types this as `string | null | undefined`; we only compare to "active". */
+  readonly currentState: AppStateStatus | string | null | undefined;
   addEventListener(
     type: "change",
     listener: (status: AppStateStatus) => void,

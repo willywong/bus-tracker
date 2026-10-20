@@ -19,6 +19,7 @@ import {
   TextInput,
   View,
   type ListRenderItemInfo,
+  type TextInputInstance,
 } from 'react-native';
 
 import { formatStopName } from '@/components/map/format';
@@ -346,7 +347,7 @@ function SearchBar({
   value: string;
   onChange: (v: string) => void;
 }) {
-  const inputRef = useRef<TextInput | null>(null);
+  const inputRef = useRef<TextInputInstance | null>(null);
   useEffect(() => {
     const t = setTimeout(() => inputRef.current?.focus(), 180);
     return () => clearTimeout(t);
