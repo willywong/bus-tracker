@@ -1,0 +1,131 @@
+# Builds an UNSIGNED iOS .ipa of the mobile app on a GitHub-hosted macOS
+# runner and uploads it as a workflow artifact.
+#
+# Run it from the Actions tab → "iOS unsigned IPA" → Run workflow.
+#
+# The IPA has no signature, so iOS won't install it as-is: re-sign it first
+# (Sideloadly / AltStore / docs/plans/09-device-install/03-resign-runbook.md).
+# Free-account re-signing may drop the Live Activity widget extension.
+name: iOS unsigned IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_base_url:
+        description: Backend URL baked into the app (EXPO_PUBLIC_API_BASE_URL)
+        required: true
+        default: https://bus-tracker-api.vercel.app
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-unsigned-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      CI: "1"
+      EXPO_NO_TELEMETRY: "1"
+      EXPO_PUBLIC_API_BASE_URL: ${{ inputs.api_base_url }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Toolchain versions
+        run: |
+          xcodebuild -version
+          node --version
+          pnpm --version
+          pod --version
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The app imports @bus-tracker/shared from its compiled dist/.
+      - name: Build shared package
+        run: pnpm --filter @bus-tracker/shared build
+
+      - name: Generate native iOS project
+        working-directory: apps/mobile
+        run: npx expo prebuild --platform ios --clean --no-install
+
+      - name: Cache CocoaPods
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/CocoaPods
+            ~/.cocoapods
+          key: pods-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pods-${{ runner.os }}-
+
+      - name: Install pods
+        working-directory: apps/mobile/ios
+        run: pod install
+
+      - name: Archive (unsigned)
+        working-directory: apps/mobile/ios
+        run: |
+          set -o pipefail
+          WORKSPACE=$(ls -d *.xcworkspace | head -n1)
+          SCHEME="${WORKSPACE%.xcworkspace}"
+          echo "Workspace: $WORKSPACE  Scheme: $SCHEME"
+          xcodebuild \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath "$RUNNER_TEMP/app.xcarchive" \
+            archive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            | tee "$RUNNER_TEMP/xcodebuild.log" \
+            | grep -E "^(\*\*|error:|warning: .*deprecated)|error:" || true
+          test -d "$RUNNER_TEMP/app.xcarchive/Products/Applications" || {
+            echo "::error::Archive failed — see the xcodebuild-log artifact"
+            exit 1
+          }
+
+      - name: Package IPA
+        id: package
+        run: |
+          APP=$(ls -d "$RUNNER_TEMP"/app.xcarchive/Products/Applications/*.app | head -n1)
+          NAME=$(basename "$APP" .app)
+          VERSION=$(node -p "require('./apps/mobile/app.json').expo.version")
+          IPA="${NAME}-${VERSION}-${GITHUB_SHA::7}-unsigned.ipa"
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/"
+          (cd "$RUNNER_TEMP/ipa" && zip -qry "$IPA" Payload)
+          echo "path=$RUNNER_TEMP/ipa/$IPA" >> "$GITHUB_OUTPUT"
+          echo "name=$IPA" >> "$GITHUB_OUTPUT"
+          ls -lh "$RUNNER_TEMP/ipa/$IPA"
+          echo "### Built \`$IPA\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Unsigned — re-sign before installing. API: \`$EXPO_PUBLIC_API_BASE_URL\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: ${{ steps.package.outputs.path }}
+          retention-days: 14
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: xcodebuild-log
+          path: ${{ runner.temp }}/xcodebuild.log
+          retention-days: 7
+          if-no-files-found: ignore
