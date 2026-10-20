@@ -44,6 +44,24 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
 
+      # Pin Xcode 26.x: Expo SDK 58 has open Xcode 27 issues (expo/expo#50482
+      # archive failure in expo-modules-jsi, #51454 launch crash), and the
+      # runner's default Xcode can change under us.
+      - name: Select Xcode
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_26.6*.app 2>/dev/null | sort -V | tail -n1)
+          if [ -z "$XCODE" ]; then
+            XCODE=$(ls -d /Applications/Xcode_26.*.app 2>/dev/null | sort -V | tail -n1)
+          fi
+          if [ -n "$XCODE" ]; then
+            sudo xcode-select -s "$XCODE/Contents/Developer"
+            echo "Using $XCODE"
+          else
+            echo "::warning::No Xcode 26.x found; using the runner default"
+          fi
+          # Report every compile error in one run instead of stopping at the first.
+          defaults write com.apple.dt.Xcode IDEBuildingContinueBuildingAfterErrors -bool YES
+
       - name: Toolchain versions
         run: |
           xcodebuild -version
