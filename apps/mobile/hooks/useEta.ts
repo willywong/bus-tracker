@@ -1,8 +1,10 @@
 import {
   computeEta,
+  estimateLiveMinutes,
   evaluateApproach,
   pickApproachingVehicle,
   polylineLength,
+  projectOntoRoute,
   toMalaysiaParts,
   type ComputeEtaResult,
   type EtaSource,
@@ -11,7 +13,6 @@ import {
   type VehiclePosition,
 } from "@bus-tracker/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AppState, type AppStateStatus } from "react-native";
 import { openDb } from "@/db/database";
 import {
   getRoutePolyline,
@@ -25,7 +26,6 @@ import {
 } from "@/db/queries";
 import { useBusPosition } from "@/hooks/useBusPosition";
 import { useScheduledDepartures } from "@/hooks/useScheduledDepartures";
-import { fetchTrafficEta, type TrafficProvider } from "@/services/trafficEta";
 import {
   resolveEta,
   useArrivalStatus,
@@ -38,14 +38,11 @@ import { devNow } from "@/utils/devClock";
 
 export type { ApproachingBus } from "@/components/tracker/logic";
 
-const TRAFFIC_REFRESH_MS = 30_000;
 // Max age of the *GTFS Realtime* feed before we fall back to scheduled ETA.
 // With a 30s poll cadence, 75s tolerates one fully-missed poll (~60s) plus
 // ~15s of network jitter — previously 60s, which flipped to SCHEDULED on any
 // single slow tick.
 const STALE_AFTER_MS = 75_000;
-/** Rough bus speed used to project a "next vehicle" ETA when we don't hit /traffic-eta for the second bus. */
-const FALLBACK_BUS_METERS_PER_MINUTE = 20_000 / 60;
 
 function toFiniteOrNull(v: number | null | undefined): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
@@ -74,17 +71,14 @@ export interface UseEtaResult {
   minutesToStop: number | null;
   isStale: boolean;
   source: EtaSource | null;
-  /** Traffic provider that produced the most recent traffic minutes, or null if ETA is schedule-based. */
-  trafficSource: TrafficProvider | null;
   vehicleId: string | null;
+  /** Epoch ms of the last live-feed update that produced an ETA. */
   lastComputedAt: number | null;
-  /** Combined error (static load, traffic fetch, or realtime feed). */
+  /** Combined error (static load or realtime feed). */
   error: Error | null;
-  /** Just the traffic-API error, separated so callers can distinguish a degraded ETA from a fatal load. */
-  trafficError: Error | null;
-  /** The closest approaching bus with its traffic-adjusted ETA (same as top-level fields). */
+  /** The closest approaching bus with its live ETA (same as top-level fields). */
   current: ApproachingBus | null;
-  /** The second-closest approaching bus, with a rough distance-based ETA (no traffic call). */
+  /** The second-closest approaching bus, with its live ETA. */
   next: ApproachingBus | null;
   /** Timetable-fed view, blended with live data. */
   resolved: ResolvedEta;
@@ -124,43 +118,20 @@ interface StaticCtx {
 export function useEta({
   stopId,
   routeCode,
-  trafficProvider,
 }: {
   stopId: string;
   routeCode: RouteId;
-  trafficProvider?: TrafficProvider;
 }): UseEtaResult {
   const { positions, lastUpdated: lastLiveFetchAt, error: rtError } =
     useBusPosition({ routeCode });
 
   const [staticCtx, setStaticCtx] = useState<StaticCtx | null>(null);
   const [staticError, setStaticError] = useState<Error | null>(null);
-  const [trafficMinutes, setTrafficMinutes] = useState<number | null>(null);
-  const [trafficSource, setTrafficSource] = useState<TrafficProvider | null>(
-    null,
-  );
-  const [trafficError, setTrafficError] = useState<Error | null>(null);
-  const [lastComputedAt, setLastComputedAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => devNow());
 
   const previousByVehicleRef = useRef(
     new Map<string, { lat: number; lng: number }>(),
   );
-  const lastTrafficFetchRef = useRef<{ at: number; key: string } | null>(null);
-  const trafficInflightRef = useRef<AbortController | null>(null);
-  const [appActive, setAppActive] = useState(
-    () => AppState.currentState === "active",
-  );
-
-  // Pause the traffic-ETA poll when the app isn't foregrounded — the biggest
-  // single source of wasted HERE transactions is an app left open on a desk.
-  useEffect(() => {
-    const onChange = (status: AppStateStatus) => {
-      setAppActive(status === "active");
-    };
-    const sub = AppState.addEventListener("change", onChange);
-    return () => sub.remove();
-  }, []);
 
   // 1. Load static data once per (stopId, routeCode).
   useEffect(() => {
@@ -221,7 +192,7 @@ export function useEta({
     }
   }, [positions]);
 
-  // 4. Compose the ETA result without triggering a network call — that's step 5.
+  // 4. Compose the ETA result from live positions + the static route shape.
   const composition: ComputeEtaResult | null = useMemo(() => {
     if (!staticCtx) return null;
     return computeEta({
@@ -230,10 +201,13 @@ export function useEta({
       stop: staticCtx.stop,
       polyline: staticCtx.polyline,
       intermediateCandidates: staticCtx.intermediateCandidates,
-      trafficMinutes,
       loop: true,
     });
-  }, [staticCtx, positions, trafficMinutes]);
+  }, [staticCtx, positions]);
+
+  // Only an ETA backed by a live vehicle counts as "computed".
+  const lastComputedAt =
+    composition?.minutesToStop != null ? lastLiveFetchAt : null;
 
   // 4a. Per-vehicle "has passed your stop" classification for the map.
   // Stateless: recomputed every time positions change. A bus is passed when
@@ -270,85 +244,29 @@ export function useEta({
       loop: true,
     });
     if (!picked) return null;
-    const minutes = Math.round(
-      picked.evaluation.forwardMeters / FALLBACK_BUS_METERS_PER_MINUTE,
-    );
+    // Same estimator as the primary bus so the two rows never invert.
+    const minutes = estimateLiveMinutes({
+      bus: projectOntoRoute(
+        { lat: picked.vehicle.lat, lng: picked.vehicle.lng },
+        staticCtx.polyline,
+      ),
+      stop: composition.stopProjection,
+      forwardMeters: picked.evaluation.forwardMeters,
+      intermediateCandidates: staticCtx.intermediateCandidates,
+      polyline: staticCtx.polyline,
+      loop: true,
+    });
     return {
-      minutesToStop: Math.max(0, minutes),
+      minutesToStop: Math.round(minutes),
       vehicleId: picked.vehicle.vehicleId,
       forwardMeters: picked.evaluation.forwardMeters,
-      source: null,
+      source: "live",
       speedKmh: toFiniteOrNull(picked.vehicle.speed),
     };
-  }, [staticCtx, positions, composition?.vehicleId]);
+  }, [staticCtx, positions, composition?.vehicleId, composition?.stopProjection]);
 
-  // 5. Fetch traffic ETA when the picked vehicle changes or ≥ 30s has passed.
-  //    Key is intentionally coarse (vehicleId + provider only) — the server
-  //    already caches per-coordinate for 60s, and the 30s floor below is what
-  //    really throttles us. Including lat/lng here just forced an early
-  //    refetch every time the bus moved, defeating the purpose of the floor.
-  useEffect(() => {
-    if (!appActive) return;
-    if (!composition || !composition.busProjection || !staticCtx) return;
-    const busLat = composition.busProjection.projected.lat;
-    const busLng = composition.busProjection.projected.lng;
-    const key = [composition.vehicleId ?? "", trafficProvider ?? ""].join("|");
-
-    const last = lastTrafficFetchRef.current;
-    const fresh = last && last.key === key && now - last.at < TRAFFIC_REFRESH_MS;
-    if (fresh) return;
-
-    trafficInflightRef.current?.abort();
-    const ctrl = new AbortController();
-    trafficInflightRef.current = ctrl;
-    lastTrafficFetchRef.current = { at: devNow(), key };
-
-    (async () => {
-      try {
-        const res = await fetchTrafficEta(
-          { lat: busLat, lng: busLng },
-          staticCtx.stop,
-          { signal: ctrl.signal, provider: trafficProvider },
-        );
-        if (ctrl.signal.aborted) return;
-        setTrafficMinutes(res.trafficMinutes);
-        setTrafficSource(res.source);
-        setTrafficError(null);
-        setLastComputedAt(devNow());
-      } catch (err) {
-        if (ctrl.signal.aborted) return;
-        if (err instanceof Error && err.name === "AbortError") return;
-        setTrafficError(err instanceof Error ? err : new Error(String(err)));
-      }
-    })();
-
-    return () => {
-      ctrl.abort();
-    };
-  }, [composition?.vehicleId, composition, staticCtx, now, trafficProvider, appActive]);
-
-  // 6. When no approaching vehicle, clear stale traffic so we don't keep showing old minutes.
-  useEffect(() => {
-    if (composition && composition.vehicleId == null) {
-      setTrafficMinutes(null);
-      setTrafficSource(null);
-      lastTrafficFetchRef.current = null;
-    }
-  }, [composition?.vehicleId, composition]);
-
-  // 6b. Clear cached traffic minutes when the provider changes so the next render
-  //     falls back to schedule-based ETA until the new provider replies.
-  useEffect(() => {
-    setTrafficMinutes(null);
-    setTrafficSource(null);
-    lastTrafficFetchRef.current = null;
-  }, [trafficProvider]);
-
-  const error = staticError ?? trafficError ?? rtError;
-  // Live-vs-SCHEDULED is gated on the *realtime feed's* freshness, not on
-  // `lastComputedAt` (which only bumps on a successful traffic-eta response).
-  // Conflating the two meant a slow/failed traffic-eta would flip the Tracker
-  // to SCHEDULED even though GTFS Realtime positions were arriving on schedule.
+  const error = staticError ?? rtError;
+  // Live-vs-SCHEDULED is gated on the *realtime feed's* freshness.
   const isStale =
     lastLiveFetchAt == null ? true : now - lastLiveFetchAt > STALE_AFTER_MS;
 
@@ -668,11 +586,9 @@ export function useEta({
     minutesToStop: resolved.minutesToStop,
     isStale,
     source: composition?.source ?? null,
-    trafficSource: composition?.source === "traffic" ? trafficSource : null,
     vehicleId: composition?.vehicleId ?? null,
     lastComputedAt,
     error,
-    trafficError,
     current,
     next: nextBus,
     resolved,

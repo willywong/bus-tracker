@@ -1,7 +1,7 @@
 import { isWithinQuietHours } from "./quiet-hours.js";
 
 export interface ShouldNotifyArgs {
-  /** Traffic-adjusted minutes from the bus to the user's stop. */
+  /** Estimated minutes from the bus to the user's stop. */
   etaMinutes: number;
   /** Minutes the user needs to walk to the stop. */
   walkMinutes: number;

@@ -31,7 +31,6 @@ import {
   type TripStopWithName,
   type TripStopsSource,
 } from '@/db/queries';
-import { useTripUpdates } from '@/hooks/useTripUpdates';
 
 export interface TripStopsSheetContext {
   tripId: string;
@@ -45,17 +44,14 @@ export interface TripStopsSheetContext {
 }
 
 /**
- * Stop-by-stop list body with per-stop ETA. When TripUpdates are available the
- * upstream arrival time takes precedence; otherwise falls back to the static
- * schedule. Highlights the user's stop, marks the bus's current position,
- * strikes through SKIPPED stops, and flows an animated chevron between the
- * last-passed stop and the next-up one.
+ * Stop-by-stop list body with per-stop scheduled times. Highlights the user's
+ * stop, marks the bus's current position, and flows an animated chevron
+ * between the last-passed stop and the next-up one.
  */
 export function TripStopsBody({ context }: { context: TripStopsSheetContext }) {
   const [stops, setStops] = useState<TripStopWithName[] | null>(null);
   const [stopsSource, setStopsSource] = useState<TripStopsSource>('exact');
   const [error, setError] = useState<Error | null>(null);
-  const { byTrip } = useTripUpdates();
 
   useEffect(() => {
     let cancelled = false;
@@ -85,7 +81,6 @@ export function TripStopsBody({ context }: { context: TripStopsSheetContext }) {
     };
   }, [context.tripId, context.routeCode]);
 
-  const tripUpdate = byTrip.get(context.tripId);
   const todayMidnight = useMemo(
     () => toMalaysiaParts(new Date()).midnightUtcMs,
     [],
@@ -150,45 +145,24 @@ export function TripStopsBody({ context }: { context: TripStopsSheetContext }) {
   }
 
   const rows = stops.map((s) => {
-    const update = tripUpdate?.stopTimeUpdates.find(
-      (u) =>
-        (u.stopId && u.stopId === s.stopId) ||
-        u.stopSequence === s.stopSequence,
-    );
-    const skipped = update?.scheduleRelationship === 'SKIPPED';
     const scheduledMs =
       s.arrivalSeconds != null
         ? todayMidnight + s.arrivalSeconds * 1000
         : s.departureSeconds != null
           ? todayMidnight + s.departureSeconds * 1000
           : null;
-    const liveMs =
-      update?.arrivalTimeMs ??
-      update?.departureTimeMs ??
-      (scheduledMs != null && update?.arrivalDelaySec != null
-        ? scheduledMs + update.arrivalDelaySec * 1000
-        : scheduledMs != null && update?.departureDelaySec != null
-          ? scheduledMs + update.departureDelaySec * 1000
-          : null);
-    const delaySec =
-      update?.arrivalDelaySec ?? update?.departureDelaySec ?? null;
 
     const isUser = s.stopId === context.userStopId;
     const isCurrent =
       activeSequence != null && s.stopSequence === activeSequence;
-    const stopClockMs = liveMs ?? scheduledMs;
     const isPast =
-      !skipped &&
-      (activeSequence != null
+      activeSequence != null
         ? s.stopSequence < activeSequence
-        : stopClockMs != null && stopClockMs < Date.now() - 60_000);
+        : scheduledMs != null && scheduledMs < Date.now() - 60_000;
 
     return {
       s,
       scheduledMs,
-      liveMs,
-      delaySec,
-      skipped,
       isUser,
       isCurrent,
       isPast,
@@ -198,7 +172,7 @@ export function TripStopsBody({ context }: { context: TripStopsSheetContext }) {
   const hasCurrent = rows.some((r) => r.isCurrent);
   const nextUpIndex = hasCurrent
     ? -1
-    : rows.findIndex((r) => !r.isPast && !r.skipped);
+    : rows.findIndex((r) => !r.isPast);
 
   const currentIdx = rows.findIndex((r) => r.isCurrent);
   const bridgeIndex =
@@ -208,7 +182,7 @@ export function TripStopsBody({ context }: { context: TripStopsSheetContext }) {
         ? nextUpIndex - 1
         : -1;
 
-  const fallbackCaption = describeFallbackSource(stopsSource, !!tripUpdate);
+  const fallbackCaption = describeFallbackSource(stopsSource);
 
   return (
     <VStack spacing={6} alignment="leading">
@@ -222,16 +196,6 @@ export function TripStopsBody({ context }: { context: TripStopsSheetContext }) {
           {context.routeCode.toUpperCase()} · {stops.length} STOPS
         </Text>
         <Spacer />
-        {tripUpdate ? (
-          <Text
-            modifiers={[
-              foregroundStyle('#30D158'),
-              font({ size: 11, weight: 'semibold' }),
-            ]}
-          >
-            LIVE
-          </Text>
-        ) : null}
       </HStack>
       {fallbackCaption ? (
         <HStack spacing={6} alignment="center">
@@ -262,9 +226,6 @@ export function TripStopsBody({ context }: { context: TripStopsSheetContext }) {
             key={`${r.s.stopId}-${r.s.stopSequence}`}
             stop={r.s}
             scheduledMs={r.scheduledMs}
-            liveMs={r.liveMs}
-            delaySec={r.delaySec}
-            skipped={r.skipped}
             isUser={r.isUser}
             isCurrent={r.isCurrent}
             isNextUp={i === nextUpIndex}
@@ -353,9 +314,6 @@ function AnimatedLine({
 function StopRow({
   stop,
   scheduledMs,
-  liveMs,
-  delaySec,
-  skipped,
   isUser,
   isCurrent,
   isNextUp,
@@ -370,9 +328,6 @@ function StopRow({
 }: {
   stop: TripStopWithName;
   scheduledMs: number | null;
-  liveMs: number | null;
-  delaySec: number | null;
-  skipped: boolean;
   isUser: boolean;
   isCurrent: boolean;
   isNextUp: boolean;
@@ -387,17 +342,14 @@ function StopRow({
   flowPhase: number;
 }) {
   const accessible = stop.wheelchairBoarding === 1;
-  const clock = liveMs ?? scheduledMs;
+  const clock = scheduledMs;
   const clockLabel = clock != null ? formatClockHM(clock) : '—';
-  const delayText = formatDelay(delaySec);
   const minutesAway =
-    liveMs != null
-      ? Math.max(0, Math.round((liveMs - Date.now()) / 60_000))
-      : scheduledMs != null
-        ? Math.max(0, Math.round((scheduledMs - Date.now()) / 60_000))
-        : null;
+    scheduledMs != null
+      ? Math.max(0, Math.round((scheduledMs - Date.now()) / 60_000))
+      : null;
   const etaText =
-    skipped || isPast
+    isPast
       ? null
       : minutesAway === 0
         ? 'now'
@@ -435,16 +387,14 @@ function StopRow({
   const topLineColor = isPast ? LINE_COLOR_PAST : LINE_COLOR_FUTURE;
   const bottomLineColor = isPast ? LINE_COLOR_PAST : LINE_COLOR_FUTURE;
 
-  const nameColor = skipped
-    ? '#8E8E93'
-    : isPast && !showBusIcon
+  const nameColor =
+    isPast && !showBusIcon
       ? '#8E8E93'
       : showBusIcon
         ? LINE_COLOR_BUS
         : isNextUp
           ? LINE_COLOR_USER
           : '#FFFFFF';
-  const strike = skipped;
 
   return (
     <HStack
@@ -480,24 +430,13 @@ function StopRow({
               foregroundStyle(nameColor),
             ]}
           >
-            {strike
-              ? `${formatStopName(stop.stopName)}`
-              : formatStopName(stop.stopName)}
+            {formatStopName(stop.stopName)}
           </Text>
           {accessible ? (
             <Image systemName="figure.roll" size={11} color="#0A84FF" />
           ) : null}
         </HStack>
-        {skipped ? (
-          <Text
-            modifiers={[
-              foregroundStyle('#FF453A'),
-              font({ size: 11, weight: 'semibold' }),
-            ]}
-          >
-            SKIPPED
-          </Text>
-        ) : isUser ? (
+        {isUser ? (
           <Text
             modifiers={[
               foregroundStyle('#30D158'),
@@ -532,23 +471,14 @@ function StopRow({
           <Text
             modifiers={[font({ size: 14 }), foregroundStyle('#8E8E93')]}
           >
-            {skipped ? '—' : isPast ? 'passed' : clockLabel}
+            {isPast ? 'passed' : clockLabel}
           </Text>
         )}
         {isPast && clock != null ? (
           <Text modifiers={[font({ size: 11 }), foregroundStyle('#636366')]}>
             {clockLabel}
           </Text>
-        ) : delayText && !skipped && !isPast ? (
-          <Text
-            modifiers={[
-              font({ size: 11 }),
-              foregroundStyle(delayText.color),
-            ]}
-          >
-            {delayText.text}
-          </Text>
-        ) : clock != null && !skipped && !isPast && etaText ? (
+        ) : clock != null && !isPast && etaText ? (
           <Text modifiers={[font({ size: 11 }), foregroundStyle('#8E8E93')]}>
             {clockLabel}
           </Text>
@@ -577,27 +507,10 @@ function formatClockHM(ms: number): string {
   return `${h}:${m}`;
 }
 
-function describeFallbackSource(
-  source: TripStopsSource,
-  hasTripUpdates: boolean,
-): string | null {
+function describeFallbackSource(source: TripStopsSource): string | null {
   if (source === 'exact') return null;
   if (source === 'suffix') {
-    return hasTripUpdates
-      ? 'Schedule from a sibling trip — live ETAs shown when available.'
-      : 'Schedule from a sibling trip — times may be off by a few minutes.';
+    return 'Schedule from a sibling trip — times may be off by a few minutes.';
   }
-  return hasTripUpdates
-    ? 'Stops from a representative trip — live ETAs shown when available.'
-    : 'Stops from a representative trip — schedule is approximate.';
-}
-
-function formatDelay(
-  sec: number | null,
-): { text: string; color: string } | null {
-  if (sec == null) return null;
-  const m = Math.round(sec / 60);
-  if (m === 0) return { text: 'on time', color: '#30D158' };
-  if (m > 0) return { text: `${m} min late`, color: '#FF9F0A' };
-  return { text: `${Math.abs(m)} min early`, color: '#64D2FF' };
+  return 'Stops from a representative trip — schedule is approximate.';
 }

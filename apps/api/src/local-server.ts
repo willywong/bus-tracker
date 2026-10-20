@@ -7,7 +7,6 @@ import { createGtfsStaticApp } from "../api/gtfs-static.js";
 import { createPushRegisterApp } from "../api/push/register.js";
 import { createRouteDetailApp } from "../api/route/[code].js";
 import { createRoutesSearchApp } from "../api/routes/search.js";
-import { createTrafficEtaApp } from "../api/traffic-eta.js";
 
 const app = new Hono();
 
@@ -20,7 +19,6 @@ app.route("/", createGtfsRealtimeApp());
 app.route("/", createRoutesSearchApp());
 app.route("/", createRouteDetailApp());
 app.route("/", createRefreshGtfsApp());
-app.route("/", createTrafficEtaApp());
 app.route("/", createPushRegisterApp());
 app.route("/", createLeaveNowApp());
 
@@ -35,6 +33,5 @@ serve({ fetch: app.fetch, port, hostname: "0.0.0.0" }, (info) => {
   console.log(`  GET /api/route/:code`);
   console.log(`  GET /api/cron/refresh-gtfs`);
   console.log(`  GET /api/cron/leave-now`);
-  console.log(`  GET /api/traffic-eta`);
   console.log(`  POST /api/push/register`);
 });

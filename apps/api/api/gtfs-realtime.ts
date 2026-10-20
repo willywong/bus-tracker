@@ -37,8 +37,7 @@ export function createGtfsRealtimeApp(
   app.get("/api/gtfs-realtime", async (c) => {
     const svc = options.service ?? getDefaultService(rateKv);
 
-    // Abuse cap — normal clients only do 2 req/min. Reuses the shared limiter
-    // that already powers /api/traffic-eta (same `Retry-After` semantics).
+    // Abuse cap — normal clients only do 2 req/min.
     const fwd = c.req.header("x-forwarded-for") ?? "";
     const ip = fwd.split(",")[0]?.trim() || "unknown";
     const rl = await checkRateLimit(rateKv, `gtfs-rt:${ip}`, now());

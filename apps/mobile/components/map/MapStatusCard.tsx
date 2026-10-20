@@ -25,7 +25,6 @@ import {
 import {
   heroStateColor,
   sourceColor,
-  surfaceColor,
 } from '@/components/tracker/tokens';
 import type { UseEtaResult } from '@/hooks/useEta';
 import { tokens } from '@/theme/tokens';
@@ -196,7 +195,6 @@ export function MapStatusCard({
             />
           ) : null}
           <View style={styles.statusSpacer} />
-          {eta.trafficError ? <TrafficErrorBadge /> : null}
           {onOpenStops ? <StopsPill onPress={onOpenStops} /> : null}
         </View>
         {routeLongName ? (
@@ -541,19 +539,6 @@ function PassedBody({ nextMinutes }: { nextMinutes: number | null }) {
   );
 }
 
-function TrafficErrorBadge() {
-  return (
-    <View style={styles.trafficBadge}>
-      <View
-        style={[styles.trafficBadgeDot, { backgroundColor: heroStateColor.waiting }]}
-      />
-      <Text style={styles.trafficBadgeText} selectable>
-        No traffic data
-      </Text>
-    </View>
-  );
-}
-
 function WaitingBody() {
   return (
     <View style={styles.heroCol}>
@@ -645,27 +630,6 @@ const styles = StyleSheet.create({
     color: PlatformColor('secondaryLabel'),
     marginTop: -4,
     letterSpacing: -0.1,
-  },
-  trafficBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-    backgroundColor: surfaceColor.amberTint,
-  },
-  trafficBadgeDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
-  },
-  trafficBadgeText: {
-    fontSize: 10,
-    fontWeight: '600',
-    letterSpacing: 0.6,
-    textTransform: 'uppercase',
-    color: PlatformColor('secondaryLabel'),
   },
   bodyRow: {
     flexDirection: 'row',

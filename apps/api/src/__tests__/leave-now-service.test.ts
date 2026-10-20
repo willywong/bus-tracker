@@ -12,10 +12,6 @@ import {
   PRIMARY_KEY,
   type PushRegistration,
 } from "../push-service.js";
-import {
-  TrafficEtaService,
-  type TrafficEtaResult,
-} from "../traffic-service.js";
 
 const REGISTRATION: PushRegistration = {
   deviceId: "device-abc",
@@ -32,8 +28,10 @@ const REGISTRATION: PushRegistration = {
 
 /**
  * Minimal T816 bundle: one route (r1 / T816), two stops (A is preferred,
- * B is an intermediate candidate), one trip referencing shape s1, and a 3-point
- * polyline roughly 1km long.
+ * B is an intermediate candidate), one trip referencing shape s1, and a
+ * north-running polyline ~3km long. The route is treated as a loop, so it has
+ * to be long enough that a bus ~0.7km south of stop A sits on the approach
+ * side (less than half the loop away).
  */
 function syntheticBundle(): T816Bundle {
   return {
@@ -62,6 +60,8 @@ function syntheticBundle(): T816Bundle {
         { lat: 3.100, lng: 101.612, seq: 0 },
         { lat: 3.105, lng: 101.612, seq: 1 },
         { lat: 3.110, lng: 101.612, seq: 2 },
+        { lat: 3.120, lng: 101.612, seq: 3 },
+        { lat: 3.130, lng: 101.612, seq: 4 },
       ],
     },
     calendar: [],
@@ -102,20 +102,6 @@ function stubGtfs(bundle: T816Bundle): GtfsBundleService {
   } as unknown as GtfsBundleService;
 }
 
-function stubTraffic(minutes: number | null): TrafficEtaService {
-  return {
-    async getEta() {
-      if (minutes == null) throw new Error("traffic unavailable");
-      const result: TrafficEtaResult = {
-        trafficMinutes: minutes,
-        source: "here",
-        generatedAt: 0,
-      };
-      return { result, cached: false };
-    },
-  } as unknown as TrafficEtaService;
-}
-
 interface Harness {
   kv: Kv;
   service: LeaveNowService;
@@ -123,7 +109,8 @@ interface Harness {
 }
 
 async function makeHarness(opts: {
-  trafficMinutes: number | null;
+  /** Overrides the registration's walk time (default 10 min + 1 min buffer). */
+  walkMinutes?: number;
   nowMs: number;
   localHour: number;
   localMinute: number;
@@ -133,13 +120,18 @@ async function makeHarness(opts: {
 }): Promise<Harness> {
   const kv = createInMemoryKv();
   if (opts.registered !== false) {
-    await kv.set(PRIMARY_KEY, REGISTRATION);
+    await kv.set(PRIMARY_KEY, {
+      ...REGISTRATION,
+      settings: {
+        ...REGISTRATION.settings,
+        walkMinutes: opts.walkMinutes ?? REGISTRATION.settings.walkMinutes,
+      },
+    });
   }
 
   const sent: ExpoPushMessage[] = [];
   const service = new LeaveNowService({
     gtfs: stubGtfs(syntheticBundle()),
-    traffic: stubTraffic(opts.trafficMinutes),
     kv,
     fetchRealtime: async () => encodeFeed(opts.vehicleLat, opts.vehicleLng),
     sendPush: async (msg) => {
@@ -153,9 +145,8 @@ async function makeHarness(opts: {
 
 const NOON_MS = new Date("2026-04-21T12:00:00+08:00").getTime();
 
-test("leave-now: sends push when traffic ETA within threshold outside quiet hours", async () => {
+test("leave-now: sends push when live ETA within threshold outside quiet hours", async () => {
   const { service, sent, kv } = await makeHarness({
-    trafficMinutes: 6,
     nowMs: NOON_MS,
     localHour: 12,
     localMinute: 0,
@@ -175,7 +166,6 @@ test("leave-now: sends push when traffic ETA within threshold outside quiet hour
 
 test("leave-now: dedupes within 15 minutes", async () => {
   const { service, sent, kv } = await makeHarness({
-    trafficMinutes: 6,
     nowMs: NOON_MS,
     localHour: 12,
     localMinute: 0,
@@ -191,7 +181,6 @@ test("leave-now: dedupes within 15 minutes", async () => {
 
 test("leave-now: allows second send once dedupe window has elapsed", async () => {
   const { service, sent, kv } = await makeHarness({
-    trafficMinutes: 6,
     nowMs: NOON_MS,
     localHour: 12,
     localMinute: 0,
@@ -207,7 +196,8 @@ test("leave-now: allows second send once dedupe window has elapsed", async () =>
 
 test("leave-now: stays quiet when ETA exceeds walk + buffer", async () => {
   const { service, sent } = await makeHarness({
-    trafficMinutes: 25,
+    // Bus is ~0.7 km out (≈3 min incl. one stop's dwell) — more than 0 + 1 min.
+    walkMinutes: 0,
     nowMs: NOON_MS,
     localHour: 12,
     localMinute: 0,
@@ -222,7 +212,6 @@ test("leave-now: stays quiet when ETA exceeds walk + buffer", async () => {
 
 test("leave-now: no registration yields no_registration", async () => {
   const { service, sent } = await makeHarness({
-    trafficMinutes: 6,
     nowMs: NOON_MS,
     localHour: 12,
     localMinute: 0,
@@ -238,7 +227,6 @@ test("leave-now: no registration yields no_registration", async () => {
 
 test("leave-now: hard safety valve blocks 03:00 local even with safe settings", async () => {
   const { service, sent } = await makeHarness({
-    trafficMinutes: 6,
     nowMs: NOON_MS,
     localHour: 3,
     localMinute: 0,
@@ -255,7 +243,6 @@ test("leave-now: user quiet hours suppress push inside window", async () => {
   // 23:00 local is inside the default 22:00–06:00 window.
   // Use a different harness with local time only just past the hard floor.
   const { service, sent } = await makeHarness({
-    trafficMinutes: 6,
     nowMs: NOON_MS,
     localHour: 23,
     localMinute: 0,
@@ -270,7 +257,6 @@ test("leave-now: user quiet hours suppress push inside window", async () => {
 
 test("leave-now: no approaching bus yields no_approaching_bus", async () => {
   const { service, sent } = await makeHarness({
-    trafficMinutes: 6,
     nowMs: NOON_MS,
     localHour: 12,
     localMinute: 0,

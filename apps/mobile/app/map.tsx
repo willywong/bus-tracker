@@ -18,7 +18,6 @@ import MapView, {
   type Region,
 } from 'react-native-maps';
 
-import { AlertBanner } from '@/components/alerts/AlertBanner';
 import { BusCallout } from '@/components/map/BusCallout';
 import { GlassDemoSheet } from '@/components/tracker/GlassDemoSheet';
 import { LiveBusMarker } from '@/components/map/LiveBusMarker';
@@ -50,7 +49,6 @@ import {
   type StopRow,
   type TrafficSignalRow,
 } from '@/db/queries';
-import { useAlerts } from '@/hooks/useAlerts';
 import { useBusPosition } from '@/hooks/useBusPosition';
 import { useEta } from '@/hooks/useEta';
 import { useLocationPermission } from '@/hooks/useLocationPermission';
@@ -144,20 +142,6 @@ export default function MapScreen() {
   const eta = useEta({
     stopId: settings.preferredStopId,
     routeCode: activeRoute,
-    trafficProvider: settings.trafficProvider,
-  });
-  const alertStopIds = useMemo(
-    () =>
-      settings.preferredStopId ? [settings.preferredStopId] : [],
-    [settings.preferredStopId],
-  );
-  const alertRouteCodes = useMemo(
-    () => (activeRoute ? [activeRoute] : []),
-    [activeRoute],
-  );
-  const { alerts } = useAlerts({
-    routeCodes: alertRouteCodes,
-    stopIds: alertStopIds,
   });
   const isTransitioning = useRouteTransition({
     preferredRouteCode: settings.preferredRouteCode,
@@ -649,11 +633,6 @@ export default function MapScreen() {
         })}
       </MapView>
       <View style={styles.overlay} pointerEvents="box-none">
-        {alerts.length > 0 ? (
-          <View style={styles.alertsWrap} pointerEvents="box-none">
-            <AlertBanner alerts={alerts} />
-          </View>
-        ) : null}
         {!hasFavorites ? (
           <MapChooseBusCard onAddBus={openAddBus} />
         ) : isTransitioning ? (
@@ -736,9 +715,6 @@ const styles = StyleSheet.create({
     right: 16,
     bottom: 110,
     gap: 10,
-  },
-  alertsWrap: {
-    // Sits above the MapStatusCard within the overlay. Spacing via parent gap.
   },
   fabTopRight: {
     position: 'absolute',

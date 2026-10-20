@@ -12,13 +12,6 @@ import {
 
 import { setClockUse24h } from '@/components/tracker/logic';
 
-export type TrafficProvider = 'here' | 'tomtom';
-
-export const TRAFFIC_PROVIDERS: readonly TrafficProvider[] = [
-  'here',
-  'tomtom',
-];
-
 export type ClockFormat = '12h' | '24h';
 
 export const CLOCK_FORMATS: readonly ClockFormat[] = ['24h', '12h'];
@@ -44,7 +37,6 @@ export interface Settings {
   preferredStopByRoute: Record<string, string>;
   /** Currently active route. Null when the favorites list is empty. */
   preferredRouteCode: string | null;
-  trafficProvider: TrafficProvider;
   /** Quiet hours start, minute-of-day (0–1439). */
   quietStartMin: number;
   /** Quiet hours end, minute-of-day (0–1439). */
@@ -61,7 +53,6 @@ export const DEFAULT_SETTINGS: Settings = {
   favoritedRoutes: [],
   preferredStopByRoute: {},
   preferredRouteCode: null,
-  trafficProvider: 'here',
   quietStartMin: 22 * 60,
   quietEndMin: 6 * 60,
   clockFormat: '24h',
@@ -81,7 +72,6 @@ export interface SettingsApi extends Settings {
   setPreferredStopId: (v: string) => void;
   setPreferredStopForRoute: (routeCode: string, stopId: string) => void;
   setPreferredRouteCode: (v: string | null) => void;
-  setTrafficProvider: (v: TrafficProvider) => void;
   setQuietStartMin: (v: number) => void;
   setQuietEndMin: (v: number) => void;
   setClockFormat: (v: ClockFormat) => void;
@@ -104,7 +94,6 @@ const STORAGE_KEYS = {
   favoritedRoutes: 'bt.favoritedRoutes',
   preferredStopByRoute: 'bt.preferredStopByRoute',
   preferredRouteCode: 'bt.preferredRouteCode',
-  trafficProvider: 'bt.trafficProvider',
   quietStartMin: 'bt.quietStartMin',
   quietEndMin: 'bt.quietEndMin',
   clockFormat: 'bt.clockFormat',
@@ -117,15 +106,6 @@ function parseIntOr(value: string | null, fallback: number): number {
   if (value == null) return fallback;
   const n = Number.parseInt(value, 10);
   return Number.isFinite(n) ? n : fallback;
-}
-
-function parseProviderOr(
-  value: string | null,
-  fallback: TrafficProvider,
-): TrafficProvider {
-  return value && TRAFFIC_PROVIDERS.includes(value as TrafficProvider)
-    ? (value as TrafficProvider)
-    : fallback;
 }
 
 function parseRouteOr(
@@ -194,7 +174,6 @@ async function loadFromStore(): Promise<Settings> {
     favoritesRaw,
     stopByRouteRaw,
     route,
-    provider,
     quietStart,
     quietEnd,
     clockFormat,
@@ -205,7 +184,6 @@ async function loadFromStore(): Promise<Settings> {
     SecureStore.getItemAsync(STORAGE_KEYS.favoritedRoutes),
     SecureStore.getItemAsync(STORAGE_KEYS.preferredStopByRoute),
     SecureStore.getItemAsync(STORAGE_KEYS.preferredRouteCode),
-    SecureStore.getItemAsync(STORAGE_KEYS.trafficProvider),
     SecureStore.getItemAsync(STORAGE_KEYS.quietStartMin),
     SecureStore.getItemAsync(STORAGE_KEYS.quietEndMin),
     SecureStore.getItemAsync(STORAGE_KEYS.clockFormat),
@@ -222,10 +200,6 @@ async function loadFromStore(): Promise<Settings> {
     favoritedRoutes,
     preferredStopByRoute,
     preferredRouteCode,
-    trafficProvider: parseProviderOr(
-      provider,
-      DEFAULT_SETTINGS.trafficProvider,
-    ),
     quietStartMin: parseIntOr(quietStart, DEFAULT_SETTINGS.quietStartMin),
     quietEndMin: parseIntOr(quietEnd, DEFAULT_SETTINGS.quietEndMin),
     clockFormat: parseClockFormatOr(clockFormat, DEFAULT_SETTINGS.clockFormat),
@@ -324,14 +298,6 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       if (next == null) deleteValue(STORAGE_KEYS.preferredRouteCode);
       else writeValue(STORAGE_KEYS.preferredRouteCode, next);
       return { ...prev, preferredRouteCode: next };
-    });
-  }, []);
-
-  const setTrafficProvider = useCallback((v: TrafficProvider) => {
-    setState((prev) => {
-      if (prev.trafficProvider === v) return prev;
-      writeValue(STORAGE_KEYS.trafficProvider, v);
-      return { ...prev, trafficProvider: v };
     });
   }, []);
 
@@ -460,7 +426,6 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     setPreferredStopId,
     setPreferredStopForRoute,
     setPreferredRouteCode,
-    setTrafficProvider,
     setQuietStartMin,
     setQuietEndMin,
     setClockFormat,

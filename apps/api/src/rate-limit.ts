@@ -2,8 +2,8 @@
  * Minimal fixed-window rate limiter backed by the shared Kv.
  *
  * Not atomic — the get/set race window at high concurrency can over- or
- * under-count by a few requests, which is fine for the dev-scale HERE quota
- * we're protecting. If we ever need strict enforcement, switch to an Upstash
+ * under-count by a few requests, which is fine for an abuse cap in front of
+ * the upstream GTFS feed. If we ever need strict enforcement, switch to an Upstash
  * `INCR + EXPIRE` command instead.
  */
 

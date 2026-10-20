@@ -8,6 +8,11 @@ import {
 } from "./route.js";
 
 export const DEFAULT_DWELL_MINUTES_PER_STOP = 1.5;
+/**
+ * Average moving speed (km/h) of a city feeder bus between stops. Dwell time
+ * at intermediate stops is added on top, so this is the in-motion speed only.
+ */
+export const DEFAULT_BUS_CRUISE_KMH = 25;
 
 export type ApproachVerdict = "approaching" | "departing" | "unknown";
 
@@ -138,7 +143,43 @@ export function pickApproachingVehicle(
   return best;
 }
 
-export type EtaSource = "traffic" | "schedule";
+export type EtaSource = "live" | "schedule";
+
+export interface EstimateLiveMinutesArgs {
+  /** The bus's projection on the polyline. */
+  bus: RouteProjection;
+  /** The user's stop's projection on the polyline. */
+  stop: RouteProjection;
+  /** Forward distance bus → stop along the route, in meters. */
+  forwardMeters: number;
+  /** All other stops on the route (for intermediate stop counting). */
+  intermediateCandidates: readonly LatLng[];
+  polyline: readonly LatLng[];
+  loop?: boolean;
+  /** In-motion bus speed in km/h. Default: DEFAULT_BUS_CRUISE_KMH. */
+  cruiseKmh?: number;
+  /** Passenger dwell time per intermediate stop in minutes. Default: 1.5. */
+  dwellMinutesPerStop?: number;
+}
+
+/**
+ * GTFS-only ETA for a live bus: distance along the route polyline at a
+ * typical cruise speed, plus a dwell buffer for each stop it still has to
+ * serve before reaching the user's stop.
+ */
+export function estimateLiveMinutes(args: EstimateLiveMinutesArgs): number {
+  const cruiseKmh = args.cruiseKmh ?? DEFAULT_BUS_CRUISE_KMH;
+  const driveMinutes = (args.forwardMeters / 1000 / cruiseKmh) * 60;
+  const dwell = dwellMinutes({
+    bus: args.bus,
+    stop: args.stop,
+    intermediateCandidates: args.intermediateCandidates,
+    polyline: args.polyline,
+    loop: args.loop,
+    minutesPerStop: args.dwellMinutesPerStop,
+  });
+  return Math.max(0, driveMinutes + dwell);
+}
 
 export interface ComputeEtaArgs {
   /** Live vehicles. */
@@ -151,10 +192,10 @@ export interface ComputeEtaArgs {
   polyline: readonly LatLng[];
   /** All other stops on the route (for intermediate stop counting). */
   intermediateCandidates: readonly LatLng[];
-  /** Current traffic minutes from HERE for (bus → stop). Null when unavailable. */
-  trafficMinutes: number | null;
   /** Whether the route is circular. Default: true. */
   loop?: boolean;
+  /** In-motion bus speed in km/h. Default: DEFAULT_BUS_CRUISE_KMH. */
+  cruiseKmh?: number;
   /** Passenger dwell time per intermediate stop in minutes. Default: 1.5. */
   dwellMinutesPerStop?: number;
 }
@@ -165,7 +206,7 @@ export interface ComputeEtaResult {
   source: EtaSource | null;
   /** Forward distance bus → stop, in meters. Null when no approaching vehicle. */
   forwardMeters: number | null;
-  /** The picked vehicle's projection on the polyline (for callers that want to hit /traffic-eta). */
+  /** The picked vehicle's projection on the polyline. */
   busProjection: RouteProjection | null;
   /** The user's stop's projection on the polyline. */
   stopProjection: RouteProjection;
@@ -176,9 +217,8 @@ export interface ComputeEtaResult {
  *
  * - If no vehicle is approaching → returns `source: null`, `minutesToStop: null`
  *   (caller can choose to fall back to a schedule lookup).
- * - If `trafficMinutes` is provided → adds dwell buffer → returns `source: 'traffic'`.
- * - If `trafficMinutes` is null (traffic API unavailable) → returns `source: 'schedule'`
- *   with `minutesToStop: null` so the caller can fill in a schedule value.
+ * - Otherwise → estimates minutes from the bus's forward distance along the
+ *   route plus dwell (see `estimateLiveMinutes`) and returns `source: 'live'`.
  */
 export function computeEta(args: ComputeEtaArgs): ComputeEtaResult {
   const {
@@ -187,8 +227,8 @@ export function computeEta(args: ComputeEtaArgs): ComputeEtaResult {
     stop,
     polyline,
     intermediateCandidates,
-    trafficMinutes,
     loop = true,
+    cruiseKmh,
     dwellMinutesPerStop,
   } = args;
 
@@ -219,30 +259,19 @@ export function computeEta(args: ComputeEtaArgs): ComputeEtaResult {
   );
   const forwardMeters = picked.evaluation.forwardMeters;
 
-  if (trafficMinutes == null) {
-    return {
-      minutesToStop: null,
-      vehicleId: picked.vehicle.vehicleId,
-      source: "schedule",
-      forwardMeters,
-      busProjection,
-      stopProjection,
-    };
-  }
-
-  const dwell = dwellMinutes({
-    bus: busProjection,
-    stop: stopProjection,
-    intermediateCandidates,
-    polyline,
-    loop,
-    minutesPerStop: dwellMinutesPerStop,
-  });
-
   return {
-    minutesToStop: Math.max(0, trafficMinutes + dwell),
+    minutesToStop: estimateLiveMinutes({
+      bus: busProjection,
+      stop: stopProjection,
+      forwardMeters,
+      intermediateCandidates,
+      polyline,
+      loop,
+      cruiseKmh,
+      dwellMinutesPerStop,
+    }),
     vehicleId: picked.vehicle.vehicleId,
-    source: "traffic",
+    source: "live",
     forwardMeters,
     busProjection,
     stopProjection,

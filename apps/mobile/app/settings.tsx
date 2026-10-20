@@ -30,11 +30,9 @@ import {
 import {
   CLOCK_FORMATS,
   NOTIF_BUFFER_CHOICES_MIN,
-  TRAFFIC_PROVIDERS,
   useSettings,
   type ClockFormat,
   type MapType,
-  type TrafficProvider,
 } from '@/hooks/useSettings';
 
 function minutesFromDate(date: Date): number {
@@ -54,11 +52,6 @@ function formatMinuteOfDay(minuteOfDay: number): string {
   const m = (minuteOfDay % 60).toString().padStart(2, '0');
   return `${h}:${m}`;
 }
-
-const providerLabel: Record<TrafficProvider, string> = {
-  here: 'HERE',
-  tomtom: 'TomTom',
-};
 
 const clockFormatLabel: Record<ClockFormat, string> = {
   '24h': '24-hour (14:30)',
@@ -89,7 +82,6 @@ export default function SettingsScreen() {
   const notifBufferIndex = NOTIF_BUFFER_CHOICES_MIN.indexOf(
     settings.notifBufferMin,
   );
-  const providerIndex = TRAFFIC_PROVIDERS.indexOf(settings.trafficProvider);
   const clockFormatIndex = CLOCK_FORMATS.indexOf(settings.clockFormat);
 
   return (
@@ -212,32 +204,6 @@ export default function SettingsScreen() {
         */}
 
         <FavoritesSection onRequestChangeStop={setActiveChangeStopCode} />
-
-        {/* Traffic provider — temporarily hidden; HERE is the only provider
-            in use. TomTom remains wired through `useSettings` / `useEta` so
-            this Section can be restored without a data migration once we're
-            ready to offer the choice again.
-        <Section
-          header={<Text>Traffic</Text>}
-          footer={<Text>Live travel-time source for ETA adjustments.</Text>}
-        >
-          <Picker
-            label="Provider"
-            selection={providerIndex < 0 ? 0 : providerIndex}
-            onSelectionChange={(i) => {
-              const idx = typeof i === 'number' ? i : Number(i);
-              const provider = TRAFFIC_PROVIDERS[idx];
-              if (provider) settings.setTrafficProvider(provider);
-            }}
-          >
-            {TRAFFIC_PROVIDERS.map((p, i) => (
-              <Text key={p} modifiers={[tag(i)]}>
-                {providerLabel[p]}
-              </Text>
-            ))}
-          </Picker>
-        </Section>
-        */}
 
         {/* Quiet hours — temporarily hidden; notifications aren't wired up
             yet so silencing them has no effect. Restore this Section when the

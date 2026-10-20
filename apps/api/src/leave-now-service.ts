@@ -13,14 +13,9 @@ import {
 import type { Kv } from "./kv.js";
 import { defaultKv } from "./kv.js";
 import { GtfsBundleService, defaultService } from "./gtfs-service.js";
-import {
-  MissingProviderKeyError,
-  TrafficEtaService,
-} from "./traffic-service.js";
+import { GtfsRealtimeService } from "./gtfs-realtime-service.js";
 import { loadPushRegistration } from "./push-service.js";
 
-const REALTIME_URL =
-  "https://api.data.gov.my/gtfs-realtime/vehicle-position/prasarana?category=rapid-bus-mrtfeeder";
 const ROUTE_CODE: RouteId = "T816";
 const DEDUPE_WINDOW_MS = 15 * 60 * 1000;
 const KL_TIME_ZONE = "Asia/Kuala_Lumpur";
@@ -32,7 +27,6 @@ const LAST_SENT_KEY = "bt:leave-now:lastSentAt";
 export type LeaveNowOutcome =
   | "no_registration"
   | "no_approaching_bus"
-  | "traffic_unavailable"
   | "below_threshold"
   | "quiet_hours"
   | "quiet_hours_safety_valve"
@@ -51,7 +45,6 @@ export interface LeaveNowRunResult {
 
 export interface LeaveNowDeps {
   gtfs: GtfsBundleService;
-  traffic: TrafficEtaService;
   kv: Kv;
   fetchRealtime: (signal?: AbortSignal) => Promise<Uint8Array>;
   sendPush: (msg: ExpoPushMessage) => Promise<void>;
@@ -66,12 +59,6 @@ export interface ExpoPushMessage {
   sound?: "default";
   data?: Record<string, unknown>;
 }
-
-const defaultFetchRealtime = async (signal?: AbortSignal): Promise<Uint8Array> => {
-  const res = await fetch(REALTIME_URL, { signal });
-  if (!res.ok) throw new Error(`realtime ${res.status}`);
-  return new Uint8Array(await res.arrayBuffer());
-};
 
 const defaultSendPush = async (msg: ExpoPushMessage): Promise<void> => {
   const res = await fetch("https://exp.host/--/api/v2/push/send", {
@@ -88,6 +75,15 @@ const defaultSendPush = async (msg: ExpoPushMessage): Promise<void> => {
     throw new Error(`expo push ${res.status}: ${text}`);
   }
 };
+
+// Reads through the same KV-cached proxy as /api/gtfs-realtime so the cron
+// never adds to the upstream request budget on its own.
+const defaultFetchRealtime =
+  (kv: Kv) =>
+  async (): Promise<Uint8Array> => {
+    const { bytes } = await new GtfsRealtimeService({ kv }).getFeed();
+    return bytes;
+  };
 
 const defaultLocalClock = (date: Date): { hour: number; minute: number } => {
   const parts = new Intl.DateTimeFormat("en-GB", {
@@ -111,23 +107,8 @@ export class LeaveNowService {
     const kv = deps.kv ?? defaultKv();
     this.deps = {
       gtfs: deps.gtfs ?? defaultService,
-      traffic:
-        deps.traffic ??
-        new TrafficEtaService(
-          {
-            here: process.env.HERE_API_KEY,
-            tomtom: process.env.TOMTOM_API_KEY,
-          },
-          fetch,
-          Date.now,
-          undefined,
-          // Share the KV-backed cache with /api/traffic-eta so a mobile fetch
-          // within the last 60s can satisfy the cron's HERE call (and vice
-          // versa) without a second billable request.
-          { kv },
-        ),
       kv,
-      fetchRealtime: deps.fetchRealtime ?? defaultFetchRealtime,
+      fetchRealtime: deps.fetchRealtime ?? defaultFetchRealtime(kv),
       sendPush: deps.sendPush ?? defaultSendPush,
       now: deps.now ?? Date.now,
       localClock: deps.localClock ?? defaultLocalClock,
@@ -173,57 +154,16 @@ export class LeaveNowService {
     const positions = entitiesToPositions(feed, tripMap, now);
     const intermediateCandidates = otherStops(bundle, stop);
 
-    const initial = computeEta({
-      vehicles: positions,
-      stop,
-      polyline,
-      intermediateCandidates,
-      trafficMinutes: null,
-      loop: true,
-    });
-    if (!initial.vehicleId || !initial.busProjection) {
-      return {
-        outcome: "no_approaching_bus",
-        etaMinutes: null,
-        now,
-        localMinuteOfDay,
-      };
-    }
-
-    let trafficMinutes: number | null = null;
-    try {
-      const { result } = await this.deps.traffic.getEta({
-        originLat: initial.busProjection.projected.lat,
-        originLng: initial.busProjection.projected.lng,
-        destLat: stop.lat,
-        destLng: stop.lng,
-        provider: "here",
-      });
-      trafficMinutes = result.trafficMinutes;
-    } catch (err) {
-      if (err instanceof MissingProviderKeyError) {
-        return {
-          outcome: "traffic_unavailable",
-          etaMinutes: null,
-          now,
-          localMinuteOfDay,
-          detail: err.message,
-        };
-      }
-      throw err;
-    }
-
     const eta = computeEta({
       vehicles: positions,
       stop,
       polyline,
       intermediateCandidates,
-      trafficMinutes,
       loop: true,
     });
     if (eta.minutesToStop == null) {
       return {
-        outcome: "traffic_unavailable",
+        outcome: "no_approaching_bus",
         etaMinutes: null,
         now,
         localMinuteOfDay,

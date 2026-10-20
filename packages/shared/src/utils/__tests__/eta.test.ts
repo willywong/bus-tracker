@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { VehiclePosition } from "../../types/bus.js";
 import {
+  DEFAULT_BUS_CRUISE_KMH,
   DEFAULT_DWELL_MINUTES_PER_STOP,
   computeEta,
   countIntermediateStops,
@@ -207,7 +208,7 @@ test("countIntermediateStops: returns 0 when target is behind bus and non-loop",
   assert.equal(count, 0);
 });
 
-test("computeEta: returns traffic source with dwell when approaching vehicle and trafficMinutes given", () => {
+test("computeEta: returns live source with drive time + dwell when a vehicle is approaching", () => {
   const vehicles = [bus("A", 3.1, 101.605, 90)];
   const intermediates: LatLng[] = [
     { lat: 3.1, lng: 101.606 },
@@ -218,28 +219,41 @@ test("computeEta: returns traffic source with dwell when approaching vehicle and
     stop: STOP,
     polyline: LOOP,
     intermediateCandidates: intermediates,
-    trafficMinutes: 8,
   });
-  assert.equal(result.source, "traffic");
+  assert.equal(result.source, "live");
   assert.equal(result.vehicleId, "A");
-  assert.equal(result.minutesToStop, 8 + 2 * DEFAULT_DWELL_MINUTES_PER_STOP);
   assert.ok(result.busProjection);
   assert.ok(result.stopProjection);
   assert.ok(result.forwardMeters && result.forwardMeters > 0);
+  const driveMinutes =
+    (result.forwardMeters! / 1000 / DEFAULT_BUS_CRUISE_KMH) * 60;
+  assert.ok(result.minutesToStop != null);
+  assert.ok(
+    Math.abs(
+      result.minutesToStop! -
+        (driveMinutes + 2 * DEFAULT_DWELL_MINUTES_PER_STOP),
+    ) < 1e-9,
+  );
 });
 
-test("computeEta: falls back to schedule source (null minutes) when trafficMinutes is null", () => {
+test("computeEta: honours a custom cruise speed", () => {
   const vehicles = [bus("A", 3.1, 101.605, 90)];
-  const result = computeEta({
+  const slow = computeEta({
     vehicles,
     stop: STOP,
     polyline: LOOP,
     intermediateCandidates: [],
-    trafficMinutes: null,
+    cruiseKmh: 10,
   });
-  assert.equal(result.source, "schedule");
-  assert.equal(result.minutesToStop, null);
-  assert.equal(result.vehicleId, "A");
+  const fast = computeEta({
+    vehicles,
+    stop: STOP,
+    polyline: LOOP,
+    intermediateCandidates: [],
+    cruiseKmh: 40,
+  });
+  assert.ok(slow.minutesToStop! > fast.minutesToStop!);
+  assert.ok(Math.abs(slow.minutesToStop! / fast.minutesToStop! - 4) < 1e-9);
 });
 
 test("computeEta: returns source null when no vehicle is approaching", () => {
@@ -249,7 +263,6 @@ test("computeEta: returns source null when no vehicle is approaching", () => {
     stop: STOP,
     polyline: LOOP,
     intermediateCandidates: [],
-    trafficMinutes: 5,
   });
   assert.equal(result.source, null);
   assert.equal(result.vehicleId, null);

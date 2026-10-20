@@ -1,9 +1,8 @@
 import { SymbolView } from 'expo-symbols';
 import { PlatformColor, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
-import { AlertBanner } from '@/components/alerts/AlertBanner';
 import { GlassGuard, isGlassAvailable } from '@/components/GlassGuard';
 import { AuroraBackdrop } from '@/components/tracker/AuroraBackdrop';
 import { JourneyCard } from '@/components/tracker/JourneyCard';
@@ -32,7 +31,6 @@ import {
   type StopRow,
   type TrafficSignalRow,
 } from '@/db/queries';
-import { useAlerts } from '@/hooks/useAlerts';
 import { useBusLiveActivity } from '@/hooks/useBusLiveActivity';
 import { useBusPosition } from '@/hooks/useBusPosition';
 import { useEta } from '@/hooks/useEta';
@@ -74,20 +72,6 @@ function TrackerActive({ onAddBus }: { onAddBus: () => void }) {
   const eta = useEta({
     stopId: settings.preferredStopId,
     routeCode: activeRoute,
-    trafficProvider: settings.trafficProvider,
-  });
-  const alertRouteCodes = useMemo(
-    () => (activeRoute ? [activeRoute] : []),
-    [activeRoute],
-  );
-  const alertStopIds = useMemo(
-    () =>
-      settings.preferredStopId ? [settings.preferredStopId] : [],
-    [settings.preferredStopId],
-  );
-  const { alerts } = useAlerts({
-    routeCodes: alertRouteCodes,
-    stopIds: alertStopIds,
   });
   const {
     minutesToStop,
@@ -253,12 +237,6 @@ function TrackerActive({ onAddBus }: { onAddBus: () => void }) {
             void walk.cancel();
           }}
         />
-
-        {alerts.length > 0 ? (
-          <View style={{ marginBottom: 12 }}>
-            <AlertBanner alerts={alerts} />
-          </View>
-        ) : null}
 
         {push.permission === 'denied' ? (
           <Animated.View

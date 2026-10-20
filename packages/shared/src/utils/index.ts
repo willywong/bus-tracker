@@ -27,11 +27,6 @@ export {
 } from "./protobuf.js";
 export { entitiesToPositions, type TripRouteMap } from "./realtime.js";
 export {
-  entitiesToAlerts,
-  entitiesToTripUpdates,
-  filterAlertsForScope,
-} from "./alerts.js";
-export {
   createOutlierFilter,
   haversineMeters,
   type OutlierFilter,
@@ -87,10 +82,12 @@ export {
   type MotionStatusResult,
 } from "./motion-status.js";
 export {
+  DEFAULT_BUS_CRUISE_KMH,
   DEFAULT_DWELL_MINUTES_PER_STOP,
   computeEta,
   countIntermediateStops,
   dwellMinutes,
+  estimateLiveMinutes,
   evaluateApproach,
   pickApproachingVehicle,
   type ApproachEvaluation,
@@ -99,6 +96,7 @@ export {
   type ComputeEtaResult,
   type CountIntermediateStopsArgs,
   type DwellMinutesArgs,
+  type EstimateLiveMinutesArgs,
   type EtaSource,
   type EvaluateApproachArgs,
   type PickApproachingVehicleArgs,

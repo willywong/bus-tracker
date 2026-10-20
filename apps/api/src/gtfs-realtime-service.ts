@@ -14,22 +14,9 @@ const UPSTREAM_URL =
   process.env.GTFS_RT_UPSTREAM_URL ??
   "https://api.data.gov.my/gtfs-realtime/vehicle-position/prasarana?category=rapid-bus-mrtfeeder";
 
-export const ALERTS_UPSTREAM_URL =
-  process.env.GTFS_ALERTS_UPSTREAM_URL ??
-  "https://api.data.gov.my/gtfs-realtime/service-alerts/prasarana?category=rapid-bus-mrtfeeder";
-
-export const TRIP_UPDATES_UPSTREAM_URL =
-  process.env.GTFS_TRIP_UPDATES_UPSTREAM_URL ??
-  "https://api.data.gov.my/gtfs-realtime/trip-updates/prasarana?category=rapid-bus-mrtfeeder";
-
 const CACHE_KEY = "bt:gtfs-rt:prasarana:rapid-bus-mrtfeeder";
-export const ALERTS_CACHE_KEY = "bt:gtfs-alerts:prasarana:rapid-bus-mrtfeeder";
-export const TRIP_UPDATES_CACHE_KEY =
-  "bt:gtfs-tu:prasarana:rapid-bus-mrtfeeder";
 /** How long a fresh blob is served as HIT. Matches upstream update cadence. */
 export const FRESH_TTL_MS = 30_000;
-/** Alerts change slowly; longer freshness keeps upstream load minimal. */
-export const ALERTS_FRESH_TTL_MS = 60_000;
 /** How long a stale blob may cover an upstream failure before we give up. */
 export const STALE_GRACE_MS = 2 * 60_000;
 
