@@ -11,7 +11,6 @@ import { useNavigation, useRouter } from 'expo-router';
 import { useEffect, useMemo, type ReactNode } from 'react';
 import {
   Linking,
-  Pressable,
   ScrollView,
   StyleSheet,
   Switch,
@@ -33,6 +32,7 @@ import { SheetHeader } from '@/components/trip/SheetHeader';
 import { Timetable } from '@/components/trip/Timetable';
 import { useSettings } from '@/hooks/useSettings';
 import { ensureNotificationPermission } from '@/services/reminders/notifications';
+import { RowButton } from '@/components/ui/RowButton';
 import { useRide } from '@/state/RideContext';
 import { useTrip } from '@/state/TripContext';
 import { color, MARGIN, motion, space, type, type DetentIndex } from '@/theme/design';
@@ -56,6 +56,7 @@ export default function TripSheet() {
   const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
   const ride = useRide();
   const { model } = trip;
+  const peek = trip.detent === 0;
   const userStop = trip.route?.userStop ?? null;
   const stopPoint = useMemo(
     () => (userStop ? { lat: userStop.stop_lat, lng: userStop.stop_lon } : null),
@@ -113,7 +114,7 @@ export default function TripSheet() {
           showCompact={trip.detent === 0}
           compactIsLive
         />
-        <View style={styles.body}>
+        <View style={[styles.body, peek && styles.hidden]} accessibilityElementsHidden={peek}>
           <RideBody ride={ride} base={model} />
         </View>
       </ScrollView>
@@ -139,7 +140,10 @@ export default function TripSheet() {
         compactIsLive={isLive}
       />
 
-      <View style={styles.body}>
+      {/* The peek detent shows the header row only; the body stays mounted
+          (no SwiftUI host re-creation) but invisible so nothing peeks out
+          clipped under it. */}
+      <View style={[styles.body, peek && styles.hidden]} accessibilityElementsHidden={peek}>
         <StateBody />
 
         <Notes notes={model.notes} />
@@ -176,26 +180,21 @@ export default function TripSheet() {
 
         {stopPoint ? (
           <Section title="Getting there">
-            <Pressable
+            <RowButton
               onPress={() => openWalkingDirections(stopPoint)}
-              accessibilityRole="button"
               accessibilityHint="Opens Apple Maps"
-              style={({ pressed }) => [styles.linkRow, pressed && styles.pressed]}
+              style={styles.linkRow}
             >
               <SymbolView name="figure.walk" size={18} tintColor={color.accent} />
               <Text style={styles.linkText}>Walking directions to your stop</Text>
               <SymbolView name="arrow.up.right" size={13} tintColor={color.tertiaryLabel} />
-            </Pressable>
+            </RowButton>
             {ride.destinations.length > 0 ? (
-              <Pressable
-                onPress={() => router.push('/ride')}
-                accessibilityRole="button"
-                style={({ pressed }) => [styles.linkRow, pressed && styles.pressed]}
-              >
+              <RowButton onPress={() => router.push('/ride')} style={styles.linkRow}>
                 <SymbolView name="bell.badge" size={18} tintColor={color.accent} />
                 <Text style={styles.linkText}>On the bus? Alert me before my stop</Text>
                 <SymbolView name="chevron.right" size={13} tintColor={color.tertiaryLabel} />
-              </Pressable>
+              </RowButton>
             ) : null}
           </Section>
         ) : null}
@@ -385,6 +384,9 @@ const styles = StyleSheet.create({
     paddingTop: space.md,
     gap: space.lg,
   },
+  hidden: {
+    opacity: 0,
+  },
   heroBlock: {
     gap: space.xs,
   },
@@ -439,9 +441,6 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     borderCurve: 'continuous',
     backgroundColor: color.fill,
-  },
-  pressed: {
-    opacity: 0.6,
   },
   linkText: {
     ...type.body,

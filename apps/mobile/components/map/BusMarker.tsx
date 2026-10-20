@@ -50,7 +50,6 @@ export function BusMarker({
         region as unknown as React.ComponentProps<typeof MarkerAnimated>['coordinate']
       }
       flat
-      anchor={{ x: 0.5, y: 0.5 }}
       zIndex={primary ? 3 : 2}
       displayPriority="required"
       onPress={onPress}
@@ -104,7 +103,6 @@ export function GhostBusMarker({ coordinate, color, background }: GhostBusMarker
     <Marker
       coordinate={coordinate}
       flat
-      anchor={{ x: 0.5, y: 0.5 }}
       zIndex={1}
       accessibilityLabel="Scheduled bus position, not live"
     >

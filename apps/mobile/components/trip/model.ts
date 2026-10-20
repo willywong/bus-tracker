@@ -321,15 +321,16 @@ function detailFor(input: TripModelInput): string | null {
   return `${m} min ahead of schedule`;
 }
 
+/**
+ * "Then 18 · 34 min" while both are under an hour, else clock times for
+ * both ("Then 21:41 · 22:11"); never a bare minute count beside a clock time.
+ */
 function thenFor(input: TripModelInput): string | null {
   const picks = distinctLater(input).slice(0, 2).map((a) => a.epochMs);
   if (picks.length === 0) return null;
-  const parts = picks.map((ms) => {
-    const m = Math.max(0, Math.floor((ms - input.now) / 60_000));
-    return m < 60 ? { text: String(m), minutes: true } : { text: input.formatClock(ms), minutes: false };
-  });
-  const last = parts[parts.length - 1];
-  return `Then ${parts.map((p) => p.text).join(' · ')}${last.minutes ? ' min' : ''}`;
+  const mins = picks.map((ms) => Math.max(0, Math.floor((ms - input.now) / 60_000)));
+  if (mins.every((m) => m < 60)) return `Then ${mins.join(' · ')} min`;
+  return `Then ${picks.map((ms) => input.formatClock(ms)).join(' · ')}`;
 }
 
 function actionFor(
@@ -388,7 +389,7 @@ function arrivalNotes(
     notes.push({
       id: 'feed-down',
       icon: 'antenna.radiowaves.left.and.right.slash',
-      text: 'data.gov.my isn’t sending any live buses right now, on any route. Times are from the timetable.',
+      text: 'Live data is down on every route. Times are from the timetable',
       tone: 'warning',
     });
   }
@@ -406,7 +407,7 @@ function arrivalNotes(
     notes.push({
       id: 'ghost',
       icon: 'questionmark.circle',
-      text: `No bus ${route}is reporting yet. This one may not run.`,
+      text: `No bus ${route}is reporting yet. This one may not run`,
       tone: 'warning',
     });
   }
@@ -426,7 +427,7 @@ function arrivalNotes(
       notes.push({
         id: 'miss-cost',
         icon: 'hourglass',
-        text: `Miss it and the next is at ${input.formatClock(next.epochMs)}, ${formatDuration(gap)} later.`,
+        text: `Miss it and you wait ${formatDuration(gap)} for the next one`,
         tone: 'info',
       });
     }
@@ -442,7 +443,7 @@ function arrivalNotes(
     notes.push({
       id: 'where-from',
       icon: 'location.circle',
-      text: `Now near ${input.busNearStopName}.`,
+      text: `Now near ${input.busNearStopName}`,
       tone: 'info',
     });
   }
@@ -460,7 +461,7 @@ function lastBusNote(input: TripModelInput, finalRunAt: number | null): TripNote
     return {
       id: 'last-bus',
       icon: 'moon.stars',
-      text: 'This is the last bus today.',
+      text: 'This is the last bus today',
       tone: 'warning',
     };
   }
@@ -470,7 +471,7 @@ function lastBusNote(input: TripModelInput, finalRunAt: number | null): TripNote
   return {
     id: 'last-bus',
     icon: 'moon.stars',
-    text: `Last bus today at ${input.formatClock(last)}.`,
+    text: `Last bus today at ${input.formatClock(last)}`,
     tone: 'info',
   };
 }
@@ -494,8 +495,8 @@ function bunchingNote(
     icon: 'bus.doubledecker',
     text:
       gap != null && gap >= 20
-        ? `Next two buses are ${apartText}, then a ${formatDuration(gap)} gap.`
-        : `Next two buses are ${apartText}.`,
+        ? `Next two buses are ${apartText}, then a ${formatDuration(gap)} gap`
+        : `Next two buses are ${apartText}`,
     tone: 'info',
   };
 }

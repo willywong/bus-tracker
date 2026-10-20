@@ -58,7 +58,6 @@ export const RouteLayer = memo(function RouteLayer({
           <Marker
             key={s.stop_id}
             coordinate={{ latitude: s.stop_lat, longitude: s.stop_lon }}
-            anchor={{ x: 0.5, y: 0.5 }}
             flat
             zIndex={1}
             displayPriority="low"
@@ -69,14 +68,19 @@ export const RouteLayer = memo(function RouteLayer({
         ),
       )}
       {userStop ? (
+        // Apple Maps ignores `anchor` and centres the marker view on the
+        // coordinate, re-centring it whenever the view's size changes. So the
+        // view has a fixed size and is symmetric: an empty band above the dot
+        // as tall as the label below it puts the dot exactly on the stop at
+        // every zoom level.
         <Marker
           coordinate={{ latitude: userStop.stop_lat, longitude: userStop.stop_lon }}
-          anchor={{ x: 0.5, y: 0.25 }}
           zIndex={2}
           displayPriority="required"
           accessibilityLabel={`Your stop: ${formatStopName(userStop.stop_name)}`}
         >
           <View style={styles.userStopWrap}>
+            <View style={styles.labelBand} />
             <View style={[styles.userStop, { backgroundColor: accent }]}>
               <View style={[styles.userStopCore, { backgroundColor: '#FFFFFF' }]} />
             </View>
@@ -99,6 +103,12 @@ export const RouteLayer = memo(function RouteLayer({
   );
 });
 
+const DOT = 20;
+const LABEL_GAP = 4;
+const LABEL_HEIGHT = 16;
+const LABEL_BAND = LABEL_GAP + LABEL_HEIGHT;
+const USER_STOP_WIDTH = 168;
+
 const styles = StyleSheet.create({
   stopDot: {
     width: 10,
@@ -108,12 +118,16 @@ const styles = StyleSheet.create({
   },
   userStopWrap: {
     alignItems: 'center',
-    width: 160,
+    width: USER_STOP_WIDTH,
+    height: DOT + 2 * LABEL_BAND,
+  },
+  labelBand: {
+    height: LABEL_BAND,
   },
   userStop: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    width: DOT,
+    height: DOT,
+    borderRadius: DOT / 2,
     borderWidth: 2.5,
     borderColor: '#FFFFFF',
     alignItems: 'center',
@@ -126,7 +140,10 @@ const styles = StyleSheet.create({
     borderRadius: 3,
   },
   userStopLabel: {
-    marginTop: 3,
+    marginTop: LABEL_GAP,
+    width: USER_STOP_WIDTH,
+    height: LABEL_HEIGHT,
+    lineHeight: LABEL_HEIGHT,
     fontSize: 12,
     fontWeight: '600',
     textAlign: 'center',
