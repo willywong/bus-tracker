@@ -46,6 +46,8 @@ export type BusActivityProps = {
   isStale: boolean;
   /** Contextual proximity — 'arriving' = <300 m or ≤1 min; 'arrived' = docked at stop (latched ~45s). */
   arrivalStatus: 'en-route' | 'arriving' | 'arrived';
+  /** Epoch ms of the realtime poll behind a live ETA ("as of 08:41"). Null for scheduled. */
+  updatedAtEpochMs: number | null;
 };
 
 /**
@@ -54,6 +56,12 @@ export type BusActivityProps = {
  *   minimal  — the live minutes, not a logo
  *   expanded / Lock Screen — stop, big countdown, trip progress line, and a
  *   status line that says live vs scheduled with a glyph and a word.
+ *   bannerSmall — Apple Watch Smart Stack and CarPlay: badge, number, status.
+ *
+ * The app passes a stale date with every live update. When it passes without
+ * a fresh poll (app suspended, no signal), iOS sets `environment.isStale` and
+ * the countdown greys out with "Last update 08:41" instead of a frozen
+ * number posing as live.
  *
  * IMPORTANT: Everything inside this function (helpers, constants, literals)
  * must be inlined. The babel-preset-expo 'widget' plugin serializes this
@@ -63,7 +71,7 @@ export type BusActivityProps = {
  * scope helpers and constants will be `undefined` at widget runtime and the
  * Dynamic Island will render empty.
  */
-const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props) => {
+const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props, environment) => {
   'widget';
 
   // --- Palette (inlined — no module refs) --------------------------------
@@ -72,19 +80,24 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props) => {
   const warning = '#FF9F0A';
 
   const isPreService = props.kind === 'pre-service';
+  const systemStale = !!environment?.isStale;
+  const isOutdated = (props.isStale || systemStale) && props.source === 'live';
   const isArrived = !isPreService && props.arrivalStatus === 'arrived';
   const isArriving = !isPreService && props.arrivalStatus === 'arriving';
-  const isLive = !isPreService && props.source === 'live' && !props.isStale;
+  const isLive = !isPreService && props.source === 'live' && !isOutdated;
 
   const minutes =
     props.minutesToStop != null ? Math.max(0, Math.floor(props.minutesToStop)) : null;
 
-  const arrivalClock = new Date(props.arrivalEpochMs).toLocaleTimeString('en-GB', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-    timeZone: 'Asia/Kuala_Lumpur',
-  });
+  const clockOf = (ms: number) =>
+    new Date(ms).toLocaleTimeString('en-GB', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone: 'Asia/Kuala_Lumpur',
+    });
+  const arrivalClock = clockOf(props.arrivalEpochMs);
+  const updatedClock = props.updatedAtEpochMs != null ? clockOf(props.updatedAtEpochMs) : null;
 
   // The one number. Words for the moments that matter; clock time before
   // service or an hour+ out; never "0 min" and never seconds.
@@ -125,10 +138,10 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props) => {
     statusIcon = 'checkmark.circle.fill';
     statusColor = live;
     statusText = 'At your stop';
-  } else if (props.isStale && props.source === 'live') {
+  } else if (isOutdated) {
     statusIcon = 'clock.badge.exclamationmark';
     statusColor = warning;
-    statusText = 'Updating…';
+    statusText = systemStale && updatedClock ? `Last update ${updatedClock}` : 'Updating…';
   } else if (isLive) {
     statusIcon = 'dot.radiowaves.left.and.right';
     statusColor = live;
@@ -141,7 +154,12 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props) => {
       statusText += ` · ${Math.abs(Math.round(props.delayMinutes))} min late`;
     }
   }
-  const trailingText = isPreService || heroUnit == null ? '' : `Arrives ${arrivalClock}`;
+  const trailingText =
+    isPreService || heroUnit == null
+      ? ''
+      : isLive && updatedClock
+        ? `as of ${updatedClock}`
+        : `Arrives ${arrivalClock}`;
 
   const tripStartDate = new Date(props.tripStartEpochMs);
   const arrivalDate = new Date(props.arrivalEpochMs);
@@ -216,7 +234,11 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props) => {
           font({ size: heroUnit ? size : size * 0.7, weight: isPreService || !isLive ? 'semibold' : 'bold', design: 'rounded' }),
           monospacedDigit(),
           contentTransition('numericText', { countsDown: true }),
-          foregroundStyle(isArrived ? live : { type: 'hierarchical', style: 'primary' }),
+          foregroundStyle(
+            isArrived
+              ? live
+              : { type: 'hierarchical', style: isOutdated ? 'secondary' : 'primary' },
+          ),
           lineLimit(1),
         ]}
       >
@@ -319,12 +341,25 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props) => {
     </VStack>
   );
 
+  // --- Apple Watch Smart Stack / CarPlay ------------------------------------
+  const bannerSmall = (
+    <VStack spacing={4} alignment="leading" modifiers={[padding({ horizontal: 10, vertical: 8 })]}>
+      <HStack spacing={6} alignment="center">
+        {badge(11)}
+        <Spacer />
+        {hero(24)}
+      </HStack>
+      {statusRow(10)}
+    </VStack>
+  );
+
   return {
     compactLeading,
     compactTrailing,
     minimal,
     expandedBottom,
     banner,
+    bannerSmall,
   };
 };
 

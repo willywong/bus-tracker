@@ -105,6 +105,7 @@ export function createMockRealtimeStore(): RealtimeStore {
     lastError: null,
     nextRefreshAt: null,
     isRefreshing: false,
+    feedVehicleCount: null,
   };
   const listeners = new Set<() => void>();
   let refCount = 0;
@@ -219,6 +220,7 @@ export function createMockRealtimeStore(): RealtimeStore {
       lastError: null,
       nextRefreshAt: devNow() + TICK_MS,
       isRefreshing: false,
+      feedVehicleCount: 1,
     };
     notify();
     cursor += ADVANCE_METERS_PER_TICK;
@@ -287,6 +289,7 @@ export function createMockRealtimeStore(): RealtimeStore {
           lastError: null,
           nextRefreshAt: null,
           isRefreshing: false,
+          feedVehicleCount: null,
         };
       },
       refCount: () => refCount,

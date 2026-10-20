@@ -42,8 +42,17 @@ interface UseBusLiveActivityArgs {
   beforeServiceStart?: boolean;
   /** Epoch ms of the first bus of today's service. */
   firstBusToday?: number | null;
+  /** Epoch ms of the last successful realtime poll; drives the stale date. */
+  lastUpdated?: number | null;
   enabled?: boolean;
 }
+
+/**
+ * How long a live countdown stays trustworthy without a fresh poll. Past
+ * this, iOS marks the activity stale (even with the app suspended) and the
+ * layout greys the number out. Scheduled times don't go stale.
+ */
+const LIVE_STALE_AFTER_MS = 3 * 60_000;
 
 /**
  * Reflects the tracker's resolved ETA onto a Dynamic Island / Lock Screen
@@ -60,6 +69,7 @@ export function useBusLiveActivity({
   isStale = false,
   beforeServiceStart = false,
   firstBusToday = null,
+  lastUpdated = null,
   enabled = true,
 }: UseBusLiveActivityArgs): void {
   const instanceRef = useRef<Instance | null>(null);
@@ -103,6 +113,7 @@ export function useBusLiveActivity({
         distanceToStopMeters: null,
         isStale: false,
         arrivalStatus: 'en-route',
+        updatedAtEpochMs: null,
       };
 
       const inst = instanceRef.current;
@@ -174,12 +185,17 @@ export function useBusLiveActivity({
         forwardMeters != null && Number.isFinite(forwardMeters) ? forwardMeters : null,
       isStale,
       arrivalStatus: activityStatus,
+      updatedAtEpochMs: primaryArrival.kind === 'live' ? lastUpdated : null,
     };
+    const staleDate =
+      next.updatedAtEpochMs != null
+        ? new Date(next.updatedAtEpochMs + LIVE_STALE_AFTER_MS)
+        : undefined;
 
     const inst = instanceRef.current;
     if (!inst) {
       try {
-        instanceRef.current = BusArrivalActivity.start(next, 't816://');
+        instanceRef.current = BusArrivalActivity.start(next, 't816://', staleDate);
         lastPropsRef.current = next;
       } catch (err) {
         console.warn('[live-activity] start failed', err);
@@ -189,7 +205,7 @@ export function useBusLiveActivity({
 
     if (lastPropsRef.current && shallowEqual(lastPropsRef.current, next)) return;
     try {
-      inst.update(next);
+      inst.update(next, staleDate);
       lastPropsRef.current = next;
     } catch (err) {
       console.warn('[live-activity] update failed', err);
@@ -205,6 +221,7 @@ export function useBusLiveActivity({
     beforeServiceStart,
     firstBusToday,
     arrivalStatus,
+    lastUpdated,
   ]);
 
   // Final cleanup on unmount.

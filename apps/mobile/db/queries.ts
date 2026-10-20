@@ -833,3 +833,56 @@ export async function getServiceDayBounds(
         : null,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Reminder planning (services/reminders)
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns every scheduled departure of `routeCode` at `stopId` that belongs to
+ * the Malaysia-local service date containing `serviceDate` (calendar +
+ * calendar_dates aware, via `getActiveServiceIdsForDate`). Unlike
+ * `getNextScheduledDepartures` this is not clipped to "now" and does not mix
+ * in yesterday's spillover: it is the whole timetable of that service day, so
+ * reminders can be planned for future days. `departureSeconds` is relative to
+ * that service day's midnight and may exceed 86400 for after-midnight trips.
+ * Sorted by `departureEpochMs` ascending; empty when there is no data.
+ */
+export async function getDeparturesForDate(
+  db: Db,
+  params: { routeCode: string; stopId: string; serviceDate: Date },
+): Promise<ScheduledDeparture[]> {
+  const { routeCode, stopId, serviceDate } = params;
+  const day = toMalaysiaParts(serviceDate);
+  const services = await getActiveServiceIdsForDate(db, serviceDate);
+  const rows = await queryDeparturesForServices(
+    db,
+    routeCode,
+    stopId,
+    services,
+    0,
+    10_000,
+  );
+  return rows.map((r) => ({
+    tripId: r.trip_id,
+    serviceId: r.service_id,
+    routeId: r.route_id,
+    routeCode: r.route_code,
+    stopId: r.stop_id,
+    stopSequence: r.stop_sequence,
+    departureSeconds: r.departure_seconds,
+    departureEpochMs: day.midnightUtcMs + r.departure_seconds * 1000,
+    serviceDayMidnightUtcMs: day.midnightUtcMs,
+  }));
+}
+
+/** Single stop lookup by id, or null when the stop isn't in the bundle. */
+export async function getStopById(
+  db: Db,
+  stopId: string,
+): Promise<StopRow | null> {
+  return db.getFirstAsync<StopRow>(
+    "SELECT stop_id, stop_name, stop_lat, stop_lon, wheelchair_boarding FROM stops WHERE stop_id = ? LIMIT 1;",
+    stopId,
+  );
+}

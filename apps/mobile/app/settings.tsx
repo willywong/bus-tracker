@@ -22,6 +22,7 @@ import Constants from 'expo-constants';
 import { Stack, useRouter } from 'expo-router';
 
 import { FavoritesSection } from '@/components/settings/FavoritesSection';
+import { RemindersSection } from '@/components/settings/RemindersSection';
 import {
   CLOCK_FORMATS,
   MAP_TYPES,
@@ -29,6 +30,7 @@ import {
   type ClockFormat,
   type MapType,
 } from '@/hooks/useSettings';
+import { useTrip } from '@/state/TripContext';
 import { color } from '@/theme/design';
 import { haptics } from '@/utils/haptics';
 
@@ -49,6 +51,7 @@ const mapTypeLabel: Record<MapType, string> = {
 export default function SettingsScreen() {
   const router = useRouter();
   const settings = useSettings();
+  const trip = useTrip();
 
   if (!settings.ready) return null;
 
@@ -94,6 +97,11 @@ export default function SettingsScreen() {
               <Text modifiers={[monospacedDigit()]}>{`${settings.walkMinutes} min`}</Text>
             </HStack>
           </Section>
+
+          <RemindersSection
+            routeCode={settings.preferredRouteCode}
+            arrivalTargets={trip.favoriteStops}
+          />
 
           <Section title="Display">
             <Picker

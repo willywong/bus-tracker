@@ -48,6 +48,18 @@ export interface TripModelInput {
   walkRemainingSeconds: number | null;
   isFollowing: boolean;
   formatClock: (epochMs: number) => string;
+  /** Route code, for copy ("No bus on T816 is reporting yet"). */
+  routeCode?: string;
+  /**
+   * Plausible vehicles in the whole feeder feed on the last poll (every
+   * route, not just this one). 0 during service hours means data.gov.my's
+   * live feed is down, not that this route is quiet. Null before first poll.
+   */
+  feedVehicleCount?: number | null;
+  /** Stop the tracked live bus is at or heading toward. */
+  busNearStopName?: string | null;
+  /** A weather nudge to show, e.g. from MET Malaysia warnings. */
+  rainNudge?: string | null;
 }
 
 export type TripState =
@@ -75,6 +87,24 @@ export type TripAction =
   | { kind: 'walking'; remainingSeconds: number }
   | { kind: 'tight' };
 
+/** Why live data is missing, when it is. */
+export type FeedHealth = 'ok' | 'route-quiet' | 'feed-down' | 'unreachable';
+
+export interface TripNote {
+  id:
+    | 'feed-down'
+    | 'ghost'
+    | 'last-bus'
+    | 'rain'
+    | 'bunching'
+    | 'miss-cost'
+    | 'where-from';
+  /** SF Symbol name. */
+  icon: string;
+  text: string;
+  tone: 'info' | 'warning';
+}
+
 export interface TripModel {
   state: TripState;
   hero: HeroValue | null;
@@ -88,12 +118,26 @@ export interface TripModel {
   compact: string | null;
   action: TripAction;
   accessibilityLabel: string;
+  /** "as of 08:41" next to a live status, so a frozen number can't pass as fresh. */
+  freshness: string | null;
+  feedHealth: FeedHealth;
+  /** Supporting facts under the hero, most important first (max {@link MAX_NOTES}). */
+  notes: TripNote[];
 }
 
 /** Age after which a live ETA is shown as "Updated N min ago". */
 export const AGING_AFTER_MS = 60_000;
 /** Inside this many minutes before you need to leave, the action flips to "Leave now". */
 export const LEAVE_NOW_WINDOW_MIN = 2;
+/** A scheduled bus this close with nothing on the route reporting may not run. */
+export const GHOST_WINDOW_MIN = 15;
+/** Missing a bus is worth a note when the next one is at least this far behind. */
+export const MISS_COST_MIN = 15;
+/** Two live buses closer than this are bunched. */
+export const BUNCHED_MIN = 5;
+/** Start mentioning the last bus this long before it leaves. */
+export const LAST_BUS_HEADS_UP_MS = 3 * 60 * 60_000;
+export const MAX_NOTES = 3;
 
 export function buildTripModel(input: TripModelInput): TripModel {
   const source = sourceOf(input);
@@ -143,6 +187,7 @@ export function buildTripModel(input: TripModelInput): TripModel {
       status: input.feedError
         ? "Can't reach live data"
         : 'No buses scheduled right now',
+      notes: compactNotes([lastBusNote(input, null)]),
       accessibilityLabel: 'No buses scheduled right now',
     });
   }
@@ -151,6 +196,7 @@ export function buildTripModel(input: TripModelInput): TripModel {
   const isLive = input.primaryArrival.kind === 'live' && input.mode === 'live';
   const hero = heroFor(minutes, isLive, input);
   const shownSource: SourceKind = isLive ? source : 'scheduled';
+  const feedHealth = feedHealthOf(input);
 
   return {
     state: 'arrival',
@@ -163,6 +209,12 @@ export function buildTripModel(input: TripModelInput): TripModel {
     compact: hero.unit ? `${hero.text} ${hero.unit}` : hero.text,
     action: actionFor(minutes, hero, input),
     accessibilityLabel: a11yFor(hero, shownSource, input),
+    freshness:
+      shownSource === 'live' && input.lastUpdated != null
+        ? `as of ${input.formatClock(input.lastUpdated)}`
+        : null,
+    feedHealth,
+    notes: arrivalNotes(minutes, isLive, feedHealth, input),
   };
 }
 
@@ -184,6 +236,9 @@ function base(
       input.walkRemainingSeconds != null
         ? { kind: 'walking', remainingSeconds: input.walkRemainingSeconds }
         : { kind: 'none' },
+    freshness: null,
+    feedHealth: feedHealthOf(input),
+    notes: [],
     ...patch,
   };
 }
@@ -218,12 +273,26 @@ function heroFor(
   return { text: String(minutes), unit: 'min', kind: 'minutes' };
 }
 
+function feedHealthOf(input: TripModelInput): FeedHealth {
+  if (input.feedError) return 'unreachable';
+  if (input.liveBusCount > 0) return 'ok';
+  if (input.feedVehicleCount === 0) return 'feed-down';
+  // Unknown whole-feed count (first poll pending) reads as a quiet route.
+  return 'route-quiet';
+}
+
 function statusFor(source: SourceKind, input: TripModelInput): string {
   if (source === 'scheduled') {
-    if (input.liveBusCount > 0) return 'Scheduled';
-    return input.feedError
-      ? "Scheduled · can't reach live data"
-      : 'Scheduled · no live buses reporting';
+    switch (feedHealthOf(input)) {
+      case 'ok':
+        return 'Scheduled';
+      case 'unreachable':
+        return "Scheduled · can't reach live data";
+      case 'feed-down':
+        return 'Scheduled · live data is down';
+      case 'route-quiet':
+        return 'Scheduled · no live buses reporting';
+    }
   }
   if (source === 'aging' && input.lastUpdated != null) {
     const mins = Math.max(1, Math.floor((input.now - input.lastUpdated) / 60_000));
@@ -253,20 +322,7 @@ function detailFor(input: TripModelInput): string | null {
 }
 
 function thenFor(input: TripModelInput): string | null {
-  const primary = input.primaryArrival;
-  if (!primary) return null;
-  const seen = new Set<string>();
-  if (primary.tripId) seen.add(primary.tripId);
-  const picks: number[] = [];
-  for (const a of input.laterArrivals) {
-    if (a.epochMs <= primary.epochMs + 30_000) continue;
-    if (a.tripId) {
-      if (seen.has(a.tripId)) continue;
-      seen.add(a.tripId);
-    }
-    picks.push(a.epochMs);
-    if (picks.length === 2) break;
-  }
+  const picks = distinctLater(input).slice(0, 2).map((a) => a.epochMs);
   if (picks.length === 0) return null;
   const parts = picks.map((ms) => {
     const m = Math.max(0, Math.floor((ms - input.now) / 60_000));
@@ -308,6 +364,162 @@ function a11yFor(hero: HeroValue, source: SourceKind, input: TripModelInput): st
         : 'scheduled time';
   const ahead = stopsAheadLabel(input.stopsAhead);
   return `Next bus ${when}, ${src}${source !== 'scheduled' && ahead ? `, ${ahead}` : ''}`;
+}
+
+function arrivalNotes(
+  minutes: number,
+  isLive: boolean,
+  feedHealth: FeedHealth,
+  input: TripModelInput,
+): TripNote[] {
+  const primary = input.primaryArrival;
+  if (!primary) return [];
+  const later = distinctLater(input);
+  const next = later[0] ?? null;
+  const lastBus = input.lastBusToday;
+  const isLast =
+    lastBus != null &&
+    primary.epochMs >= lastBus - 5 * 60_000 &&
+    !later.some((a) => a.epochMs <= lastBus);
+
+  const notes: (TripNote | null)[] = [];
+
+  if (feedHealth === 'feed-down') {
+    notes.push({
+      id: 'feed-down',
+      icon: 'antenna.radiowaves.left.and.right.slash',
+      text: 'data.gov.my isn’t sending any live buses right now, on any route. Times are from the timetable.',
+      tone: 'warning',
+    });
+  }
+
+  // Ghost-trip guard: a bus due soon, nothing on the route reporting, while
+  // the rest of the feed is healthy. Feeder routes are loops, so the bus
+  // for this run is normally already out finishing its previous lap.
+  if (
+    !isLive &&
+    feedHealth === 'route-quiet' &&
+    (input.feedVehicleCount ?? 0) > 0 &&
+    minutes <= GHOST_WINDOW_MIN
+  ) {
+    const route = input.routeCode ? `on ${input.routeCode} ` : '';
+    notes.push({
+      id: 'ghost',
+      icon: 'questionmark.circle',
+      text: `No bus ${route}is reporting yet. This one may not run.`,
+      tone: 'warning',
+    });
+  }
+
+  notes.push(lastBusNote(input, isLast ? primary.epochMs : null));
+
+  if (input.rainNudge) {
+    notes.push({ id: 'rain', icon: 'cloud.rain', text: input.rainNudge, tone: 'warning' });
+  }
+
+  const bunch = bunchingNote(isLive, later, input);
+  notes.push(bunch);
+
+  if (!bunch && next && !isLast) {
+    const gap = Math.round((next.epochMs - primary.epochMs) / 60_000);
+    if (gap >= MISS_COST_MIN) {
+      notes.push({
+        id: 'miss-cost',
+        icon: 'hourglass',
+        text: `Miss it and the next is at ${input.formatClock(next.epochMs)}, ${formatDuration(gap)} later.`,
+        tone: 'info',
+      });
+    }
+  }
+
+  if (
+    isLive &&
+    input.busNearStopName &&
+    input.stopsAhead != null &&
+    input.stopsAhead >= 2 &&
+    input.arrivalStatus === 'en-route'
+  ) {
+    notes.push({
+      id: 'where-from',
+      icon: 'location.circle',
+      text: `Now near ${input.busNearStopName}.`,
+      tone: 'info',
+    });
+  }
+
+  return compactNotes(notes);
+}
+
+/**
+ * "This is the last bus today" for the final run, otherwise "Last bus 23:30"
+ * once it's within {@link LAST_BUS_HEADS_UP_MS}. Timetable only, so it still
+ * works overnight when the live feed is empty.
+ */
+function lastBusNote(input: TripModelInput, finalRunAt: number | null): TripNote | null {
+  if (finalRunAt != null) {
+    return {
+      id: 'last-bus',
+      icon: 'moon.stars',
+      text: 'This is the last bus today.',
+      tone: 'warning',
+    };
+  }
+  const last = input.lastBusToday;
+  if (last == null || last <= input.now) return null;
+  if (last - input.now > LAST_BUS_HEADS_UP_MS) return null;
+  return {
+    id: 'last-bus',
+    icon: 'moon.stars',
+    text: `Last bus today at ${input.formatClock(last)}.`,
+    tone: 'info',
+  };
+}
+
+/** "Next two buses 3 min apart, then a 40 min gap." Needs two live buses. */
+function bunchingNote(
+  isLive: boolean,
+  later: readonly ArrivalLike[],
+  input: TripModelInput,
+): TripNote | null {
+  const primary = input.primaryArrival;
+  const second = later[0];
+  if (!isLive || !primary || !second || second.kind !== 'live') return null;
+  const apart = Math.round((second.epochMs - primary.epochMs) / 60_000);
+  if (apart > BUNCHED_MIN) return null;
+  const third = later[1];
+  const gap = third ? Math.round((third.epochMs - second.epochMs) / 60_000) : null;
+  const apartText = apart <= 1 ? 'back to back' : `${apart} min apart`;
+  return {
+    id: 'bunching',
+    icon: 'bus.doubledecker',
+    text:
+      gap != null && gap >= 20
+        ? `Next two buses are ${apartText}, then a ${formatDuration(gap)} gap.`
+        : `Next two buses are ${apartText}.`,
+    tone: 'info',
+  };
+}
+
+/** Later arrivals, one per trip, strictly after the primary. */
+function distinctLater(input: TripModelInput): ArrivalLike[] {
+  const primary = input.primaryArrival;
+  if (!primary) return [];
+  const seen = new Set<string>();
+  if (primary.tripId) seen.add(primary.tripId);
+  const out: ArrivalLike[] = [];
+  for (const a of input.laterArrivals) {
+    if (a.epochMs <= primary.epochMs + 30_000) continue;
+    if (a.tripId) {
+      if (seen.has(a.tripId)) continue;
+      seen.add(a.tripId);
+    }
+    out.push(a);
+  }
+  return out;
+}
+
+function compactNotes(notes: readonly (TripNote | null)[]): TripNote[] {
+  return notes.filter((n): n is TripNote => n != null).slice(0, MAX_NOTES);
 }
 
 /** "45 min", "1 h 5 min". */

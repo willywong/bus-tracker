@@ -1,0 +1,1276 @@
+[
+ {
+  "location": {
+   "location_id": "Ds049",
+   "location_name": "Kuala Selangor"
+  },
+  "date": "2026-10-26",
+  "morning_forecast": "Hujan di beberapa tempat",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Tiada Hujan",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Pagi dan Petang",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds049",
+   "location_name": "Kuala Selangor"
+  },
+  "date": "2026-10-25",
+  "morning_forecast": "Ribut petir di beberapa tempat",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Tiada Hujan",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Pagi dan Petang",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds049",
+   "location_name": "Kuala Selangor"
+  },
+  "date": "2026-10-24",
+  "morning_forecast": "Ribut petir di beberapa tempat",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Tiada Hujan",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Pagi dan Petang",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds049",
+   "location_name": "Kuala Selangor"
+  },
+  "date": "2026-10-23",
+  "morning_forecast": "Hujan di beberapa tempat",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Tiada Hujan",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Pagi dan Petang",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds049",
+   "location_name": "Kuala Selangor"
+  },
+  "date": "2026-10-22",
+  "morning_forecast": "Hujan di beberapa tempat",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Hujan di beberapa tempat",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds049",
+   "location_name": "Kuala Selangor"
+  },
+  "date": "2026-10-21",
+  "morning_forecast": "Hujan di beberapa tempat",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Hujan di beberapa tempat",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds049",
+   "location_name": "Kuala Selangor"
+  },
+  "date": "2026-10-20",
+  "morning_forecast": "Ribut petir di beberapa tempat",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds051",
+   "location_name": "Hulu Selangor"
+  },
+  "date": "2026-10-26",
+  "morning_forecast": "Tiada Hujan",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Hujan di beberapa tempat",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Petang dan Malam",
+  "min_temp": 24,
+  "max_temp": 32
+ },
+ {
+  "location": {
+   "location_id": "Ds051",
+   "location_name": "Hulu Selangor"
+  },
+  "date": "2026-10-25",
+  "morning_forecast": "Tiada Hujan",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Hujan di beberapa tempat",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Petang dan Malam",
+  "min_temp": 24,
+  "max_temp": 32
+ },
+ {
+  "location": {
+   "location_id": "Ds051",
+   "location_name": "Hulu Selangor"
+  },
+  "date": "2026-10-24",
+  "morning_forecast": "Tiada Hujan",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Hujan di beberapa tempat",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Petang dan Malam",
+  "min_temp": 24,
+  "max_temp": 32
+ },
+ {
+  "location": {
+   "location_id": "Ds051",
+   "location_name": "Hulu Selangor"
+  },
+  "date": "2026-10-23",
+  "morning_forecast": "Hujan di beberapa tempat",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Hujan di beberapa tempat",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 24,
+  "max_temp": 32
+ },
+ {
+  "location": {
+   "location_id": "Ds051",
+   "location_name": "Hulu Selangor"
+  },
+  "date": "2026-10-22",
+  "morning_forecast": "Jerebu",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Hujan di beberapa tempat",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 24,
+  "max_temp": 32
+ },
+ {
+  "location": {
+   "location_id": "Ds051",
+   "location_name": "Hulu Selangor"
+  },
+  "date": "2026-10-21",
+  "morning_forecast": "Jerebu",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Hujan di beberapa tempat",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 24,
+  "max_temp": 32
+ },
+ {
+  "location": {
+   "location_id": "Ds051",
+   "location_name": "Hulu Selangor"
+  },
+  "date": "2026-10-20",
+  "morning_forecast": "Mendung",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Hujan di beberapa tempat",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 24,
+  "max_temp": 32
+ },
+ {
+  "location": {
+   "location_id": "Ds054",
+   "location_name": "Klang"
+  },
+  "date": "2026-10-26",
+  "morning_forecast": "Hujan di beberapa tempat",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Tiada Hujan",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Pagi dan Petang",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds054",
+   "location_name": "Klang"
+  },
+  "date": "2026-10-25",
+  "morning_forecast": "Ribut petir di beberapa tempat",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Tiada Hujan",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Pagi dan Petang",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds054",
+   "location_name": "Klang"
+  },
+  "date": "2026-10-24",
+  "morning_forecast": "Ribut petir di beberapa tempat",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Tiada Hujan",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Pagi dan Petang",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds054",
+   "location_name": "Klang"
+  },
+  "date": "2026-10-23",
+  "morning_forecast": "Hujan di beberapa tempat",
+  "afternoon_forecast": "Jerebu",
+  "night_forecast": "Tiada Hujan",
+  "summary_forecast": "Hujan di beberapa tempat",
+  "summary_when": "Pagi dan Petang",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds054",
+   "location_name": "Klang"
+  },
+  "date": "2026-10-22",
+  "morning_forecast": "Jerebu",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds054",
+   "location_name": "Klang"
+  },
+  "date": "2026-10-21",
+  "morning_forecast": "Hujan di beberapa tempat",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 24,
+  "max_temp": 34
+ },
+ {
+  "location": {
+   "location_id": "Ds054",
+   "location_name": "Klang"
+  },
+  "date": "2026-10-20",
+  "morning_forecast": "Ribut petir di beberapa tempat",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 24,
+  "max_temp": 34
+ },
+ {
+  "location": {
+   "location_id": "Ds055",
+   "location_name": "Gombak"
+  },
+  "date": "2026-10-26",
+  "morning_forecast": "Tiada Hujan",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Hujan di beberapa tempat",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Petang dan Malam",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds055",
+   "location_name": "Gombak"
+  },
+  "date": "2026-10-25",
+  "morning_forecast": "Tiada Hujan",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Hujan di beberapa tempat",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Petang dan Malam",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds055",
+   "location_name": "Gombak"
+  },
+  "date": "2026-10-24",
+  "morning_forecast": "Tiada Hujan",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Hujan di beberapa tempat",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Petang dan Malam",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds055",
+   "location_name": "Gombak"
+  },
+  "date": "2026-10-23",
+  "morning_forecast": "Jerebu",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Hujan di beberapa tempat",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds055",
+   "location_name": "Gombak"
+  },
+  "date": "2026-10-22",
+  "morning_forecast": "Jerebu",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds055",
+   "location_name": "Gombak"
+  },
+  "date": "2026-10-21",
+  "morning_forecast": "Jerebu",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Hujan di beberapa tempat",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds055",
+   "location_name": "Gombak"
+  },
+  "date": "2026-10-20",
+  "morning_forecast": "Tiada Hujan",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Hujan di beberapa tempat",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Petang dan Malam",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds057",
+   "location_name": "Petaling"
+  },
+  "date": "2026-10-26",
+  "morning_forecast": "Tiada Hujan",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Tiada Hujan",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Petang",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds057",
+   "location_name": "Petaling"
+  },
+  "date": "2026-10-25",
+  "morning_forecast": "Tiada Hujan",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Tiada Hujan",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Petang",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds057",
+   "location_name": "Petaling"
+  },
+  "date": "2026-10-24",
+  "morning_forecast": "Tiada Hujan",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Hujan di beberapa tempat",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Petang dan Malam",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds057",
+   "location_name": "Petaling"
+  },
+  "date": "2026-10-23",
+  "morning_forecast": "Jerebu",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds057",
+   "location_name": "Petaling"
+  },
+  "date": "2026-10-22",
+  "morning_forecast": "Jerebu",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds057",
+   "location_name": "Petaling"
+  },
+  "date": "2026-10-21",
+  "morning_forecast": "Jerebu",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 24,
+  "max_temp": 34
+ },
+ {
+  "location": {
+   "location_id": "Ds057",
+   "location_name": "Petaling"
+  },
+  "date": "2026-10-20",
+  "morning_forecast": "Hujan di beberapa tempat",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 24,
+  "max_temp": 34
+ },
+ {
+  "location": {
+   "location_id": "Ds058",
+   "location_name": "Kuala Lumpur"
+  },
+  "date": "2026-10-26",
+  "morning_forecast": "Tiada Hujan",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Tiada Hujan",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Petang",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds058",
+   "location_name": "Kuala Lumpur"
+  },
+  "date": "2026-10-25",
+  "morning_forecast": "Tiada Hujan",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Tiada Hujan",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Petang",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds058",
+   "location_name": "Kuala Lumpur"
+  },
+  "date": "2026-10-24",
+  "morning_forecast": "Tiada Hujan",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Hujan di beberapa tempat",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Petang dan Malam",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds058",
+   "location_name": "Kuala Lumpur"
+  },
+  "date": "2026-10-23",
+  "morning_forecast": "Jerebu",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Hujan di beberapa tempat",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds058",
+   "location_name": "Kuala Lumpur"
+  },
+  "date": "2026-10-22",
+  "morning_forecast": "Jerebu",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds058",
+   "location_name": "Kuala Lumpur"
+  },
+  "date": "2026-10-21",
+  "morning_forecast": "Jerebu",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 24,
+  "max_temp": 34
+ },
+ {
+  "location": {
+   "location_id": "Ds058",
+   "location_name": "Kuala Lumpur"
+  },
+  "date": "2026-10-20",
+  "morning_forecast": "Tiada Hujan",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Petang dan Malam",
+  "min_temp": 24,
+  "max_temp": 34
+ },
+ {
+  "location": {
+   "location_id": "Ds060",
+   "location_name": "Kuala Langat"
+  },
+  "date": "2026-10-26",
+  "morning_forecast": "Hujan di beberapa tempat",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Tiada Hujan",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Pagi dan Petang",
+  "min_temp": 23,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds060",
+   "location_name": "Kuala Langat"
+  },
+  "date": "2026-10-25",
+  "morning_forecast": "Ribut petir di beberapa tempat",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Tiada Hujan",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Pagi dan Petang",
+  "min_temp": 23,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds060",
+   "location_name": "Kuala Langat"
+  },
+  "date": "2026-10-24",
+  "morning_forecast": "Ribut petir di beberapa tempat",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Tiada Hujan",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Pagi dan Petang",
+  "min_temp": 23,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds060",
+   "location_name": "Kuala Langat"
+  },
+  "date": "2026-10-23",
+  "morning_forecast": "Hujan di beberapa tempat",
+  "afternoon_forecast": "Jerebu",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Hujan di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 23,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds060",
+   "location_name": "Kuala Langat"
+  },
+  "date": "2026-10-22",
+  "morning_forecast": "Jerebu",
+  "afternoon_forecast": "Jerebu",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Jerebu",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 23,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds060",
+   "location_name": "Kuala Langat"
+  },
+  "date": "2026-10-21",
+  "morning_forecast": "Hujan di beberapa tempat",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 23,
+  "max_temp": 34
+ },
+ {
+  "location": {
+   "location_id": "Ds060",
+   "location_name": "Kuala Langat"
+  },
+  "date": "2026-10-20",
+  "morning_forecast": "Ribut petir di beberapa tempat",
+  "afternoon_forecast": "Jerebu",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 23,
+  "max_temp": 34
+ },
+ {
+  "location": {
+   "location_id": "Ds062",
+   "location_name": "Putrajaya"
+  },
+  "date": "2026-10-26",
+  "morning_forecast": "Tiada Hujan",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Tiada Hujan",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Petang",
+  "min_temp": 23,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds062",
+   "location_name": "Putrajaya"
+  },
+  "date": "2026-10-25",
+  "morning_forecast": "Tiada Hujan",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Tiada Hujan",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Petang",
+  "min_temp": 23,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds062",
+   "location_name": "Putrajaya"
+  },
+  "date": "2026-10-24",
+  "morning_forecast": "Tiada Hujan",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Tiada Hujan",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Petang",
+  "min_temp": 23,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds062",
+   "location_name": "Putrajaya"
+  },
+  "date": "2026-10-23",
+  "morning_forecast": "Jerebu",
+  "afternoon_forecast": "Jerebu",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Jerebu",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 23,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds062",
+   "location_name": "Putrajaya"
+  },
+  "date": "2026-10-22",
+  "morning_forecast": "Jerebu",
+  "afternoon_forecast": "Jerebu",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Jerebu",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 23,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds062",
+   "location_name": "Putrajaya"
+  },
+  "date": "2026-10-21",
+  "morning_forecast": "Jerebu",
+  "afternoon_forecast": "Jerebu",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Jerebu",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 23,
+  "max_temp": 34
+ },
+ {
+  "location": {
+   "location_id": "Ds062",
+   "location_name": "Putrajaya"
+  },
+  "date": "2026-10-20",
+  "morning_forecast": "Tiada Hujan",
+  "afternoon_forecast": "Jerebu",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Jerebu",
+  "summary_when": "Petang dan Malam",
+  "min_temp": 23,
+  "max_temp": 34
+ },
+ {
+  "location": {
+   "location_id": "Ds063",
+   "location_name": "Hulu Langat"
+  },
+  "date": "2026-10-26",
+  "morning_forecast": "Tiada Hujan",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Hujan di beberapa tempat",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Petang dan Malam",
+  "min_temp": 23,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds063",
+   "location_name": "Hulu Langat"
+  },
+  "date": "2026-10-25",
+  "morning_forecast": "Tiada Hujan",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Hujan di beberapa tempat",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Petang dan Malam",
+  "min_temp": 23,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds063",
+   "location_name": "Hulu Langat"
+  },
+  "date": "2026-10-24",
+  "morning_forecast": "Tiada Hujan",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Hujan di beberapa tempat",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Petang dan Malam",
+  "min_temp": 23,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds063",
+   "location_name": "Hulu Langat"
+  },
+  "date": "2026-10-23",
+  "morning_forecast": "Jerebu",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Hujan di beberapa tempat",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 23,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds063",
+   "location_name": "Hulu Langat"
+  },
+  "date": "2026-10-22",
+  "morning_forecast": "Jerebu",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 23,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds063",
+   "location_name": "Hulu Langat"
+  },
+  "date": "2026-10-21",
+  "morning_forecast": "Jerebu",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 23,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds063",
+   "location_name": "Hulu Langat"
+  },
+  "date": "2026-10-20",
+  "morning_forecast": "Tiada Hujan",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Hujan di beberapa tempat",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Petang dan Malam",
+  "min_temp": 23,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds064",
+   "location_name": "Sepang"
+  },
+  "date": "2026-10-26",
+  "morning_forecast": "Hujan di beberapa tempat",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Tiada Hujan",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Pagi dan Petang",
+  "min_temp": 23,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds064",
+   "location_name": "Sepang"
+  },
+  "date": "2026-10-25",
+  "morning_forecast": "Ribut petir di beberapa tempat",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Tiada Hujan",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Pagi dan Petang",
+  "min_temp": 23,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds064",
+   "location_name": "Sepang"
+  },
+  "date": "2026-10-24",
+  "morning_forecast": "Tiada Hujan",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Tiada Hujan",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Petang",
+  "min_temp": 23,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds064",
+   "location_name": "Sepang"
+  },
+  "date": "2026-10-23",
+  "morning_forecast": "Jerebu",
+  "afternoon_forecast": "Jerebu",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Jerebu",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 23,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds064",
+   "location_name": "Sepang"
+  },
+  "date": "2026-10-22",
+  "morning_forecast": "Jerebu",
+  "afternoon_forecast": "Jerebu",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Jerebu",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 23,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "Ds064",
+   "location_name": "Sepang"
+  },
+  "date": "2026-10-21",
+  "morning_forecast": "Hujan di beberapa tempat",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 23,
+  "max_temp": 34
+ },
+ {
+  "location": {
+   "location_id": "Ds064",
+   "location_name": "Sepang"
+  },
+  "date": "2026-10-20",
+  "morning_forecast": "Ribut petir di beberapa tempat",
+  "afternoon_forecast": "Mendung",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 23,
+  "max_temp": 34
+ },
+ {
+  "location": {
+   "location_id": "St008",
+   "location_name": "Selangor"
+  },
+  "date": "2026-10-26",
+  "morning_forecast": "Hujan di beberapa tempat di kawasan pantai",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Hujan di beberapa tempat di kawasan pedalaman",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "St008",
+   "location_name": "Selangor"
+  },
+  "date": "2026-10-25",
+  "morning_forecast": "Ribut petir di beberapa tempat",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Hujan di beberapa tempat di kawasan pedalaman",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "St008",
+   "location_name": "Selangor"
+  },
+  "date": "2026-10-24",
+  "morning_forecast": "Ribut petir di beberapa tempat",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Hujan di beberapa tempat di kawasan pedalaman",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "St008",
+   "location_name": "Selangor"
+  },
+  "date": "2026-10-23",
+  "morning_forecast": "Hujan di beberapa tempat",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Hujan di beberapa tempat di kawasan pedalaman",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "St008",
+   "location_name": "Selangor"
+  },
+  "date": "2026-10-22",
+  "morning_forecast": "Jerebu",
+  "afternoon_forecast": "Ribut petir di beberapa tempat di kawasan pedalaman",
+  "night_forecast": "Hujan di beberapa tempat di kawasan pedalaman",
+  "summary_forecast": "Ribut petir di beberapa tempat di kawasan pedalaman",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "St008",
+   "location_name": "Selangor"
+  },
+  "date": "2026-10-21",
+  "morning_forecast": "Hujan di beberapa tempat di kawasan pantai",
+  "afternoon_forecast": "Ribut petir di beberapa tempat di kawasan pedalaman",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Ribut petir di beberapa tempat di kawasan pedalaman",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "St008",
+   "location_name": "Selangor"
+  },
+  "date": "2026-10-20",
+  "morning_forecast": "Ribut petir di beberapa tempat",
+  "afternoon_forecast": "Ribut petir di beberapa tempat di kawasan pedalaman",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "St009",
+   "location_name": "WP Kuala Lumpur"
+  },
+  "date": "2026-10-26",
+  "morning_forecast": "Tiada Hujan",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Tiada Hujan",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Petang",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "St009",
+   "location_name": "WP Kuala Lumpur"
+  },
+  "date": "2026-10-25",
+  "morning_forecast": "Tiada Hujan",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Tiada Hujan",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Petang",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "St009",
+   "location_name": "WP Kuala Lumpur"
+  },
+  "date": "2026-10-24",
+  "morning_forecast": "Tiada Hujan",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Hujan di beberapa tempat",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Petang dan Malam",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "St009",
+   "location_name": "WP Kuala Lumpur"
+  },
+  "date": "2026-10-23",
+  "morning_forecast": "Jerebu",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Hujan di beberapa tempat",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "St009",
+   "location_name": "WP Kuala Lumpur"
+  },
+  "date": "2026-10-22",
+  "morning_forecast": "Jerebu",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "St009",
+   "location_name": "WP Kuala Lumpur"
+  },
+  "date": "2026-10-21",
+  "morning_forecast": "Jerebu",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "St009",
+   "location_name": "WP Kuala Lumpur"
+  },
+  "date": "2026-10-20",
+  "morning_forecast": "Tiada Hujan",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Petang dan Malam",
+  "min_temp": 24,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "St010",
+   "location_name": "WP Putrajaya"
+  },
+  "date": "2026-10-26",
+  "morning_forecast": "Tiada Hujan",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Tiada Hujan",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Petang",
+  "min_temp": 25,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "St010",
+   "location_name": "WP Putrajaya"
+  },
+  "date": "2026-10-25",
+  "morning_forecast": "Tiada Hujan",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Tiada Hujan",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Petang",
+  "min_temp": 25,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "St010",
+   "location_name": "WP Putrajaya"
+  },
+  "date": "2026-10-24",
+  "morning_forecast": "Tiada Hujan",
+  "afternoon_forecast": "Ribut petir di beberapa tempat",
+  "night_forecast": "Tiada Hujan",
+  "summary_forecast": "Ribut petir di beberapa tempat",
+  "summary_when": "Petang",
+  "min_temp": 25,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "St010",
+   "location_name": "WP Putrajaya"
+  },
+  "date": "2026-10-23",
+  "morning_forecast": "Jerebu",
+  "afternoon_forecast": "Jerebu",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Jerebu",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 25,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "St010",
+   "location_name": "WP Putrajaya"
+  },
+  "date": "2026-10-22",
+  "morning_forecast": "Jerebu",
+  "afternoon_forecast": "Jerebu",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Jerebu",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 25,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "St010",
+   "location_name": "WP Putrajaya"
+  },
+  "date": "2026-10-21",
+  "morning_forecast": "Jerebu",
+  "afternoon_forecast": "Jerebu",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Jerebu",
+  "summary_when": "Sepanjang Hari",
+  "min_temp": 25,
+  "max_temp": 33
+ },
+ {
+  "location": {
+   "location_id": "St010",
+   "location_name": "WP Putrajaya"
+  },
+  "date": "2026-10-20",
+  "morning_forecast": "Tiada Hujan",
+  "afternoon_forecast": "Jerebu",
+  "night_forecast": "Jerebu",
+  "summary_forecast": "Jerebu",
+  "summary_when": "Petang dan Malam",
+  "min_temp": 25,
+  "max_temp": 33
+ }
+]

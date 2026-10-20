@@ -19,6 +19,8 @@ export interface UseBusPositionResult {
   error: Error | null;
   nextRefreshAt: number | null;
   isRefreshing: boolean;
+  /** Plausible vehicles in the whole feed; see RealtimeSnapshot. */
+  feedVehicleCount: number | null;
 }
 
 export interface UseBusPositionOptions {
@@ -75,5 +77,6 @@ export function useBusPosition(
     error: snapshot.lastError,
     nextRefreshAt: snapshot.nextRefreshAt,
     isRefreshing: snapshot.isRefreshing,
+    feedVehicleCount: snapshot.feedVehicleCount,
   };
 }

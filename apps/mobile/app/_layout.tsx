@@ -8,10 +8,17 @@ import '../global.css';
 import { isGlassAvailable } from '@/components/GlassGuard';
 import { PushRegistrationProvider } from '@/hooks/PushRegistrationContext';
 import { useRealtimeRoutes } from '@/hooks/useRealtimeRoutes';
+import { useQuickActions } from '@/hooks/useQuickActions';
 import { SettingsProvider, useSettings } from '@/hooks/useSettings';
 import { StaticGtfsProvider } from '@/hooks/useStaticGtfs';
+import { RideProvider } from '@/state/RideContext';
 import { TripProvider } from '@/state/TripContext';
 import { SHEET_DETENTS, SHEET_INITIAL_DETENT } from '@/theme/design';
+import { configureNotifications } from '@/services/reminders/notifications';
+// Background tasks must be defined at module scope so iOS can run them on a
+// headless launch (commute re-plan, arrival geofence).
+import '@/services/reminders/backgroundRefresh';
+import '@/services/arrival/geofence';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -19,6 +26,7 @@ export {
 } from 'expo-router';
 
 SplashScreen.preventAutoHideAsync();
+configureNotifications();
 
 // Deep links (e.g. the Live Activity's t816://) always land with the map at
 // the root of the stack, so sheets have something to sit on and return to.
@@ -42,7 +50,9 @@ export default function RootLayout() {
         <RealtimeRoutesRunner />
         <PushRegistrationProvider>
           <TripProvider>
-            <AppStack />
+            <RideProvider>
+              <AppStack />
+            </RideProvider>
           </TripProvider>
         </PushRegistrationProvider>
       </StaticGtfsProvider>
@@ -53,6 +63,7 @@ export default function RootLayout() {
 function AppStack() {
   const colorScheme = useColorScheme();
   const { ready } = useSettings();
+  useQuickActions();
 
   useEffect(() => {
     if (ready) void SplashScreen.hideAsync();
@@ -89,6 +100,18 @@ function AppStack() {
             headerShown: true,
             headerTransparent: true,
             title: 'Add Route',
+            contentStyle: { backgroundColor: SHEET_BACKGROUND },
+          }}
+        />
+        <Stack.Screen
+          name="ride"
+          options={{
+            presentation: 'formSheet',
+            sheetAllowedDetents: [1],
+            sheetGrabberVisible: true,
+            headerShown: true,
+            headerTransparent: true,
+            title: 'Where are you getting off?',
             contentStyle: { backgroundColor: SHEET_BACKGROUND },
           }}
         />

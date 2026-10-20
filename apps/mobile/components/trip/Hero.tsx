@@ -93,6 +93,11 @@ export function StatusLine({ model }: { model: TripModel }) {
         >
           {model.status}
         </Text>
+        {model.freshness ? (
+          <Text style={styles.freshness} accessibilityLabel={`updated ${model.freshness}`}>
+            {model.freshness}
+          </Text>
+        ) : null}
       </View>
       {model.detail ? <Text style={styles.detail}>{model.detail}</Text> : null}
       {model.then ? (
@@ -191,6 +196,11 @@ const styles = StyleSheet.create({
   statusAging: {
     color: color.warning,
     fontWeight: '500',
+  },
+  freshness: {
+    ...type.status,
+    color: color.tertiaryLabel,
+    fontVariant: ['tabular-nums'],
   },
   detail: {
     ...type.status,

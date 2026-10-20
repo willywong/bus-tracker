@@ -196,3 +196,97 @@ test('formatters', () => {
   assert.equal(formatDuration(120), '2 h');
   assert.equal(formatCountdown(185), '3:05');
 });
+
+const sched = (m: number, tripId = `s${m}`) => ({ kind: 'sched' as const, epochMs: min(m), tripId });
+const scheduledInput = (patch: Partial<TripModelInput> = {}) =>
+  input({
+    mode: 'schedule',
+    minutesToStop: 10,
+    primaryArrival: sched(10),
+    liveBusCount: 0,
+    stopsAhead: null,
+    ...patch,
+  });
+const ids = (m: ReturnType<typeof buildTripModel>) => m.notes.map((n) => n.id);
+
+test('live ETAs carry their "as of" time; scheduled ones never do', () => {
+  assert.equal(buildTripModel(input({ lastUpdated: min(-1) + 30_000 })).freshness, 'as of 01:59');
+  assert.equal(buildTripModel(scheduledInput()).freshness, null);
+});
+
+test('whole feed empty reads as "live data is down", not a quiet route', () => {
+  const down = buildTripModel(scheduledInput({ feedVehicleCount: 0 }));
+  assert.equal(down.feedHealth, 'feed-down');
+  assert.equal(down.status, 'Scheduled · live data is down');
+  assert.equal(ids(down)[0], 'feed-down');
+  assert.ok(!ids(down).includes('ghost'));
+
+  const quiet = buildTripModel(scheduledInput({ feedVehicleCount: 40 }));
+  assert.equal(quiet.feedHealth, 'route-quiet');
+  assert.equal(quiet.status, 'Scheduled · no live buses reporting');
+
+  const offline = buildTripModel(scheduledInput({ feedError: true, feedVehicleCount: 40 }));
+  assert.equal(offline.feedHealth, 'unreachable');
+  assert.ok(!ids(offline).includes('ghost'));
+});
+
+test('ghost guard: bus due soon, nothing on the route reporting, feed healthy', () => {
+  const m = buildTripModel(scheduledInput({ feedVehicleCount: 40, routeCode: 'T816' }));
+  const ghost = m.notes.find((n) => n.id === 'ghost');
+  assert.equal(ghost?.text, 'No bus on T816 is reporting yet. This one may not run.');
+  // Far enough out that the bus may simply not have left the depot.
+  const later = buildTripModel(
+    scheduledInput({ feedVehicleCount: 40, minutesToStop: 25, primaryArrival: sched(25) }),
+  );
+  assert.ok(!ids(later).includes('ghost'));
+});
+
+test('miss cost shows when the next bus is a long wait away', () => {
+  const m = buildTripModel(input({ laterArrivals: [sched(44)] }));
+  assert.equal(
+    m.notes.find((n) => n.id === 'miss-cost')?.text,
+    'Miss it and the next is at 02:44, 30 min later.',
+  );
+  assert.ok(!ids(buildTripModel(input({ laterArrivals: [sched(24)] }))).includes('miss-cost'));
+});
+
+test('last bus: heads-up late in the day, and a firm note on the final run', () => {
+  const headsUp = buildTripModel(input({ laterArrivals: [sched(44)], lastBusToday: min(120) }));
+  assert.equal(headsUp.notes.find((n) => n.id === 'last-bus')?.text, 'Last bus today at 04:00.');
+  assert.ok(!ids(buildTripModel(input({ lastBusToday: min(300) }))).includes('last-bus'));
+
+  const final = buildTripModel(input({ lastBusToday: min(12), laterArrivals: [sched(24 * 60)] }));
+  assert.equal(final.notes.find((n) => n.id === 'last-bus')?.text, 'This is the last bus today.');
+  assert.ok(!ids(final).includes('miss-cost'));
+});
+
+test('bunching: two live buses close together, then a gap', () => {
+  const m = buildTripModel(
+    input({
+      laterArrivals: [
+        { kind: 'live', epochMs: min(17), tripId: 'live-2' },
+        sched(60),
+      ],
+    }),
+  );
+  assert.equal(
+    m.notes.find((n) => n.id === 'bunching')?.text,
+    'Next two buses are 3 min apart, then a 43 min gap.',
+  );
+  assert.ok(!ids(m).includes('miss-cost'));
+});
+
+test('where-from names the stop the live bus is near; notes are capped', () => {
+  const m = buildTripModel(input({ busNearStopName: 'Stesen MRT Phileo Damansara' }));
+  assert.equal(m.notes.find((n) => n.id === 'where-from')?.text, 'Now near Stesen MRT Phileo Damansara.');
+
+  const busy = buildTripModel(
+    scheduledInput({
+      feedVehicleCount: 0,
+      lastBusToday: min(60),
+      laterArrivals: [sched(40)],
+      rainNudge: 'Rain warning for Petaling. Leave a few minutes early.',
+    }),
+  );
+  assert.deepEqual(ids(busy), ['feed-down', 'last-bus', 'rain']);
+});

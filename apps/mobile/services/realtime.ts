@@ -27,6 +27,12 @@ export interface RealtimeSnapshot {
   nextRefreshAt: number | null;
   /** True while a fetch is in flight. */
   isRefreshing: boolean;
+  /**
+   * Plausible vehicles in the whole feed (every route), from the last
+   * successful poll. 0 during service hours means data.gov.my's live feed is
+   * down, not that your route has no buses. Null until the first poll.
+   */
+  feedVehicleCount: number | null;
 }
 
 export type PositionFilter = (incoming: VehiclePosition[]) => VehiclePosition[];
@@ -146,6 +152,7 @@ export function createRealtimeStore(
     lastError: null,
     nextRefreshAt: null,
     isRefreshing: false,
+    feedVehicleCount: null,
   };
   const listeners = new Set<Listener>();
   let refCount = 0;
@@ -168,6 +175,10 @@ export function createRealtimeStore(
       positions: patch.positions ?? snapshot.positions,
       lastUpdated: touched ? cfg.now() : snapshot.lastUpdated,
       lastError: patch.lastError ?? null,
+      feedVehicleCount:
+        patch.feedVehicleCount !== undefined
+          ? patch.feedVehicleCount
+          : snapshot.feedVehicleCount,
       // Preserve the current next-refresh estimate across tick results;
       // scheduleNext() rewrites it when the follow-up timer is armed.
       nextRefreshAt: snapshot.nextRefreshAt,
@@ -220,10 +231,12 @@ export function createRealtimeStore(
       const allowed = new Set(
         routeCodes as readonly VehiclePosition["routeId"][],
       );
+      const now = cfg.now();
       const raw = dropImplausibleFixes(
-        entitiesToPositions(feed, tripMap, cfg.now(), allowed),
-        cfg.now(),
+        entitiesToPositions(feed, tripMap, now, allowed),
+        now,
       );
+      const feedVehicleCount = countPlausibleVehicles(feed, now);
       const filtered = positionFilter(raw);
       // Dedup by vehicleId — keep the latest-observed entry per id. The GTFS-RT
       // fallback chain in entitiesToPositions drops to trip_id when all vehicle
@@ -248,7 +261,7 @@ export function createRealtimeStore(
           );
         }
       }
-      commit({ positions: deduped, lastError: null }, true);
+      commit({ positions: deduped, lastError: null, feedVehicleCount }, true);
       consecutiveFailures = 0;
     } catch (err) {
       if (ctrl.signal.aborted) return;
@@ -382,6 +395,7 @@ export function createRealtimeStore(
           lastError: null,
           nextRefreshAt: null,
           isRefreshing: false,
+          feedVehicleCount: null,
         };
         positionFilter = (p) => p;
       },
@@ -392,6 +406,21 @@ export function createRealtimeStore(
       getRouteCodes: () => routeCodes,
     },
   };
+}
+
+/** Vehicles with a position and a believable timestamp, across all routes. */
+function countPlausibleVehicles(
+  feed: ReturnType<typeof decodeFeed>,
+  now: number,
+): number {
+  let n = 0;
+  for (const e of feed.entity) {
+    const v = e.vehicle;
+    if (!v?.position || e.is_deleted) continue;
+    const ts = typeof v.timestamp === "number" && v.timestamp > 0 ? v.timestamp * 1000 : now;
+    if (dropImplausibleFixes([{ observedAt: ts }], now).length === 1) n++;
+  }
+  return n;
 }
 
 function isAbortError(err: unknown): boolean {

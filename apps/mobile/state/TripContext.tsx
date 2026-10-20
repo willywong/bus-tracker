@@ -32,9 +32,12 @@ import { useEta, type UseEtaResult } from '@/hooks/useEta';
 import { useJourneyStops, type JourneyData } from '@/hooks/useJourneyStops';
 import { useSettings } from '@/hooks/useSettings';
 import { useStaticGtfs } from '@/hooks/useStaticGtfs';
+import { useRainNudge, useTripSideEffects } from '@/hooks/useTripSideEffects';
 import { useWalkTimer, type UseWalkTimerResult } from '@/hooks/useWalkTimer';
 import { SHEET_INITIAL_DETENT, type DetentIndex } from '@/theme/design';
 import { devNow } from '@/utils/devClock';
+import { ensureNotificationPermission } from '@/services/reminders/notifications';
+import type { RainNudge } from '@/services/weather';
 import { haptics } from '@/utils/haptics';
 
 /** Static geometry + names for the active route, loaded from SQLite. */
@@ -69,6 +72,13 @@ export interface TripContextValue {
   unfollow: () => void;
   startWalking: () => void;
   cancelWalking: () => void;
+  /** MET Malaysia rain/flood nudge for the stop's area, when there is one. */
+  rainNudge: RainNudge | null;
+  /** Boarding-stop coordinates of every favourite (arrival geofences). */
+  favoriteStops: { routeCode: string; stopId: string; lat: number; lng: number }[];
+  /** Notify ~10 min before leaving for today's last bus. */
+  lastBusReminder: boolean;
+  setLastBusReminder: (on: boolean) => void;
   /** Current trip sheet detent (0 peek · 1 glance · 2 large). */
   detent: DetentIndex;
   setDetent: (d: DetentIndex) => void;
@@ -100,9 +110,12 @@ export function TripProvider({ children }: { children: ReactNode }) {
 
   const [detent, setDetent] = useState<DetentIndex>(SHEET_INITIAL_DETENT);
   const [isFollowing, setIsFollowing] = useState(false);
+  // A notification tap can switch route *and* follow; remember which route.
+  const pendingFollow = useRef<string | null>(null);
   // A new route or stop is a new trip — stop following the old one.
   useEffect(() => {
-    setIsFollowing(false);
+    setIsFollowing(pendingFollow.current === routeCode && routeCode !== '');
+    pendingFollow.current = null;
   }, [routeCode, stopId]);
 
   const trackedLive = eta.primaryArrival?.kind === 'live'
@@ -141,6 +154,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
     isStale: eta.isStale,
     beforeServiceStart: eta.beforeServiceStart,
     firstBusToday: eta.firstBusToday,
+    lastUpdated: bus.lastUpdated,
     enabled: isFollowing,
   });
 
@@ -152,6 +166,14 @@ export function TripProvider({ children }: { children: ReactNode }) {
     }
     return out.sort((a, b) => a.epochMs - b.epochMs);
   }, [eta.secondaryArrival, eta.scheduledUpcoming]);
+
+  const userStopRow = route?.userStop ?? null;
+  const stopPoint = useMemo(
+    () => (userStopRow ? { lat: userStopRow.stop_lat, lng: userStopRow.stop_lon } : null),
+    [userStopRow],
+  );
+  const rainNudge = useRainNudge(stopPoint, now);
+  const rainText = rainNudge ? `${rainNudge.title}. ${rainNudge.message}.` : null;
 
   const model = useMemo(
     () =>
@@ -178,6 +200,10 @@ export function TripProvider({ children }: { children: ReactNode }) {
         walkRemainingSeconds: walk.remainingSeconds,
         isFollowing,
         formatClock: formatClockHHMM,
+        routeCode,
+        feedVehicleCount: bus.feedVehicleCount,
+        busNearStopName: trackedLive && journey.busStop ? formatStopName(journey.busStop.name) : null,
+        rainNudge: rainText,
       }),
     [
       hasFavorites,
@@ -197,6 +223,10 @@ export function TripProvider({ children }: { children: ReactNode }) {
       bus.error,
       trackedLive,
       journey.stopsAhead,
+      journey.busStop,
+      bus.feedVehicleCount,
+      routeCode,
+      rainText,
       motionLabel,
       settings.walkMinutes,
       settings.clockFormat,
@@ -207,9 +237,44 @@ export function TripProvider({ children }: { children: ReactNode }) {
 
   useMomentHaptics(model, eta.arrivalStatus, isFollowing);
 
+  const favoriteTargets = useFavoriteStopPoints(
+    settings.favoritedRoutes,
+    settings.preferredStopByRoute,
+    gtfs.lastSettledAt,
+  );
+  const { setPreferredRouteCode } = settings;
+  const onFollowRequest = useCallback(
+    (code: string) => {
+      if (code === routeCode) {
+        setIsFollowing(true);
+      } else if (settings.favoritedRoutes.includes(code)) {
+        pendingFollow.current = code;
+        setPreferredRouteCode(code);
+      }
+    },
+    [routeCode, settings.favoritedRoutes, setPreferredRouteCode],
+  );
+  const side = useTripSideEffects({
+    routeCode,
+    stopId,
+    stopName,
+    primaryArrival: eta.primaryArrival,
+    laterArrivals,
+    lastBusToday: eta.lastBusToday,
+    lastUpdated: bus.lastUpdated,
+    model,
+    now,
+    isFollowing,
+    walkMinutes: settings.walkMinutes,
+    favorites: favoriteTargets,
+    onFollowRequest,
+  });
+
   const follow = useCallback(() => {
     setIsFollowing(true);
     haptics.success();
+    // The "Leave now" alert needs it; asked on this tap, never at launch.
+    void ensureNotificationPermission().catch(() => {});
   }, []);
   const unfollow = useCallback(() => {
     setIsFollowing(false);
@@ -250,6 +315,10 @@ export function TripProvider({ children }: { children: ReactNode }) {
       unfollow,
       startWalking,
       cancelWalking,
+      rainNudge,
+      favoriteStops: favoriteTargets,
+      lastBusReminder: side.lastBusReminder,
+      setLastBusReminder: side.setLastBusReminder,
       detent,
       setDetent,
     }),
@@ -272,6 +341,10 @@ export function TripProvider({ children }: { children: ReactNode }) {
       unfollow,
       startWalking,
       cancelWalking,
+      rainNudge,
+      favoriteTargets,
+      side.lastBusReminder,
+      side.setLastBusReminder,
       detent,
     ],
   );
@@ -370,4 +443,35 @@ function useRouteStatic(
     return null;
   }
   return data;
+}
+
+/** Boarding-stop coordinates for each favourite, for the arrival geofences. */
+function useFavoriteStopPoints(
+  routes: readonly string[],
+  stopByRoute: Readonly<Record<string, string>>,
+  reloadKey: unknown,
+): { routeCode: string; stopId: string; lat: number; lng: number }[] {
+  const [points, setPoints] = useState<
+    { routeCode: string; stopId: string; lat: number; lng: number }[]
+  >([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const db = await openDb();
+        const byId = new Map((await getStops(db)).map((s) => [s.stop_id, s]));
+        const out = routes.flatMap((code) => {
+          const s = byId.get(stopByRoute[code] ?? '');
+          return s ? [{ routeCode: code, stopId: s.stop_id, lat: s.stop_lat, lng: s.stop_lon }] : [];
+        });
+        if (!cancelled) setPoints(out);
+      } catch {
+        // Geofences are optional; keep the last good list.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [routes, stopByRoute, reloadKey]);
+  return points;
 }

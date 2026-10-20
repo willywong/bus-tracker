@@ -22,26 +22,40 @@ Every feature below runs **on the phone, with no BusBuddy server**, using only t
 
 ## 2. Recommended order
 
+**Status:** Phases 1, 2 and 4 are built (marked ✅ below); Phase 3 is next. Where the code lives:
+
+| Area | Code |
+| --- | --- |
+| Trip notes (feed health, ghost guard, miss cost, last bus, bunching, where-from, rain) | `apps/mobile/components/trip/model.ts` → `Notes.tsx` |
+| Live Activity stale date, `bannerSmall` | `hooks/useBusLiveActivity.ts`, `activities/BusArrivalActivity.tsx` |
+| Widgets | `widgets/` (synced from `hooks/useTripSideEffects.ts`) |
+| Leave-now, last-bus, commute and get-off notifications | `services/reminders/`, settings `components/settings/RemindersSection.tsx` |
+| Quick actions | `hooks/useQuickActions.ts` |
+| On-board mode | `components/ride/`, `state/RideContext.tsx`, `app/ride.tsx` |
+| Arrive-at-stop geofence | `services/arrival/geofence.ts` |
+| Rain nudges | `services/weather/` |
+| Rail connections | `packages/shared/src/utils/rail.ts`, `components/trip/Connections.tsx` |
+
 Effort: S = a day or two, M = about a week, L = more. All items use only GTFS static and vehicle positions unless noted.
 
 ### Phase 1 — Trust ("is that bus real?")
 | # | Feature | Effort | Notes |
 | --- | --- | --- | --- |
 | 1 | ✅ **Drop ghost and stale buses** (future timestamps, fixes over 10 min old) | S | Done in this change: `dropImplausibleFixes` is used by the app and the API. |
-| 2 | **"Live as of 08:41"** on every live ETA. Pass `staleDate` to the Live Activity so iOS greys it out when data stops. | S | `expo-widgets` `start/update(props, staleDate)` already supports it. |
-| 3 | **Feed-health state:** tell "no buses on your route right now" apart from "data.gov.my live data is down", which is the whole feed returning zero buses during service hours. | S | Avoids blaming the user's route during the known outages. |
-| 4 | **Ghost-trip guard:** a scheduled departure with no live bus near the start of its loop shows "No live bus yet — may not run" (Transit's "likely cancelled"). | M | Uses timetable plus positions. Never styled as live. |
-| 5 | **"Miss it = +30 min":** show the cost of missing this bus ("next one 08:42, +30 min"). | S | Already computable from `secondaryArrival`. |
+| 2 | ✅ **"Live as of 08:41"** on every live ETA. Pass `staleDate` to the Live Activity so iOS greys it out when data stops. | S | `expo-widgets` `start/update(props, staleDate)` already supports it. |
+| 3 | ✅ **Feed-health state:** tell "no buses on your route right now" apart from "data.gov.my live data is down", which is the whole feed returning zero buses during service hours. | S | Avoids blaming the user's route during the known outages. |
+| 4 | ✅ **Ghost-trip guard:** a scheduled departure with no live bus near the start of its loop shows "No live bus yet — may not run" (Transit's "likely cancelled"). | M | Uses timetable plus positions. Never styled as live. |
+| 5 | ✅ **"Miss it = +30 min":** show the cost of missing this bus ("next one 08:42, +30 min"). | S | Already computable from `secondaryArrival`. |
 
 ### Phase 2 — Reach ("tell me without opening the app")
 | # | Feature | Effort | Notes |
 | --- | --- | --- | --- |
-| 6 | **Home and Lock Screen widgets:** next departures for a favourite, a minutes gauge, an inline "T816 · 8:42". | M | `expo-widgets` `createWidget` + `updateTimeline` (installed). Widgets can't fetch data, so the app writes timeline entries from the timetable and shows how fresh they are. |
-| 7 | **Last-bus guard:** from about 21:00, show "Last bus 23:30" in the sheet, with an optional reminder. | S | Timetable only, so it works when the feed is empty overnight. |
-| 8 | **"Leave by" commute reminders:** local, time-sensitive notifications computed from the timetable and your walk time. No server. | M | `expo-notifications` scheduled triggers. Needs the time-sensitive entitlement in `app.json`. Re-planned with `expo-background-task`, not the deprecated `background-fetch`. |
-| 9 | **Live Activity on Apple Watch, CarPlay and Mac:** add a compact `bannerSmall` layout. | S | `expo-widgets` already declares the small activity family. |
-| 10 | **Walking directions to your stop:** hand off to Apple Maps (walking mode, Look Around). | S | `Linking.openURL('https://maps.apple.com/directions?...&mode=walking')`. |
-| 11 | **Home Screen quick actions:** long-press the icon for "Track T816 at Hotel Lisa De Inn". | S | Community `expo-quick-actions`. |
+| 6 | ✅ **Home and Lock Screen widgets:** next departures for a favourite, a minutes gauge, an inline "T816 · 8:42". | M | `expo-widgets` `createWidget` + `updateTimeline` (installed). Widgets can't fetch data, so the app writes timeline entries from the timetable and shows how fresh they are. |
+| 7 | ✅ **Last-bus guard:** from about 21:00, show "Last bus 23:30" in the sheet, with an optional reminder. | S | Timetable only, so it works when the feed is empty overnight. |
+| 8 | ✅ **"Leave by" commute reminders:** local, time-sensitive notifications computed from the timetable and your walk time. No server. | M | `expo-notifications` scheduled triggers. Needs the time-sensitive entitlement in `app.json`. Re-planned with `expo-background-task`, not the deprecated `background-fetch`. |
+| 9 | ✅ **Live Activity on Apple Watch, CarPlay and Mac:** add a compact `bannerSmall` layout. | S | `expo-widgets` already declares the small activity family. |
+| 10 | ✅ **Walking directions to your stop:** hand off to Apple Maps (walking mode, Look Around). | S | `Linking.openURL('https://maps.apple.com/directions?...&mode=walking')`. |
+| 11 | ✅ **Home Screen quick actions:** long-press the icon for "Track T816 at Hotel Lisa De Inn". | S | Community `expo-quick-actions`. |
 
 ### Phase 3 — System ("ask Siri")
 | # | Feature | Effort | Notes |
@@ -54,12 +68,12 @@ Effort: S = a day or two, M = about a week, L = more. All items use only GTFS st
 ### Phase 4 — On the ride
 | # | Feature | Effort | Notes |
 | --- | --- | --- | --- |
-| 16 | **On-board mode with a "get off" alert:** stops-to-go countdown, and haptic or spoken "next stop is yours". | M–L | Background location (needs App Review justification) plus `expo-speech`. |
-| 17 | **Arrive-at-stop geofence:** auto-start the countdown or Live Activity when you reach your stop. | M | `expo-location` geofencing. Needs Always permission, so offer it, never default to it. |
-| 18 | **"Where's my bus coming from":** feeders are loops, so it's usually the bus finishing its previous lap. Show its lap progress (Flighty-style "inbound"). | M | Positions plus shape. |
-| 19 | **Rain and flood nudges:** "Rain warning for Petaling — leave 5 min early." | M | MET `/weather/warning` (Malay text, district-level). Separate rate-limit bucket. |
-| 20 | **Gaps and bunching:** "Next two buses 2 min apart, then a 40 min gap". Plus personal reliability history from your own polling. | M | Needs two or more buses on the route. History is local only. |
-| 21 | **Rail connections:** "MRT Phileo Damansara 120 m from this stop" with line colours. | M | Distance join with `rapid-rail-kl` GTFS. |
+| 16 | ✅ **On-board mode with a "get off" alert:** stops-to-go countdown, and haptic or spoken "next stop is yours". | M–L | Built without background location: your GPS while the app is open (else the bus's own position), plus a scheduled notification in case the screen is off. Speech is opt-in per ride. |
+| 17 | ✅ **Arrive-at-stop geofence:** auto-start the countdown or Live Activity when you reach your stop. | M | `expo-location` geofencing. Needs Always permission, so offer it, never default to it. |
+| 18 | ✅ **"Where's my bus coming from":** feeders are loops, so it's usually the bus finishing its previous lap. Show its lap progress (Flighty-style "inbound"). | M | Positions plus shape. |
+| 19 | ✅ **Rain and flood nudges:** "Rain warning for Petaling — leave 5 min early." | M | MET `/weather/warning` (Malay text, district-level). Separate rate-limit bucket. |
+| 20 | ✅ **Gaps and bunching:** "Next two buses 2 min apart, then a 40 min gap". Plus personal reliability history from your own polling. | M | Bunching note built. Personal reliability history is not built yet. |
+| 21 | ✅ **Rail connections:** "MRT Phileo Damansara 120 m from this stop" with line colours. | M | Distance join with `rapid-rail-kl` GTFS. |
 
 ## 3. Deliberately not doing (now)
 - **Crowding or seat availability:** not in the feed.

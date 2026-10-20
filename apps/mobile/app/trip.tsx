@@ -5,10 +5,13 @@ import {
   controlSize,
   font,
 } from '@expo/ui/swift-ui/modifiers';
+import { nearbyRailStations } from '@bus-tracker/shared';
 import { SymbolView, type SFSymbol } from 'expo-symbols';
 import { useNavigation, useRouter } from 'expo-router';
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useMemo, type ReactNode } from 'react';
 import {
+  Linking,
+  Pressable,
   ScrollView,
   StyleSheet,
   Switch,
@@ -20,12 +23,17 @@ import Animated, { FadeIn, useReducedMotion } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { formatClockHHMM } from '@/components/tracker/logic';
+import { RideBody } from '@/components/ride/RideBody';
+import { Connections } from '@/components/trip/Connections';
 import { Hero, StatusLine } from '@/components/trip/Hero';
+import { Notes } from '@/components/trip/Notes';
 import { OnTheWay } from '@/components/trip/OnTheWay';
 import { PrimaryAction } from '@/components/trip/PrimaryAction';
 import { SheetHeader } from '@/components/trip/SheetHeader';
 import { Timetable } from '@/components/trip/Timetable';
 import { useSettings } from '@/hooks/useSettings';
+import { ensureNotificationPermission } from '@/services/reminders/notifications';
+import { useRide } from '@/state/RideContext';
 import { useTrip } from '@/state/TripContext';
 import { color, MARGIN, motion, space, type, type DetentIndex } from '@/theme/design';
 
@@ -46,7 +54,17 @@ export default function TripSheet() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
+  const ride = useRide();
   const { model } = trip;
+  const userStop = trip.route?.userStop ?? null;
+  const stopPoint = useMemo(
+    () => (userStop ? { lat: userStop.stop_lat, lng: userStop.stop_lon } : null),
+    [userStop],
+  );
+  const hasRail = useMemo(
+    () => (stopPoint ? nearbyRailStations(stopPoint).length > 0 : false),
+    [stopPoint],
+  );
 
   useEffect(() => {
     const addListener = (navigation as unknown as { addListener: DetentListener })
@@ -72,6 +90,36 @@ export default function TripSheet() {
     );
   }
 
+  if (ride.active) {
+    const p = ride.progress;
+    return (
+      <ScrollView
+        contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + space.xl }]}
+        showsVerticalScrollIndicator={false}
+      >
+        <SheetHeader
+          routeCode={trip.routeCode}
+          stopName={ride.destination ? `To ${ride.destination.name}` : trip.stopName}
+          subtitle={trip.route?.longName ?? null}
+          compact={
+            p == null
+              ? null
+              : p.phase === 'arrived'
+                ? 'Here'
+                : p.phase === 'next-is-yours'
+                  ? 'Next stop'
+                  : `${p.stopsToGo} stops`
+          }
+          showCompact={trip.detent === 0}
+          compactIsLive
+        />
+        <View style={styles.body}>
+          <RideBody ride={ride} base={model} />
+        </View>
+      </ScrollView>
+    );
+  }
+
   const isLive = model.source !== 'scheduled';
   const liveTripId = trip.eta.primaryArrival?.sched?.tripId ?? null;
   const showJourney =
@@ -93,6 +141,8 @@ export default function TripSheet() {
 
       <View style={styles.body}>
         <StateBody />
+
+        <Notes notes={model.notes} />
 
         {model.state === 'arrival' || model.action.kind === 'walking' ? (
           <PrimaryAction
@@ -124,6 +174,59 @@ export default function TripSheet() {
           </Section>
         ) : null}
 
+        {stopPoint ? (
+          <Section title="Getting there">
+            <Pressable
+              onPress={() => openWalkingDirections(stopPoint)}
+              accessibilityRole="button"
+              accessibilityHint="Opens Apple Maps"
+              style={({ pressed }) => [styles.linkRow, pressed && styles.pressed]}
+            >
+              <SymbolView name="figure.walk" size={18} tintColor={color.accent} />
+              <Text style={styles.linkText}>Walking directions to your stop</Text>
+              <SymbolView name="arrow.up.right" size={13} tintColor={color.tertiaryLabel} />
+            </Pressable>
+            {ride.destinations.length > 0 ? (
+              <Pressable
+                onPress={() => router.push('/ride')}
+                accessibilityRole="button"
+                style={({ pressed }) => [styles.linkRow, pressed && styles.pressed]}
+              >
+                <SymbolView name="bell.badge" size={18} tintColor={color.accent} />
+                <Text style={styles.linkText}>On the bus? Alert me before my stop</Text>
+                <SymbolView name="chevron.right" size={13} tintColor={color.tertiaryLabel} />
+              </Pressable>
+            ) : null}
+          </Section>
+        ) : null}
+
+        {stopPoint && hasRail ? (
+          <Section title="Rail nearby">
+            <Connections stop={stopPoint} />
+          </Section>
+        ) : null}
+
+        {model.notes.some((n) => n.id === 'last-bus') ? (
+          <Section title="Last bus">
+            <View style={styles.toggleRow}>
+              <View style={styles.toggleText}>
+                <Text style={styles.toggleTitle}>Remind me to leave</Text>
+                <Text style={styles.toggleCaption}>
+                  A notification {10 + settings.walkMinutes} min before the last bus, from the timetable.
+                </Text>
+              </View>
+              <Switch
+                value={trip.lastBusReminder}
+                onValueChange={(on) => {
+                  trip.setLastBusReminder(on);
+                  if (on) void ensureNotificationPermission().catch(() => {});
+                }}
+                accessibilityLabel="Remind me to leave for the last bus"
+              />
+            </View>
+          </Section>
+        ) : null}
+
         {model.state === 'arrival' ? (
           <Section title="Lock Screen">
             <View style={styles.toggleRow}>
@@ -150,6 +253,11 @@ export default function TripSheet() {
       </View>
     </ScrollView>
   );
+}
+
+/** Hands off to Apple Maps in walking mode (Look Around included there). */
+function openWalkingDirections(stop: { lat: number; lng: number }) {
+  void Linking.openURL(`https://maps.apple.com/?daddr=${stop.lat},${stop.lng}&dirflg=w`);
 }
 
 /** Hero area for the current state — the map above never changes. */
@@ -322,6 +430,23 @@ const styles = StyleSheet.create({
   toggleCaption: {
     ...type.footnote,
     color: color.secondaryLabel,
+  },
+  linkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    padding: space.md,
+    borderRadius: 20,
+    borderCurve: 'continuous',
+    backgroundColor: color.fill,
+  },
+  pressed: {
+    opacity: 0.6,
+  },
+  linkText: {
+    ...type.body,
+    color: color.accent,
+    flex: 1,
   },
   about: {
     ...type.footnote,

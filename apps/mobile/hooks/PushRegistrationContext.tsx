@@ -17,16 +17,8 @@ import {
   type PushRegistrationState,
 } from '@/hooks/usePushRegistration';
 
-// Expo notifications requires the handler to be registered once at module load
-// so the OS knows how to surface notifications arriving while the app is active.
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
-});
+// The notification handler (foreground presentation) is set once in
+// services/reminders/notifications.ts → configureNotifications().
 
 const PushRegistrationContext =
   createContext<PushRegistrationState | null>(null);
@@ -37,6 +29,10 @@ export function PushRegistrationProvider({ children }: { children: ReactNode }) 
 
   useEffect(() => {
     const sub = Notifications.addNotificationReceivedListener((notification) => {
+      // Local reminders already show as system banners; this in-app banner
+      // is only for server pushes.
+      const trigger = notification.request.trigger as { type?: string } | null;
+      if (trigger?.type !== 'push') return;
       const content = notification.request.content;
       setBanner({
         title: content.title ?? 'T816 bus',
