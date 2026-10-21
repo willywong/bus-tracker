@@ -12,6 +12,7 @@ import {
   parseMytDateTime,
   slotFor,
   translateForecast,
+  wherePhrase,
 } from "../nudge";
 import type { ForecastRow, WarningRow } from "../types";
 
@@ -55,8 +56,9 @@ describe("buildRainNudge with real 2026-10-20 payloads", () => {
     const nudge = buildRainNudge({ forecastRows: forecast, warnings: realWarnings, area: area("petaling"), now: at1646 });
     assert.deepEqual(nudge, {
       kind: "warning",
+      condition: "thunderstorm",
       title: "Thunderstorm warning",
-      message: "Petaling until 18:00 — leave a few minutes early",
+      message: "In effect for Petaling until 18:00. Leave a few minutes early.",
       validUntilMs: myt("2026-10-20T18:00:00"),
       sourceLabel: "MET Malaysia",
     });
@@ -65,15 +67,16 @@ describe("buildRainNudge with real 2026-10-20 payloads", () => {
   test("whole-territory match for W.P. Kuala Lumpur", () => {
     const nudge = buildRainNudge({ forecastRows: forecast, warnings: realWarnings, area: area("kuala-lumpur"), now: new Date(at1646) });
     assert.equal(nudge?.kind, "warning");
-    assert.equal(nudge?.message, "Kuala Lumpur until 18:00 — leave a few minutes early");
+    assert.equal(nudge?.message, "In effect for Kuala Lumpur until 18:00. Leave a few minutes early.");
   });
 
   test("Klang is not in the warning's district list, so it falls back to the afternoon forecast", () => {
     const nudge = buildRainNudge({ forecastRows: forecast, warnings: realWarnings, area: area("klang"), now: at1646 });
     assert.deepEqual(nudge, {
       kind: "forecast",
+      condition: "thunderstorm",
       title: "Thunderstorms likely this afternoon",
-      message: "Klang: thunderstorms in places — allow a few extra minutes",
+      message: "Expected in parts of Klang. Leave a few minutes early.",
       validUntilMs: myt("2026-10-20T19:00:00"),
       sourceLabel: "MET Malaysia",
     });
@@ -109,7 +112,7 @@ describe("buildRainNudge with real 2026-10-20 payloads", () => {
     });
     assert.equal(nudge?.kind, "forecast");
     assert.equal(nudge?.title, "Rain likely this morning");
-    assert.equal(nudge?.message, "Petaling: rain in places — allow a few extra minutes");
+    assert.equal(nudge?.message, "Expected in parts of Petaling. Leave a few minutes early.");
     assert.equal(nudge?.validUntilMs, myt("2026-10-20T12:00:00"));
   });
 
@@ -133,7 +136,7 @@ describe("buildRainNudge with real 2026-10-20 payloads", () => {
       now: myt("2026-10-20T20:15:00"),
     });
     assert.equal(nudge?.title, "Rain likely tonight");
-    assert.equal(nudge?.message, "Hulu Langat: rain in places — allow a few extra minutes");
+    assert.equal(nudge?.message, "Expected in parts of Hulu Langat. Leave a few minutes early.");
     assert.equal(nudge?.validUntilMs, myt("2026-10-21T05:00:00"));
   });
 
@@ -157,11 +160,11 @@ describe("buildRainNudge with real 2026-10-20 payloads", () => {
   test("falls back to the state row when the district row is missing", () => {
     const stateOnly = forecast.filter((r) => r.location.location_id === "St008");
     const nudge = buildRainNudge({ forecastRows: stateOnly, warnings: [], area: area("petaling"), now: at1646 });
-    assert.equal(nudge?.message, "Selangor: thunderstorms in places inland — allow a few extra minutes");
+    assert.equal(nudge?.message, "Expected in parts of Selangor, mostly inland. Leave a few minutes early.");
 
     const klState = forecast.filter((r) => r.location.location_id === "St009");
     const kl = buildRainNudge({ forecastRows: klState, warnings: [], area: area("kuala-lumpur"), now: at1646 });
-    assert.equal(kl?.message, "Kuala Lumpur: thunderstorms in places — allow a few extra minutes");
+    assert.equal(kl?.message, "Expected in parts of Kuala Lumpur. Leave a few minutes early.");
   });
 
   test("returns null with no data at all", () => {
@@ -177,8 +180,9 @@ describe("buildRainNudge with assumed continuous-rain warning", () => {
     const nudge = buildRainNudge({ forecastRows: [], warnings: assumedWarnings, area: area("klang"), now: at1500 });
     assert.deepEqual(nudge, {
       kind: "warning",
+      condition: "heavy-rain",
       title: "Heavy rain warning",
-      message: "Klang until Wed midnight — leave a few minutes early",
+      message: "In effect for Klang until Wed midnight. Leave a few minutes early.",
       validUntilMs: myt("2026-11-26T00:00:00"),
       sourceLabel: "MET Malaysia",
     });
@@ -187,9 +191,9 @@ describe("buildRainNudge with assumed continuous-rain warning", () => {
   test("thunderstorm only for Petaling, and W.P. Putrajaya as a whole territory", () => {
     const p = buildRainNudge({ forecastRows: [], warnings: assumedWarnings, area: area("petaling"), now: at1500 });
     assert.equal(p?.title, "Thunderstorm warning");
-    assert.equal(p?.message, "Petaling until 17:00 — leave a few minutes early");
+    assert.equal(p?.message, "In effect for Petaling until 17:00. Leave a few minutes early.");
     const pj = buildRainNudge({ forecastRows: [], warnings: assumedWarnings, area: area("putrajaya"), now: at1500 });
-    assert.equal(pj?.message, "Putrajaya until 17:00 — leave a few minutes early");
+    assert.equal(pj?.message, "In effect for Putrajaya until 17:00. Leave a few minutes early.");
   });
 
   test("unlisted district gets nothing", () => {
@@ -206,7 +210,7 @@ describe("buildRainNudge with assumed continuous-rain warning", () => {
     };
     const nudge = buildRainNudge({ forecastRows: [], warnings: [...assumedWarnings, flood], area: area("klang"), now: at1500 });
     assert.equal(nudge?.title, "Flood warning");
-    assert.equal(nudge?.message, "Klang — leave a few minutes early");
+    assert.equal(nudge?.message, "In effect for Klang. Leave a few minutes early.");
     assert.equal(nudge?.validUntilMs, null);
 
     const later = buildRainNudge({ forecastRows: [], warnings: [flood], area: area("klang"), now: myt("2026-11-24T21:00:00") });
@@ -252,6 +256,24 @@ describe("translateForecast", () => {
     });
   }
 
+  test("extent and locality say where, so the message doesn't repeat the title", () => {
+    const wide = translateForecast("Ribut petir menyeluruh di kawasan pedalaman");
+    assert.equal(wide?.extent, "all");
+    assert.equal(wide?.locality, "inland");
+    assert.equal(translateForecast("Ribut petir di satu dua tempat")?.extent, "few");
+    assert.equal(translateForecast("Hujan di kawasan pantai")?.locality, "coast");
+    const heavy = translateForecast("Hujan lebat");
+    assert.equal(heavy?.heavy, true);
+    assert.equal(heavy?.extent, null);
+  });
+
+  test("where reads as a phrase after 'Expected'", () => {
+    assert.equal(wherePhrase("Petaling", "parts", null), "in parts of Petaling");
+    assert.equal(wherePhrase("Selangor", "most", "inland"), "across most of Selangor, mostly inland");
+    assert.equal(wherePhrase("Klang", "all", "coast"), "across Klang, mostly near the coast");
+    assert.equal(wherePhrase("Gombak", null, null), "around Gombak");
+  });
+
   test("covers every distinct value in the real fixture", () => {
     const values = new Set(
       forecast.flatMap((r) => [r.morning_forecast, r.afternoon_forecast, r.night_forecast, r.summary_forecast]),
@@ -266,7 +288,7 @@ describe("translateForecast", () => {
   test("empty and unknown", () => {
     assert.equal(translateForecast(""), null);
     assert.equal(translateForecast(null), null);
-    assert.deepEqual(translateForecast("Berangin"), { precip: "none", isolated: false, english: "Berangin" });
+    assert.deepEqual(translateForecast("Berangin"), { precip: "none", isolated: false, heavy: false, english: "Berangin", extent: null, locality: null });
   });
 
   test("isolated flag drives 'possible' wording", () => {
@@ -275,7 +297,8 @@ describe("translateForecast", () => {
     ];
     const nudge = buildRainNudge({ forecastRows: rows, warnings: [], area: area("petaling"), now: myt("2026-10-22T14:00:00") });
     assert.equal(nudge?.title, "Thunderstorms possible this afternoon");
-    assert.equal(nudge?.message, "Petaling: isolated thunderstorms — allow a few extra minutes");
+    assert.equal(nudge?.condition, "thunderstorm");
+    assert.equal(nudge?.message, "Expected in a few spots around Petaling. Leave a few minutes early.");
   });
 });
 

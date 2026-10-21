@@ -1,5 +1,5 @@
-import type { GtfsStop, RouteSearchHit, T816Bundle } from '@bus-tracker/shared';
-import { orderStopsByTrip, pickRepresentativeTrip } from '@bus-tracker/shared';
+import type { BusCategory, GtfsStop, RouteSearchHit, T816Bundle } from '@bus-tracker/shared';
+import { orderStopsByTrip, parseRouteKey, pickRepresentativeTrip } from '@bus-tracker/shared';
 import {
   Button,
   ContentUnavailableView,
@@ -51,7 +51,12 @@ export default function AddRouteScreen() {
   const params = useLocalSearchParams<Params>();
   const changeMode = params.mode === 'change' && !!params.code;
   const [query, setQuery] = useState('');
-  const [route, setRoute] = useState<{ code: string; longName?: string; matched?: string[] } | null>(
+  const [route, setRoute] = useState<{
+    code: string;
+    longName?: string;
+    matched?: string[];
+    category?: BusCategory;
+  } | null>(
     params.code ? { code: params.code } : null,
   );
   const search = useRouteSearch(route ? '' : query);
@@ -117,6 +122,7 @@ export default function AddRouteScreen() {
             <StopSections
               code={route.code}
               matchedStopIds={route.matched}
+              category={route.category}
               selectedStopId={settings.preferredStopByRoute[route.code] ?? null}
               accent={accent}
               onPick={pickStop}
@@ -133,6 +139,7 @@ export default function AddRouteScreen() {
                 code: hit.code,
                 longName: hit.long_name,
                 matched: hit.matchedStops?.map((s) => s.stop_id),
+                category: hit.category,
               })
             }
           />
@@ -189,7 +196,7 @@ function SearchContent({
       <VStack spacing={10}>
         <ProgressView />
         <Text modifiers={[foregroundStyle({ type: 'hierarchical', style: 'secondary' })]}>
-          Loading Rapid KL routes…
+          Loading Rapid bus routes…
         </Text>
       </VStack>
     );
@@ -249,7 +256,7 @@ function SearchResults({
               </Text>
               <VStack spacing={2} alignment="leading">
                 <Text modifiers={[font({ size: 17 })]}>
-                  {hit.long_name && hit.long_name !== hit.code ? hit.long_name : `Route ${hit.code}`}
+                  {hit.long_name && hit.long_name.toUpperCase() !== parseRouteKey(hit.code).code ? hit.long_name : `Route ${hit.code}`}
                 </Text>
                 {via ? (
                   <Text
@@ -276,7 +283,14 @@ function SearchResults({
   );
 }
 
+/** "Rapid KL · Damai Perdana → Hab Pasar Seni" — the network keeps clashing codes apart. */
 function describeRoute(hit: RouteSearchHit): string | null {
+  const via = describeVia(hit);
+  if (!hit.network) return via;
+  return via ? `${hit.network} · ${via}` : hit.network;
+}
+
+function describeVia(hit: RouteSearchHit): string | null {
   if (hit.matchedStops && hit.matchedStops.length > 0) {
     return `Stops at ${formatStopName(hit.matchedStops[0].stop_name)}`;
   }
@@ -289,12 +303,15 @@ function describeRoute(hit: RouteSearchHit): string | null {
 
 function StopSections({
   code,
+  category,
   matchedStopIds,
   selectedStopId,
   accent,
   onPick,
 }: {
   code: string;
+  /** Feed the route was found in, so its bundle is cut without trying others. */
+  category?: BusCategory;
   matchedStopIds?: readonly string[];
   selectedStopId: string | null;
   accent: string;
@@ -307,14 +324,14 @@ function StopSections({
     const ctrl = new AbortController();
     setBundle(null);
     setError(null);
-    getRouteBundle(code, ctrl.signal)
+    getRouteBundle(code, ctrl.signal, category)
       .then(setBundle)
       .catch((err: unknown) => {
         if (err instanceof Error && err.name === 'AbortError') return;
         setError(err instanceof Error ? err : new Error(String(err)));
       });
     return () => ctrl.abort();
-  }, [code]);
+  }, [code, category]);
 
   const { matched, rest } = useMemo(() => {
     if (!bundle) return { matched: [] as GtfsStop[], rest: [] as GtfsStop[] };

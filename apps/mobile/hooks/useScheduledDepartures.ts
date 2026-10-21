@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AppState, type AppStateStatus } from "react-native";
 import { openDb } from "@/db/database";
 import {
@@ -80,7 +80,17 @@ export function useScheduledDepartures(
           getServiceDayBounds(db, routeCode, stopId, nowDate),
         ]);
         if (cancelled) return;
-        setState({ upcoming, bounds, ready: true, error: null });
+        // Same rows as last time (the usual 30s tick): keep the old arrays so
+        // nothing downstream rebuilds.
+        setState((prev) =>
+          prev.ready &&
+          prev.error == null &&
+          sameDepartures(prev.upcoming, upcoming) &&
+          prev.bounds.firstEpochMs === bounds.firstEpochMs &&
+          prev.bounds.lastEpochMs === bounds.lastEpochMs
+            ? prev
+            : { upcoming, bounds, ready: true, error: null },
+        );
       } catch (err) {
         console.error(
           '[scheduledDepartures] load failed',
@@ -110,13 +120,24 @@ export function useScheduledDepartures(
   const serviceEnded =
     bounds.lastEpochMs != null && now > bounds.lastEpochMs;
 
-  return {
-    upcoming,
-    firstEpochMs: bounds.firstEpochMs,
-    lastEpochMs: bounds.lastEpochMs,
-    serviceEnded,
-    beforeServiceStart,
-    ready,
-    error,
-  };
+  return useMemo(
+    () => ({
+      upcoming,
+      firstEpochMs: bounds.firstEpochMs,
+      lastEpochMs: bounds.lastEpochMs,
+      serviceEnded,
+      beforeServiceStart,
+      ready,
+      error,
+    }),
+    [upcoming, bounds, serviceEnded, beforeServiceStart, ready, error],
+  );
+}
+
+function sameDepartures(a: readonly ScheduledDeparture[], b: readonly ScheduledDeparture[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].tripId !== b[i].tripId || a[i].departureEpochMs !== b[i].departureEpochMs) return false;
+  }
+  return true;
 }

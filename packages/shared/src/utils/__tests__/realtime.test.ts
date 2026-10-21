@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { RouteId } from "../../types/bus.js";
-import { entitiesToPositions } from "../realtime.js";
+import { entitiesToPositions, resolveRouteAlias } from "../realtime.js";
 import type { DecodedFeed } from "../protobuf.js";
 
 function feed(entities: DecodedFeed["entity"]): DecodedFeed {
@@ -172,4 +172,57 @@ test("dropImplausibleFixes removes future-dated ghosts and stale fixes", async (
     dropImplausibleFixes(fixes, now).map((f) => f.id),
     ["fresh", "skew", "edge"],
   );
+});
+
+test("entitiesToPositions maps realtime route_ids through an alias Map", () => {
+  const aliases = new Map<string, RouteId>([
+    ["U4000", "400"],
+    ["T155", "T155"],
+  ]);
+  const positions = entitiesToPositions(
+    feed([
+      {
+        id: "kl",
+        vehicle: {
+          trip: { trip_id: "kl:weekday_U4000_x_2", route_id: "U4000" },
+          vehicle: { id: "WVH1852" },
+          position: { latitude: 3.1, longitude: 101.6 },
+        },
+      },
+      {
+        id: "feeder",
+        vehicle: {
+          trip: { trip_id: "261002010006S6", route_id: "T155 Inbound" },
+          vehicle: { id: "VAF5766" },
+          position: { latitude: 3.2, longitude: 101.6 },
+        },
+      },
+      {
+        id: "other",
+        vehicle: {
+          trip: { trip_id: "x", route_id: "U7800" },
+          vehicle: { id: "NOPE" },
+          position: { latitude: 3.3, longitude: 101.6 },
+        },
+      },
+    ]),
+    tripMap([]),
+    FALLBACK,
+    aliases,
+  );
+  assert.deepEqual(
+    positions.map((p) => [p.vehicleId, p.routeId]),
+    [
+      ["WVH1852", "400"],
+      ["VAF5766", "T155"],
+    ],
+  );
+});
+
+test("resolveRouteAlias tries the raw route_id, then its first word", () => {
+  const aliases = new Map<string, RouteId>([["U4000", "400" as RouteId], ["T155", "T155" as RouteId]]);
+  assert.equal(resolveRouteAlias("U4000", aliases), "400");
+  assert.equal(resolveRouteAlias("T155 Inbound", aliases), "T155");
+  assert.equal(resolveRouteAlias("U7800", aliases), undefined);
+  assert.equal(resolveRouteAlias("T816", new Set(["T816" as RouteId])), "T816");
 });

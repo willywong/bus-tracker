@@ -9,6 +9,7 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { Hairline } from '@/components/trip/Rows';
 import { color, space, type } from '@/theme/design';
+import { mins } from '@/components/trip/model';
 
 /**
  * LRT / MRT / Monorail / BRT stations within a short walk of your stop. The
@@ -47,7 +48,7 @@ export function Connections({ stop }: { stop: LatLng }) {
               </Text>
             </View>
             <Text style={styles.distance}>
-              {formatWalkingDistance(distanceMeters)} · ~{walkingMinutes(distanceMeters)} min
+              {formatWalkingDistance(distanceMeters)} · ~{mins(walkingMinutes(distanceMeters))}
             </Text>
           </View>
         </View>

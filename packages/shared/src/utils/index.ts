@@ -1,14 +1,48 @@
 export const SHARED_PKG_VERSION = "0.1.0" as const;
 
-export { parseCsv, parseGtfsZip } from "./gtfs-parser.js";
-export type { ParsedGtfs } from "./gtfs-parser.js";
+export { parseCsv, parseCsvTable, parseGtfsZip, type ParseGtfsOptions } from "./gtfs-parser.js";
+export type { CsvTable, ParsedGtfs } from "./gtfs-parser.js";
 export {
+  BARE_KEY_CATEGORIES,
+  BUS_CATEGORIES,
+  BUS_CATEGORY_INFO,
+  categoriesForKey,
+  isBusCategory,
+  namespaceId,
+  namespaceParsedGtfs,
+  parseRouteKey,
+  rawGtfsId,
+  routeCodeOf,
+  routeKeyFor,
+  vehiclePositionsUrl,
+  type BusCategory,
+  type BusCategoryInfo,
+  type ParsedRouteKey,
+} from "./categories.js";
+export {
+  expandFrequencies,
   filterToRoutes,
+  matchesCode,
   filterToT816,
+  frequencyInstanceId,
+  frequencyTemplateId,
+  parseFrequencyInstanceId,
+  FREQUENCY_INSTANCE_SEPARATOR,
+  type FilterToRoutesOptions,
   T816_TARGET_CODES,
   type T816TargetCode,
 } from "./t816-bundle.js";
-export { searchRoutes, type RouteSearchHit } from "./search-routes.js";
+export {
+  buildRouteSearchIndex,
+  buildRouteSearchIndexFromZip,
+  deserializeRouteSearchIndex,
+  searchRouteIndexes,
+  searchRoutes,
+  serializeRouteSearchIndex,
+  type RouteSearchHit,
+  type RouteSearchIndex,
+  type SerializedRouteSearchIndex,
+} from "./search-routes.js";
 export {
   orderStopsByTrip,
   pickRepresentativeTrip,
@@ -30,6 +64,8 @@ export {
   MAX_FIX_FUTURE_MS,
   dropImplausibleFixes,
   entitiesToPositions,
+  resolveRouteAlias,
+  type RouteAliases,
   type TripRouteMap,
 } from "./realtime.js";
 export {
@@ -43,8 +79,11 @@ export {
   pointAlongRoute,
   polylineLength,
   projectOntoRoute,
+  SNAP_MAX_OFF_ROUTE_M,
+  snapToRoute,
   type LatLng,
   type RouteProjection,
+  type RouteSnap,
 } from "./route.js";
 export {
   interpolateScheduledPosition,

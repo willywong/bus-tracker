@@ -6,6 +6,7 @@ import {
   pointAlongRoute,
   polylineLength,
   projectOntoRoute,
+  snapToRoute,
   type LatLng,
 } from "../route.js";
 
@@ -142,4 +143,47 @@ test("pointAlongRoute: with loop, distance past total wraps back to start", () =
   // total mod total = 0 → start point.
   assert.ok(Math.abs(p.lat - POLY[0].lat) < 1e-9);
   assert.ok(Math.abs(p.lng - POLY[0].lng) < 1e-9);
+});
+
+test("snapToRoute: pulls a fix beside the road onto the line", () => {
+  // ~22 m south of the first segment.
+  const snap = snapToRoute({ lat: 3.0998, lng: 101.605 }, POLY);
+  assert.equal(snap.snapped, true);
+  assert.ok(haversineMeters(snap.point, { lat: 3.1, lng: 101.605 }) < 0.5);
+  assert.equal(snap.bearing, undefined);
+});
+
+test("snapToRoute: leaves a fix far off the route where it is", () => {
+  const raw = { lat: 3.095, lng: 101.605 }; // ~550 m off
+  const snap = snapToRoute(raw, POLY, { heading: 90 });
+  assert.equal(snap.snapped, false);
+  assert.deepEqual(snap.point, raw);
+  assert.equal(snap.bearing, 90);
+});
+
+test("snapToRoute: arrow follows the road segment, not the GPS bearing", () => {
+  // First segment runs east (90°); the GPS says 70°.
+  const snap = snapToRoute({ lat: 3.1001, lng: 101.605 }, POLY, { heading: 70 });
+  assert.equal(snap.snapped, true);
+  assert.ok(Math.abs((snap.bearing ?? 0) - 90) < 0.5, `bearing=${snap.bearing}`);
+});
+
+test("snapToRoute: on a two-way road, picks the side running with the bus", () => {
+  // Out along the road and back on a parallel line ~11 m north.
+  const outAndBack: LatLng[] = [
+    { lat: 3.1, lng: 101.6 },
+    { lat: 3.1, lng: 101.61 },
+    { lat: 3.1001, lng: 101.61 },
+    { lat: 3.1001, lng: 101.6 },
+  ];
+  // Nearer the eastbound line, but heading west.
+  const snap = snapToRoute({ lat: 3.10003, lng: 101.605 }, outAndBack, { heading: 265 });
+  assert.equal(snap.snapped, true);
+  assert.ok(Math.abs(snap.point.lat - 3.1001) < 1e-6, `lat=${snap.point.lat}`);
+  assert.ok(Math.abs((snap.bearing ?? 0) - 270) < 0.5, `bearing=${snap.bearing}`);
+});
+
+test("snapToRoute: a degenerate polyline leaves the point alone", () => {
+  const raw = { lat: 3.1, lng: 101.6 };
+  assert.equal(snapToRoute(raw, [raw]).snapped, false);
 });

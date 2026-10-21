@@ -4,6 +4,7 @@ import {
   interpolateScheduledPosition,
   type ScheduledStopTime,
 } from "../scheduled-position.js";
+import { haversineMeters } from "../outlier.js";
 import type { LatLng } from "../route.js";
 
 const STRAIGHT_POLY: LatLng[] = [
@@ -14,6 +15,13 @@ const STRAIGHT_POLY: LatLng[] = [
 
 const STOP_A: LatLng = { lat: 3.1, lng: 101.605 };
 const STOP_B: LatLng = { lat: 3.1, lng: 101.615 };
+
+/** Snapping goes through a planar projection, so allow float noise. */
+function assertNear(actual: LatLng | null, expected: LatLng, meters = 0.5) {
+  assert.ok(actual, "expected a position");
+  const d = haversineMeters(actual, expected);
+  assert.ok(d < meters, `off by ${d.toFixed(2)} m`);
+}
 
 function stopsMap(entries: [string, LatLng][]): ReadonlyMap<string, LatLng> {
   return new Map(entries);
@@ -50,7 +58,7 @@ test("pins to origin stop before the trip's first departure", () => {
     polyline: STRAIGHT_POLY,
     nowSec: 500,
   });
-  assert.deepEqual(out, STOP_A);
+  assertNear(out, STOP_A);
 });
 
 test("returns null before first departure when origin stop is missing from lookup", () => {
@@ -98,7 +106,7 @@ test("pins to origin stop during the trip window instead of interpolating", () =
     polyline: STRAIGHT_POLY,
     nowSec: 900,
   });
-  assert.deepEqual(out, STOP_A);
+  assertNear(out, STOP_A);
 });
 
 test("dwell at a mid-route stop still pins to origin", () => {
@@ -118,7 +126,7 @@ test("dwell at a mid-route stop still pins to origin", () => {
     polyline: STRAIGHT_POLY,
     nowSec: 1230,
   });
-  assert.deepEqual(out, STOP_A);
+  assertNear(out, STOP_A);
 });
 
 test("returns null when origin stop is missing from the lookup mid-trip", () => {
@@ -147,7 +155,7 @@ test("falls back to departureSeconds when arrivalSeconds is null", () => {
     polyline: STRAIGHT_POLY,
     nowSec: 900,
   });
-  assert.deepEqual(out, STOP_A);
+  assertNear(out, STOP_A);
 });
 
 test("returns null when the origin's arrival and departure seconds are both null", () => {
@@ -166,7 +174,7 @@ test("returns null when the origin's arrival and departure seconds are both null
   assert.equal(out, null);
 });
 
-test("ignores polyline and loop args and still pins to origin on loop routes", () => {
+test("pins to the origin on loop routes instead of following the line", () => {
   const LOOP: LatLng[] = [
     { lat: 3.1, lng: 101.6 },
     { lat: 3.1, lng: 101.61 },
@@ -192,10 +200,45 @@ test("ignores polyline and loop args and still pins to origin on loop routes", (
     polyline: LOOP,
     loop: true,
   });
-  const withoutAnyGeometry = interpolateScheduledPosition(baseArgs);
-  assert.deepEqual(withLoop, stopA);
-  // Contract check: the polyline / loop args are no-ops; supplying them or not
-  // must produce identical output. Catches any future regression that quietly
-  // reintroduces polyline-aware interpolation.
-  assert.deepEqual(withLoop, withoutAnyGeometry);
+  const later = interpolateScheduledPosition({ ...baseArgs, polyline: LOOP, nowSec: 190 });
+  assertNear(withLoop, stopA);
+  // The ghost never moves on timetable alone: later in the trip window it's
+  // still at the origin, not interpolated along the loop.
+  assert.deepEqual(later, withLoop);
+});
+
+test("projects an origin stop set back from the road onto the route line", () => {
+  // ~22 m north of the line, as a stop pin in a lay-by would be.
+  const kerbside: LatLng = { lat: 3.1002, lng: 101.605 };
+  const out = interpolateScheduledPosition({
+    stopTimes: [
+      { stopId: "A", stopSequence: 1, arrivalSeconds: 600, departureSeconds: 600 },
+      { stopId: "B", stopSequence: 2, arrivalSeconds: 1200, departureSeconds: 1200 },
+    ],
+    stopsById: stopsMap([
+      ["A", kerbside],
+      ["B", STOP_B],
+    ]),
+    polyline: STRAIGHT_POLY,
+    nowSec: 500,
+  });
+  assertNear(out, { lat: 3.1, lng: 101.605 });
+});
+
+test("leaves an origin stop far from the route line where it is", () => {
+  // ~330 m off: not this route's road, so don't drag it across the map.
+  const farAway: LatLng = { lat: 3.103, lng: 101.605 };
+  const out = interpolateScheduledPosition({
+    stopTimes: [
+      { stopId: "A", stopSequence: 1, arrivalSeconds: 600, departureSeconds: 600 },
+      { stopId: "B", stopSequence: 2, arrivalSeconds: 1200, departureSeconds: 1200 },
+    ],
+    stopsById: stopsMap([
+      ["A", farAway],
+      ["B", STOP_B],
+    ]),
+    polyline: STRAIGHT_POLY,
+    nowSec: 500,
+  });
+  assert.deepEqual(out, farAway);
 });

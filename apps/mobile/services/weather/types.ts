@@ -60,9 +60,15 @@ export interface WarningRow {
   instruction_bm?: string | null;
 }
 
+/** What the sky is doing, for the nudge's glyph. */
+export type RainCondition = "thunderstorm" | "rain" | "heavy-rain" | "flood";
+
 export interface RainNudge {
   kind: "warning" | "forecast";
+  condition: RainCondition;
+  /** The headline, "Thunderstorms likely this afternoon". */
   title: string;
+  /** Where and what to do, without repeating the title: "Expected in parts of Petaling. Leave a few minutes early." */
   message: string;
   /** Epoch ms when the warning or forecast period ends. Null if unknown. */
   validUntilMs: number | null;

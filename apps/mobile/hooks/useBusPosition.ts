@@ -1,5 +1,5 @@
 import type { RouteId } from "@bus-tracker/shared";
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import {
   realtimeStore,
   type RealtimeSnapshot,
@@ -17,9 +17,10 @@ export interface UseBusPositionResult {
   positions: RealtimeSnapshot["positions"];
   lastUpdated: number | null;
   error: Error | null;
-  nextRefreshAt: number | null;
-  isRefreshing: boolean;
-  /** Plausible vehicles in the whole feed; see RealtimeSnapshot. */
+  /**
+   * Plausible vehicles in the feed(s) behind `routeCode` (every polled feed
+   * when no route is given); see RealtimeSnapshot.
+   */
   feedVehicleCount: number | null;
 }
 
@@ -60,23 +61,53 @@ export function useBusPosition(
     };
   }, [store]);
 
-  const snapshot = useSyncExternalStore(
-    (cb) => store.subscribe(cb),
-    () => store.getSnapshot(),
-    () => store.getSnapshot(),
-  );
+  // Only the fields read below. The store also notifies for its refresh
+  // flags (about four times a poll); returning the same slice for those
+  // keeps every trip consumer from re-rendering on each one.
+  const slice = useRef<Slice | null>(null);
+  const getSlice = useCallback(() => {
+    const s = store.getSnapshot();
+    const prev = slice.current;
+    if (
+      prev &&
+      prev.positions === s.positions &&
+      prev.lastUpdated === s.lastUpdated &&
+      prev.lastError === s.lastError &&
+      prev.feedVehicleCount === s.feedVehicleCount &&
+      prev.feedHealthByRoute === s.feedHealthByRoute
+    ) {
+      return prev;
+    }
+    const next: Slice = {
+      positions: s.positions,
+      lastUpdated: s.lastUpdated,
+      lastError: s.lastError,
+      feedVehicleCount: s.feedVehicleCount,
+      feedHealthByRoute: s.feedHealthByRoute,
+    };
+    slice.current = next;
+    return next;
+  }, [store]);
+  const snapshot = useSyncExternalStore((cb) => store.subscribe(cb), getSlice, getSlice);
 
   const positions = useMemo(() => {
     if (!routeCode) return snapshot.positions;
     return snapshot.positions.filter((p) => p.routeId === routeCode);
   }, [snapshot.positions, routeCode]);
 
-  return {
-    positions,
-    lastUpdated: snapshot.lastUpdated,
-    error: snapshot.lastError,
-    nextRefreshAt: snapshot.nextRefreshAt,
-    isRefreshing: snapshot.isRefreshing,
-    feedVehicleCount: snapshot.feedVehicleCount,
-  };
+  // A route is judged by its own network's feed: Rapid KL buses mustn't
+  // mask a feeder outage, and a Kuantan route (no live feed) has no count.
+  const health = routeCode ? snapshot.feedHealthByRoute?.[routeCode] : undefined;
+  const error = health ? (health.error ?? snapshot.lastError) : snapshot.lastError;
+  const feedVehicleCount = health ? health.vehicleCount : snapshot.feedVehicleCount;
+
+  return useMemo(
+    () => ({ positions, lastUpdated: snapshot.lastUpdated, error, feedVehicleCount }),
+    [positions, snapshot.lastUpdated, error, feedVehicleCount],
+  );
 }
+
+type Slice = Pick<
+  RealtimeSnapshot,
+  "positions" | "lastUpdated" | "lastError" | "feedVehicleCount" | "feedHealthByRoute"
+>;

@@ -1,7 +1,8 @@
 import type { T816Bundle } from "@bus-tracker/shared";
-import { gtfsTimeToSeconds } from "@bus-tracker/shared";
+import { gtfsTimeToSeconds, isBusCategory } from "@bus-tracker/shared";
 import { getRouteBundle, RouteNotFoundError } from "@/services/gtfsFeed";
 import { openDb, type Db } from "./database";
+import { getRouteCategory } from "./queries";
 import { META_KEYS } from "./schema";
 
 const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
@@ -93,8 +94,21 @@ export async function needsRefresh(
 
 async function deleteRouteRows(db: Db, code: string): Promise<void> {
   // Cascade-cleanup (SQLite has no ON DELETE CASCADE in this schema). Order
-  // matters: children before parents. Shared stops and calendar rows are
-  // never deleted — other favorites may still reference them.
+  // matters: children before parents. The route's stops and shapes go last,
+  // and only those no other route still calls at or draws. Calendar rows are
+  // kept: other routes may share a service_id.
+  await db.execAsync(
+    "CREATE TEMP TABLE IF NOT EXISTS pruned_stops(stop_id TEXT PRIMARY KEY NOT NULL); DELETE FROM temp.pruned_stops;" +
+      "CREATE TEMP TABLE IF NOT EXISTS pruned_shapes(shape_id TEXT PRIMARY KEY NOT NULL); DELETE FROM temp.pruned_shapes;",
+  );
+  await db.runAsync(
+    `INSERT OR IGNORE INTO temp.pruned_stops(stop_id)
+       SELECT st.stop_id FROM stop_times st
+       JOIN trips t  ON t.trip_id  = st.trip_id
+       JOIN routes r ON r.route_id = t.route_id
+       WHERE r.code = ?;`,
+    code,
+  );
   await db.runAsync(
     `DELETE FROM stop_times
        WHERE trip_id IN (
@@ -105,12 +119,10 @@ async function deleteRouteRows(db: Db, code: string): Promise<void> {
     code,
   );
   await db.runAsync(
-    `DELETE FROM shape_points
-       WHERE shape_id IN (
-         SELECT DISTINCT t.shape_id FROM trips t
-         JOIN routes r ON r.route_id = t.route_id
-         WHERE r.code = ? AND t.shape_id IS NOT NULL
-       );`,
+    `INSERT OR IGNORE INTO temp.pruned_shapes(shape_id)
+       SELECT t.shape_id FROM trips t
+       JOIN routes r ON r.route_id = t.route_id
+       WHERE r.code = ? AND t.shape_id IS NOT NULL;`,
     code,
   );
   await db.runAsync(
@@ -120,6 +132,20 @@ async function deleteRouteRows(db: Db, code: string): Promise<void> {
   );
   await db.runAsync("DELETE FROM traffic_signals WHERE route_code = ?;", code);
   await db.runAsync("DELETE FROM routes WHERE code = ?;", code);
+  await db.runAsync(
+    `DELETE FROM stops
+       WHERE stop_id IN (
+         SELECT p.stop_id FROM temp.pruned_stops p
+         WHERE NOT EXISTS (SELECT 1 FROM stop_times st WHERE st.stop_id = p.stop_id)
+       );`,
+  );
+  await db.runAsync(
+    `DELETE FROM shape_points
+       WHERE shape_id IN (
+         SELECT p.shape_id FROM temp.pruned_shapes p
+         WHERE NOT EXISTS (SELECT 1 FROM trips t WHERE t.shape_id = p.shape_id)
+       );`,
+  );
 }
 
 /** Removes all rows belonging exclusively to `code`. Safe to call outside a txn. */
@@ -140,13 +166,17 @@ export async function mergeBundle(
   now: number = Date.now(),
 ): Promise<void> {
   await db.withTransactionAsync(async () => {
+    // Clear each route key once: a key can span several route_ids.
+    for (const code of new Set(bundle.routes.map((r) => r.code))) {
+      await deleteRouteRows(db, code);
+    }
     for (const route of bundle.routes) {
-      await deleteRouteRows(db, route.code);
       await db.runAsync(
-        "INSERT INTO routes(route_id, code, long_name) VALUES (?, ?, ?);",
+        "INSERT INTO routes(route_id, code, long_name, category) VALUES (?, ?, ?, ?);",
         route.route_id,
         route.code,
         route.long_name ?? null,
+        bundle.category ?? null,
       );
     }
 
@@ -182,38 +212,26 @@ export async function mergeBundle(
       );
     }
 
+    // Shapes and stop_times are the bulk of a bundle (a busy Rapid KL or
+    // Penang route has 20–40k stop_times), so they go in as multi-row
+    // INSERTs rather than one bridge call per row.
+    const shapeRows: unknown[][] = [];
     for (const [shapeId, points] of Object.entries(bundle.shapes)) {
-      for (const p of points) {
-        await db.runAsync(
-          `INSERT OR REPLACE INTO shape_points(shape_id, seq, lat, lng)
-           VALUES (?, ?, ?, ?);`,
-          shapeId,
-          p.seq,
-          p.lat,
-          p.lng,
-        );
-      }
+      for (const p of points) shapeRows.push([shapeId, p.seq, p.lat, p.lng]);
     }
+    await insertRows(db, "INSERT OR REPLACE INTO shape_points(shape_id, seq, lat, lng)", shapeRows);
 
-    if (bundle.stopTimes.length > 0) {
-      const stopTimeStmt = await db.prepareAsync(
-        `INSERT OR REPLACE INTO stop_times(trip_id, stop_sequence, stop_id, arrival_seconds, departure_seconds)
-         VALUES (?, ?, ?, ?, ?);`,
-      );
-      try {
-        for (const st of bundle.stopTimes) {
-          await stopTimeStmt.executeAsync([
-            st.trip_id,
-            st.stop_sequence,
-            st.stop_id,
-            gtfsTimeToSeconds(st.arrival_time),
-            gtfsTimeToSeconds(st.departure_time),
-          ]);
-        }
-      } finally {
-        await stopTimeStmt.finalizeAsync();
-      }
-    }
+    await insertRows(
+      db,
+      "INSERT OR REPLACE INTO stop_times(trip_id, stop_sequence, stop_id, arrival_seconds, departure_seconds)",
+      bundle.stopTimes.map((st) => [
+        st.trip_id,
+        st.stop_sequence,
+        st.stop_id,
+        gtfsTimeToSeconds(st.arrival_time),
+        gtfsTimeToSeconds(st.departure_time),
+      ]),
+    );
 
     if (bundle.calendar.length > 0) {
       const calStmt = await db.prepareAsync(
@@ -346,12 +364,33 @@ export async function mergeBundle(
   });
 }
 
-/** One route's static data, cut from the data.gov.my GTFS feed on device. */
-export function fetchRouteBundle(
+/** Rows per multi-row INSERT; 150 × 5 columns stays under the 999-parameter limit of older SQLite builds. */
+const INSERT_CHUNK_ROWS = 150;
+
+async function insertRows(db: Db, head: string, rows: readonly unknown[][]): Promise<void> {
+  if (rows.length === 0) return;
+  const width = rows[0].length;
+  const tuple = `(${Array(width).fill("?").join(", ")})`;
+  for (let i = 0; i < rows.length; i += INSERT_CHUNK_ROWS) {
+    const chunk = rows.slice(i, i + INSERT_CHUNK_ROWS);
+    await db.runAsync(
+      `${head} VALUES ${chunk.map(() => tuple).join(", ")};`,
+      ...(chunk.flat() as (string | number | null)[]),
+    );
+  }
+}
+
+/**
+ * One route's static data, cut from the data.gov.my GTFS feed on device. A
+ * route already in SQLite is looked up in the feed it came from.
+ */
+export async function fetchRouteBundle(
   code: string,
   signal?: AbortSignal,
+  db?: Db,
 ): Promise<T816Bundle> {
-  return getRouteBundle(code, signal);
+  const stored = await getRouteCategory(db ?? (await openDb()), code).catch(() => null);
+  return getRouteBundle(code, signal, isBusCategory(stored) ? stored : null);
 }
 
 export interface BootstrapResult {
@@ -387,7 +426,7 @@ export async function bootstrapStaticGtfs(opts: {
     const db = opts.db ?? (await openDb());
     const now = (opts.now ?? Date.now)();
     const fetchBundle =
-      opts.fetchBundle ?? ((code, signal) => fetchRouteBundle(code, signal));
+      opts.fetchBundle ?? ((code, signal) => fetchRouteBundle(code, signal, db));
 
     if (opts.routes.length === 0) {
       const gen = await getMeta(db, META_KEYS.generatedAt);

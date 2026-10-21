@@ -1,10 +1,11 @@
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 7;
 
 export const DDL = [
   `CREATE TABLE IF NOT EXISTS routes (
     route_id TEXT PRIMARY KEY NOT NULL,
     code TEXT NOT NULL,
-    long_name TEXT
+    long_name TEXT,
+    category TEXT
   );`,
   `CREATE TABLE IF NOT EXISTS traffic_signals (
     route_code TEXT NOT NULL,

@@ -190,6 +190,98 @@ export function pointAlongRoute(
   return polyline[polyline.length - 1];
 }
 
+/** How far a GPS fix may sit from the route line and still be drawn on it. */
+export const SNAP_MAX_OFF_ROUTE_M = 60;
+
+export interface RouteSnap {
+  /** Where to draw the bus: on the line when snapped, else the raw point. */
+  point: LatLng;
+  /**
+   * Heading in degrees clockwise from north. When snapped with a heading
+   * hint, the direction of the route segment the bus is on; otherwise the
+   * hint unchanged (undefined without one).
+   */
+  bearing: number | undefined;
+  snapped: boolean;
+}
+
+/**
+ * Pulls a bus position onto the route line, so a fix that drifted off the
+ * road (GPS noise, a coarse shape, or a stop pin set back from the kerb) is
+ * still drawn in the lane. Positions farther than `maxOffMeters` are left
+ * where they are: the bus is genuinely off the route (a detour, a depot).
+ *
+ * With a `heading` hint (the bus's GPS bearing), segments running the other
+ * way are passed over when one running with it is in range, so on a road
+ * the route uses in both directions the bus lands on its own side's trip
+ * and its arrow follows the road instead of the jittery GPS bearing.
+ */
+export function snapToRoute(
+  point: LatLng,
+  polyline: readonly LatLng[],
+  opts: { heading?: number; maxOffMeters?: number } = {},
+): RouteSnap {
+  const maxOff = opts.maxOffMeters ?? SNAP_MAX_OFF_ROUTE_M;
+  const heading =
+    typeof opts.heading === "number" && Number.isFinite(opts.heading) ? opts.heading : undefined;
+  const unsnapped: RouteSnap = { point, bearing: heading, snapped: false };
+  if (polyline.length < 2) return unsnapped;
+
+  let nearest: { at: LatLng; dist: number } | null = null;
+  let aligned: { at: LatLng; dist: number; bearing: number } | null = null;
+  for (let i = 0; i < polyline.length - 1; i++) {
+    const a = polyline[i];
+    const b = polyline[i + 1];
+    const { at, dist, bearing } = projectOntoSegment(point, a, b);
+    if (!nearest || dist < nearest.dist) nearest = { at, dist };
+    if (
+      heading != null &&
+      bearing != null &&
+      angleBetween(bearing, heading) <= 90 &&
+      (!aligned || dist < aligned.dist)
+    ) {
+      aligned = { at, dist, bearing };
+    }
+  }
+
+  if (aligned && aligned.dist <= maxOff) {
+    return { point: aligned.at, bearing: aligned.bearing, snapped: true };
+  }
+  if (nearest && nearest.dist <= maxOff) {
+    return { point: nearest.at, bearing: heading, snapped: true };
+  }
+  return unsnapped;
+}
+
+function projectOntoSegment(
+  point: LatLng,
+  a: LatLng,
+  b: LatLng,
+): { at: LatLng; dist: number; bearing: number | null } {
+  const lngM = lngDegMeters((a.lat + b.lat) / 2);
+  const ax = a.lng * lngM;
+  const ay = a.lat * LAT_DEG_METERS;
+  const dx = b.lng * lngM - ax;
+  const dy = b.lat * LAT_DEG_METERS - ay;
+  const px = point.lng * lngM;
+  const py = point.lat * LAT_DEG_METERS;
+  const lenSq = dx * dx + dy * dy;
+  const t = lenSq === 0 ? 0 : clamp(((px - ax) * dx + (py - ay) * dy) / lenSq, 0, 1);
+  const fx = ax + t * dx;
+  const fy = ay + t * dy;
+  return {
+    at: { lat: fy / LAT_DEG_METERS, lng: fx / lngM },
+    dist: Math.hypot(px - fx, py - fy),
+    bearing: lenSq === 0 ? null : ((Math.atan2(dx, dy) * 180) / Math.PI + 360) % 360,
+  };
+}
+
+/** Smallest angle between two headings, in [0, 180]. */
+function angleBetween(a: number, b: number): number {
+  const d = Math.abs((((a - b) % 360) + 360) % 360);
+  return d > 180 ? 360 - d : d;
+}
+
 function clamp(x: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, x));
 }

@@ -13,14 +13,21 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BusMarker, GhostBusMarker } from '@/components/map/BusMarker';
 import { RouteLayer, type RailStationMark } from '@/components/map/RouteLayer';
+import { RouteShimmer } from '@/components/map/RouteShimmer';
+import { splitRoute } from '@/components/map/routeSplit';
 import { useLocationPermission } from '@/hooks/useLocationPermission';
 import { useScheduledBusPosition } from '@/hooks/useScheduledBusPosition';
 import { useSettings, type MapType } from '@/hooks/useSettings';
 import { useRide } from '@/state/RideContext';
 import { useTrip } from '@/state/TripContext';
-import { hex, pick, SHEET_DETENTS } from '@/theme/design';
+import { hex, pick, sheetDetents } from '@/theme/design';
 import { haptics } from '@/utils/haptics';
-import { nearbyRailStations, type VehiclePosition } from '@bus-tracker/shared';
+import {
+  nearbyRailStations,
+  snapToRoute,
+  type LatLng,
+  type VehiclePosition,
+} from '@bus-tracker/shared';
 
 /** Greater Kuala Lumpur — where the map opens before a route is chosen. */
 const KL_REGION = {
@@ -32,6 +39,8 @@ const KL_REGION = {
 
 /** Markers glide between fixes over one poll interval. */
 const POSITION_TWEEN_MS = 30_000;
+/** No pan events for this long means the finger is off the map. */
+const PAN_QUIET_MS = 250;
 /** Half-size (degrees, ~280 m) of the box framed around a lone point. */
 const SINGLE_POINT_SPAN = 0.0025;
 const EMPTY_STOPS = new Map<string, { lat: number; lng: number }>();
@@ -57,6 +66,12 @@ export default function MapScreen() {
   const [userPanned, setUserPanned] = useState(false);
 
   const ride = useRide();
+  // A fresh object each render would defeat RouteLayer's memo while riding.
+  const rideDest = ride.active ? ride.destination : null;
+  const rideDestination = useMemo(
+    () => (rideDest ? { lat: rideDest.lat, lng: rideDest.lng, name: rideDest.name } : null),
+    [rideDest?.lat, rideDest?.lng, rideDest?.name],
+  );
   const route = trip.route;
   const polyline = useMemo(
     () =>
@@ -66,7 +81,9 @@ export default function MapScreen() {
 
   // The sheet covers the bottom of the map. At the large detent the map is
   // hidden anyway, so keep the glance framing.
-  const sheetHeight = windowHeight * SHEET_DETENTS[Math.min(trip.detent, 1)];
+  const sheetHeight =
+    (windowHeight - insets.top) * sheetDetents(windowHeight, insets.top)[Math.min(trip.detent, 1)] +
+    (trip.detent === 0 ? insets.bottom : 0);
   const legalLabelInsets = useMemo(
     () => ({ top: 0, right: 16, bottom: sheetHeight + 8, left: 16 }),
     [sheetHeight],
@@ -86,13 +103,66 @@ export default function MapScreen() {
   }, [route?.userStop]);
 
   // --- Live bus markers ----------------------------------------------------
-  const positions = route ? trip.bus.positions : NO_POSITIONS;
+  // Drawn in the lane, with the arrow along the road (see snapPositions).
+  const feedPositions = route ? trip.bus.positions : NO_POSITIONS;
+  const routeLine = route?.polyline;
+  const positions = useMemo(
+    () => snapPositions(feedPositions, routeLine),
+    [feedPositions, routeLine],
+  );
   const markers = useGlidingMarkers(positions, trip.routeCode);
   const primaryVehicleId =
     trip.eta.primaryArrival?.kind === 'live'
       ? trip.eta.primaryArrival.live?.vehicleId ?? null
       : null;
   const primaryPosition = positions.find((p) => p.vehicleId === primaryVehicleId);
+
+  // --- Route stretches: behind the bus, on its way to you, past your stop --
+  const busLat = primaryPosition?.lat ?? null;
+  const busLng = primaryPosition?.lng ?? null;
+  const split = useMemo(() => {
+    const u = route?.userStop;
+    return splitRoute(
+      route?.polyline ?? [],
+      busLat != null && busLng != null ? { lat: busLat, lng: busLng } : null,
+      u ? { lat: u.stop_lat, lng: u.stop_lon } : null,
+    );
+  }, [route, busLat, busLng]);
+  const aheadPath = useMemo(() => split.ahead.flat(), [split]);
+
+  // The shimmer is drawn over the map in screen space, so it hides while the
+  // camera moves and re-projects when it settles. State flips only on the
+  // transitions, never per frame.
+  const [cameraSettled, setCameraSettled] = useState(true);
+  const [cameraTick, setCameraTick] = useState(0);
+  const cameraMoving = useRef(false);
+  const onRegionChange = useCallback(() => {
+    if (cameraMoving.current) return;
+    cameraMoving.current = true;
+    setCameraSettled(false);
+  }, []);
+  // The sheet holds at peek while the map is dragged (see trip.tsx). It's
+  // released once the map settles and the finger is off it: a camera move of
+  // our own can settle mid-drag, so wait until pan events have stopped too.
+  const { holdPeek, setHoldPeek } = trip;
+  const lastPanAt = useRef(0);
+  const releaseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (releaseTimer.current) clearTimeout(releaseTimer.current);
+  }, []);
+  const onRegionChangeComplete = useCallback(() => {
+    cameraMoving.current = false;
+    setCameraSettled(true);
+    setCameraTick((t) => t + 1);
+    if (!holdPeek) return;
+    const release = () => {
+      const quiet = Date.now() - lastPanAt.current;
+      if (quiet >= PAN_QUIET_MS) setHoldPeek(false);
+      else releaseTimer.current = setTimeout(release, PAN_QUIET_MS - quiet);
+    };
+    if (releaseTimer.current) clearTimeout(releaseTimer.current);
+    release();
+  }, [holdPeek, setHoldPeek]);
 
   // --- Ghost (scheduled) bus when nothing live is reporting ----------------
   const ghostDeparture =
@@ -105,9 +175,37 @@ export default function MapScreen() {
     loop: true,
   });
 
+  // --- Selection ------------------------------------------------------------
+  // Tapping a stop or bus swaps the sheet to its detail; tapping your own
+  // stop goes back to the trip.
+  const { select, selection } = trip;
+  const selectStop = useCallback(
+    (stopId: string) => select({ kind: 'stop', stopId }),
+    [select],
+  );
+  const clearSelection = useCallback(() => select(null), [select]);
+  const selectBus = useCallback(
+    (vehicleId: string) => select({ kind: 'bus', vehicleId }),
+    [select],
+  );
+  const selectedStopId = selection?.kind === 'stop' ? selection.stopId : null;
+  const selectedBusId = selection?.kind === 'bus' ? selection.vehicleId : null;
+  const selectedPoint = useMemo(() => {
+    if (selectedStopId) {
+      const s = route?.stops.find((x) => x.stop_id === selectedStopId);
+      return s ? { lat: s.stop_lat, lng: s.stop_lon } : null;
+    }
+    if (selectedBusId) {
+      const v = positions.find((p) => p.vehicleId === selectedBusId);
+      return v ? { lat: v.lat, lng: v.lng } : null;
+    }
+    return null;
+  }, [selectedStopId, selectedBusId, route, positions]);
+  const selectionKey = selectedStopId ?? selectedBusId;
+
   // --- Camera ---------------------------------------------------------------
-  // Frames your stop + the bus heading to it in the area left visible above
-  // the sheet and below the toolbar.
+  // Frames your stop + the bus heading to it (or the selected stop or bus)
+  // in the area left visible above the sheet and below the toolbar.
   const frameTrip = useCallback(
     (animated: boolean) => {
       const map = mapRef.current;
@@ -119,7 +217,9 @@ export default function MapScreen() {
           longitude: route.userStop.stop_lon,
         });
       }
-      if (primaryPosition) {
+      if (selectedPoint) {
+        coords.push({ latitude: selectedPoint.lat, longitude: selectedPoint.lng });
+      } else if (primaryPosition) {
         coords.push({ latitude: primaryPosition.lat, longitude: primaryPosition.lng });
       } else if (ghost.coord) {
         coords.push({ latitude: ghost.coord.lat, longitude: ghost.coord.lng });
@@ -144,7 +244,7 @@ export default function MapScreen() {
         animated,
       });
     },
-    [route, primaryPosition, ghost.coord, polyline, insets.top, sheetHeight],
+    [route, primaryPosition, selectedPoint, ghost.coord, polyline, insets.top, sheetHeight],
   );
   const frameRef = useRef(frameTrip);
   frameRef.current = frameTrip;
@@ -171,6 +271,15 @@ export default function MapScreen() {
     if (userPanned) return;
     frameRef.current(true);
   }, [primaryVehicleId, trip.detent, userPanned]);
+
+  // A new selection (or going back) always re-frames, even after a pan.
+  const lastSelection = useRef(selectionKey);
+  useEffect(() => {
+    if (lastSelection.current === selectionKey) return;
+    lastSelection.current = selectionKey;
+    setUserPanned(false);
+    frameRef.current(true);
+  }, [selectionKey]);
 
   const recenter = useCallback(() => {
     haptics.light();
@@ -208,7 +317,6 @@ export default function MapScreen() {
   const ink = pick(hex.ink, mapScheme);
   const mapPaper = pick(hex.mapPaper, mapScheme);
   const casing = pick(hex.casing, mapScheme);
-  const labelHalo = mapScheme === 'dark' ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.95)';
 
   return (
     <View style={styles.root}>
@@ -237,24 +345,30 @@ export default function MapScreen() {
         legalLabelInsets={legalLabelInsets}
         onPanDrag={() => {
           if (!userPanned) setUserPanned(true);
+          lastPanAt.current = Date.now();
+          // Moving the map means looking at it: get the sheet out of the way
+          // until the map settles.
+          if (trip.detent === 1 && !trip.holdPeek) trip.setHoldPeek(true);
         }}
+        onRegionChange={onRegionChange}
+        onRegionChangeComplete={onRegionChangeComplete}
       >
         {route ? (
           <RouteLayer
             key={`${route.routeCode}|${route.stopId}`}
             polyline={polyline}
+            split={split}
             stops={route.stops}
             userStop={route.userStop}
-            destination={
-              ride.active && ride.destination
-                ? { lat: ride.destination.lat, lng: ride.destination.lng, name: ride.destination.name }
-                : null
-            }
+            destination={rideDestination}
             railStations={railStations}
             ink={ink}
+            inkMuted={`${ink}59`}
             casing={casing}
             paper={mapPaper}
-            labelHalo={labelHalo}
+            selectedStopId={selectedStopId}
+            onStopPress={selectStop}
+            onUserStopPress={clearSelection}
           />
         ) : null}
         {route && ghost.coord && positions.length === 0 ? (
@@ -277,6 +391,9 @@ export default function MapScreen() {
               primary={primary}
               passed={passed}
               bearing={vehicle.bearing}
+              selected={vehicle.vehicleId === selectedBusId}
+              vehicleId={vehicle.vehicleId}
+              onSelect={selectBus}
               accessibilityLabel={
                 primary
                   ? `Your bus, ${trip.model.compact ?? ''}, live`
@@ -288,6 +405,15 @@ export default function MapScreen() {
           );
         })}
       </MapView>
+      {route ? (
+        <RouteShimmer
+          mapRef={mapRef}
+          path={aheadPath}
+          settled={cameraSettled && trip.detent < 2}
+          cameraTick={cameraTick}
+          color={mapPaper}
+        />
+      ) : null}
     </View>
   );
 }
@@ -433,6 +559,8 @@ function useGlidingMarkers(
 ): GlidingMarker[] {
   const regions = useRef(new Map<string, AnimatedRegion>());
   const lastSeen = useRef(new Map<string, VehiclePosition>());
+  /** Where each marker is gliding to, so a repeated fix doesn't restart it. */
+  const targets = useRef(new Map<string, LatLng>());
   const [, setPruneTick] = useState(0);
 
   for (const p of positions) {
@@ -454,6 +582,12 @@ function useGlidingMarkers(
     const live = new Set(positions.map((p) => p.vehicleId));
     let pruned = false;
     for (const p of positions) {
+      // A bus that's stopped reporting repeats its last fix: hold it there.
+      // Re-timing to the same point would restart the glide and drag out
+      // whatever is left of it.
+      const target = targets.current.get(p.vehicleId);
+      if (target && target.lat === p.lat && target.lng === p.lng) continue;
+      targets.current.set(p.vehicleId, { lat: p.lat, lng: p.lng });
       regions.current
         .get(p.vehicleId)
         ?.timing({
@@ -472,6 +606,7 @@ function useGlidingMarkers(
       stopAnimation(regions.current.get(id));
       regions.current.delete(id);
       lastSeen.current.delete(id);
+      targets.current.delete(id);
       pruned = true;
     }
     // Drop the now-stopped markers on the next render.
@@ -487,6 +622,7 @@ function useGlidingMarkers(
       for (const r of regions.current.values()) stopAnimation(r);
       regions.current.clear();
       lastSeen.current.clear();
+      targets.current.clear();
     };
   }, [routeCode]);
 
@@ -496,6 +632,28 @@ function useGlidingMarkers(
     if (vehicle) out.push({ vehicle, region });
   }
   return out;
+}
+
+/**
+ * Puts each bus on the route line. Raw GPS wanders a lane or two off the
+ * road, and a bus that's stopped reporting would sit wherever its last fix
+ * fell. Snapped, it's drawn in the lane, its arrow follows the road, and a
+ * glide between two fixes stays close to the line. A fix well off the route
+ * (a detour, a depot) is left where it is.
+ *
+ * Buses are never moved on timetable alone: no live fix, no movement.
+ */
+function snapPositions(
+  positions: VehiclePosition[],
+  polyline: readonly LatLng[] | undefined,
+): VehiclePosition[] {
+  if (!polyline || polyline.length < 2 || positions.length === 0) return positions;
+  return positions.map((p) => {
+    const snap = snapToRoute({ lat: p.lat, lng: p.lng }, polyline, { heading: p.bearing });
+    return snap.snapped
+      ? { ...p, lat: snap.point.lat, lng: snap.point.lng, bearing: snap.bearing }
+      : p;
+  });
 }
 
 function stopAnimation(region: AnimatedRegion | undefined) {

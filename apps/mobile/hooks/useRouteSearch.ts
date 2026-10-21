@@ -1,8 +1,17 @@
 import type { RouteSearchHit } from "@bus-tracker/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { searchFeedRoutes } from "@/services/gtfsFeed";
+import { sqliteSearchIndexStore } from "@/db/searchIndexStore";
+import {
+  prewarmRouteSearch,
+  searchFeedRoutes,
+  setSearchIndexStore,
+} from "@/services/gtfsFeed";
 
-const DEBOUNCE_MS = 250;
+// Indexes persist in SQLite, so searches after the first skip the download.
+setSearchIndexStore(sqliteSearchIndexStore);
+
+/** Short: once the indexes are in memory a search takes a millisecond or two. */
+const DEBOUNCE_MS = 120;
 
 export interface RouteSearchState {
   results: RouteSearchHit[];
@@ -36,6 +45,11 @@ export function useRouteSearch(query: string): RouteSearchApi {
     };
   }, []);
 
+  // Load the indexes while the user is still finding the keyboard.
+  useEffect(() => {
+    prewarmRouteSearch();
+  }, []);
+
   useEffect(() => {
     if (trimmed.length === 0) {
       setState(EMPTY);
@@ -48,7 +62,11 @@ export function useRouteSearch(query: string): RouteSearchApi {
     const timer = setTimeout(() => {
       (async () => {
         try {
-          const hits = await searchFeedRoutes(trimmed, ctrl.signal);
+          const hits = await searchFeedRoutes(trimmed, ctrl.signal, (partial) => {
+            // Show what the feeds in so far found; keep the spinner for the rest.
+            if (ctrl.signal.aborted || !mountedRef.current) return;
+            setState({ results: partial, loading: true, error: null });
+          });
           if (ctrl.signal.aborted || !mountedRef.current) return;
           setState({ results: hits, loading: false, error: null });
         } catch (err) {

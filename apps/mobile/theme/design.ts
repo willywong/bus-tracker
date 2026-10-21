@@ -1,4 +1,5 @@
 import { DynamicColorIOS, Platform, PlatformColor, type ColorValue } from 'react-native';
+import { cubicBezier, Easing } from 'react-native-reanimated';
 
 /**
  * Design tokens — "Calm Mono" (see docs/design/README.md).
@@ -39,7 +40,12 @@ export const color = {
   outline: dynamic('rgba(17,17,20,0.4)', 'rgba(245,245,247,0.4)'),
   live: ios('systemGreen', '#34C759'),
   warning: ios('systemOrange', '#FF9500'),
+  /** Wash behind a warning tile: orange at low strength. */
+  warningFill: dynamic('rgba(255,149,0,0.12)', 'rgba(255,159,10,0.18)'),
   critical: ios('systemRed', '#FF3B30'),
+  /** Weather glyphs only (the cloud, its rain): drawing, not status. */
+  cloud: ios('systemGray', '#8E8E93'),
+  rain: ios('systemBlue', '#007AFF'),
   onAccent: dynamic(PAPER.light, PAPER.dark),
 } as const;
 
@@ -90,7 +96,7 @@ export const radius = {
 } as const;
 
 export const type = {
-  hero: { fontSize: 112, lineHeight: 112, fontWeight: '200' as const },
+  hero: { fontSize: 64, lineHeight: 64, fontWeight: '200' as const },
   heroUnit: { fontSize: 20, fontWeight: '400' as const },
   /** Small sentence-case label above a group of rows. */
   section: { fontSize: 13, lineHeight: 18, fontWeight: '500' as const },
@@ -109,13 +115,42 @@ export const motion = {
   crossfade: 200,
   number: 350,
   reposition: 400,
+  /** Sheet content revealing as the sheet grows out of peek. */
+  sheetIn: 240,
+  /** Sheet content leaving as the sheet collapses: faster than it came in. */
+  sheetOut: 140,
+  /** Trip ⇄ detail: the outgoing view leaves fast... */
+  pushOut: 150,
+  /** ...and the incoming one arrives a beat later. */
+  pushIn: 260,
+  pushOverlap: 70,
 } as const;
 
+/** Strong ease-out for UI entering or changing state; never ease-in. */
+export const EASE_OUT = Easing.bezier(0.23, 1, 0.32, 1);
+/** The same curve for Reanimated CSS transitions. */
+export const CSS_EASE_OUT = cubicBezier(0.23, 1, 0.32, 1);
+/** How far the sheet body rises as it fades in out of peek. */
+export const SHEET_REVEAL_SHIFT = 10;
+
 /**
- * Sheet detents for the persistent trip sheet: peek, glance, large. Peek is
- * sized to the header row alone (grabber + two-line header + home
- * indicator), so nothing else peeks out under it.
+ * Content height of the peek detent in points: top padding, the two-line
+ * header, then the peek card (number and journey, action and next bus). The sheet adds the home indicator inset on
+ * top; the strip is allowed to sit in its upper part (about 20pt above the
+ * screen edge, like the Apple Maps card) so no empty band shows below it.
  */
-export const SHEET_DETENTS = [0.14, 0.5, 1] as const;
+export const PEEK_CONTENT_HEIGHT = 160;
+/** Peek top padding, under the grabber. */
+export const PEEK_TOP = 14;
+
+/**
+ * Sheet detents for the persistent trip sheet: peek, glance, large. Detents
+ * are fractions of the sheet's largest height (the window below the top safe
+ * area), so peek is derived from points to hug its content on every phone.
+ */
+export function sheetDetents(windowHeight: number, topInset: number): [number, number, number] {
+  const max = Math.max(1, windowHeight - topInset);
+  return [Math.min(0.3, PEEK_CONTENT_HEIGHT / max), 0.5, 1];
+}
 export const SHEET_INITIAL_DETENT = 1;
 export type DetentIndex = 0 | 1 | 2;

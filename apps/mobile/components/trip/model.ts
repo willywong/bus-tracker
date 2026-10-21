@@ -4,6 +4,8 @@
  * one testable place and the views stay dumb.
  */
 
+import type { RainCondition } from '@/services/weather/types';
+
 export type ArrivalStatusLike = 'en-route' | 'arriving' | 'arrived' | 'passed';
 
 export interface ArrivalLike {
@@ -59,7 +61,11 @@ export interface TripModelInput {
   /** Stop the tracked live bus is at or heading toward. */
   busNearStopName?: string | null;
   /** A weather nudge to show, e.g. from MET Malaysia warnings. */
-  rainNudge?: string | null;
+  rainNudge?: {
+    condition: RainCondition;
+    title: string;
+    message: string;
+  } | null;
 }
 
 export type TripState =
@@ -91,15 +97,11 @@ export type TripAction =
 export type FeedHealth = 'ok' | 'route-quiet' | 'feed-down' | 'unreachable';
 
 export interface TripNote {
-  id:
-    | 'feed-down'
-    | 'ghost'
-    | 'last-bus'
-    | 'rain'
-    | 'bunching'
-    | 'where-from';
+  id: 'feed-down' | 'offline' | 'ghost' | 'last-bus' | 'rain' | 'bunching' | 'where-from';
   /** SF Symbol name. */
   icon: string;
+  /** Bold first line of a warning ("Thunderstorms likely this afternoon"); `text` follows it, quieter. */
+  title?: string;
   text: string;
   tone: 'info' | 'warning';
   /** Key/value form for a hairline row ("Last bus" · "23:41"); else `text` is shown. */
@@ -114,6 +116,31 @@ export interface NextBus {
   /** Wait after the hero bus, "+39 min" — the cost of missing it. */
   wait: string;
   live: boolean;
+}
+
+/** One fact under the hero: label, value, one line of context. */
+export interface TripFact {
+  id: 'position';
+  /** "Your bus". */
+  label: string;
+  /** "2 stops away". */
+  value: string;
+  /** "Near Komersial SS19/8", "in 33 mins". */
+  caption: string | null;
+}
+
+/**
+ * "Live · 8 min late" with "Updated 10:22" on the trailing edge, or
+ * "Scheduled · no live buses reporting".
+ */
+export interface SourceLine {
+  label: string;
+  /** How the bus runs (timing, else motion), or why there's no live data. */
+  note: string | null;
+  /** Freshness of the live fix, right-aligned and quiet. */
+  updated: string | null;
+  /** "Arrives 10:56 AM" beside the minutes; null when the hero is a clock. */
+  arrives: string | null;
 }
 
 export interface TripModel {
@@ -136,6 +163,10 @@ export interface TripModel {
   feedHealth: FeedHealth;
   /** Supporting facts under the hero, most important first (max {@link MAX_NOTES}). */
   notes: TripNote[];
+  /** Glyph + word line under the hero: where the number comes from. */
+  sourceLine: SourceLine;
+  /** Where the bus is, timing against the timetable, the next bus. */
+  facts: TripFact[];
 }
 
 /** Age after which a live ETA is shown as "Updated N min ago". */
@@ -149,6 +180,14 @@ export const BUNCHED_MIN = 5;
 /** Start mentioning the last bus this long before it leaves. */
 export const LAST_BUS_HEADS_UP_MS = 3 * 60 * 60_000;
 export const MAX_NOTES = 3;
+
+/** The weather's own glyph, drawn in the warning's orange. */
+const RAIN_ICON: Record<RainCondition, string> = {
+  thunderstorm: 'cloud.bolt.rain.fill',
+  rain: 'cloud.rain.fill',
+  'heavy-rain': 'cloud.heavyrain.fill',
+  flood: 'water.waves',
+};
 
 export function buildTripModel(input: TripModelInput): TripModel {
   const source = sourceOf(input);
@@ -181,23 +220,18 @@ export function buildTripModel(input: TripModelInput): TripModel {
     }
     if (input.beforeServiceStart && input.firstBusToday != null) {
       const clock = input.formatClock(input.firstBusToday);
-      const mins = Math.max(
-        0,
-        Math.floor((input.firstBusToday - input.now) / 60_000),
-      );
+      const until = Math.max(0, Math.floor((input.firstBusToday - input.now) / 60_000));
       return base('before-service', 'scheduled', input, {
         hero: { text: clock, unit: null, kind: 'clock' },
         heroEyebrow: 'First bus',
         status: 'Scheduled',
-        detail: mins > 0 ? `In ${formatDuration(mins)}` : null,
+        detail: until > 0 ? `In ${formatDuration(until)}` : null,
         compact: clock,
         accessibilityLabel: `First bus at ${clock}`,
       });
     }
     return base('no-service', 'scheduled', input, {
-      status: input.feedError
-        ? "Can't reach live data"
-        : 'No buses scheduled right now',
+      status: input.feedError ? "Can't reach live data" : 'No buses scheduled right now',
       notes: compactNotes([lastBusNote(input, null)]),
       accessibilityLabel: 'No buses scheduled right now',
     });
@@ -227,6 +261,8 @@ export function buildTripModel(input: TripModelInput): TripModel {
         : null,
     feedHealth,
     notes: arrivalNotes(minutes, isLive, feedHealth, input),
+    sourceLine: sourceLineFor(shownSource, input),
+    facts: factsFor(shownSource, input),
   };
 }
 
@@ -252,6 +288,13 @@ function base(
     freshness: null,
     feedHealth: feedHealthOf(input),
     notes: [],
+    sourceLine: {
+      label: patch.status,
+      note: null,
+      updated: null,
+      arrives: null,
+    },
+    facts: [],
     ...patch,
   };
 }
@@ -264,11 +307,7 @@ function sourceOf(input: TripModelInput): SourceKind {
   return 'live';
 }
 
-function heroFor(
-  minutes: number,
-  isLive: boolean,
-  input: TripModelInput,
-): HeroValue {
+function heroFor(minutes: number, isLive: boolean, input: TripModelInput): HeroValue {
   if (isLive && input.arrivalStatus === 'arrived') {
     return { text: 'At stop', unit: null, kind: 'word' };
   }
@@ -283,7 +322,11 @@ function heroFor(
       kind: 'clock',
     };
   }
-  return { text: String(minutes), unit: 'min', kind: 'minutes' };
+  return {
+    text: String(minutes),
+    unit: minutes === 1 ? 'min' : 'mins',
+    kind: 'minutes',
+  };
 }
 
 function feedHealthOf(input: TripModelInput): FeedHealth {
@@ -296,25 +339,79 @@ function feedHealthOf(input: TripModelInput): FeedHealth {
 
 function statusFor(source: SourceKind, input: TripModelInput): string {
   if (source === 'scheduled') {
-    switch (feedHealthOf(input)) {
-      case 'ok':
-        return 'Scheduled';
-      case 'unreachable':
-        return "Scheduled · can't reach live data";
-      case 'feed-down':
-        return 'Scheduled · live data is down';
-      case 'route-quiet':
-        return 'Scheduled · no live buses reporting';
-    }
+    // Why there's no live bus is a warning glyph beside the hero, not
+    // words here.
+    return 'Scheduled';
   }
   if (source === 'aging' && input.lastUpdated != null) {
-    const mins = Math.max(1, Math.floor((input.now - input.lastUpdated) / 60_000));
-    return `Updated ${mins} min ago`;
+    const age = Math.max(1, Math.floor((input.now - input.lastUpdated) / 60_000));
+    return `Updated ${mins(age)} ago`;
   }
   const parts = ['Live'];
   const ahead = stopsAheadLabel(input.stopsAhead);
   if (ahead) parts.push(ahead);
   return parts.join(' · ');
+}
+
+function sourceLineFor(source: SourceKind, input: TripModelInput): SourceLine {
+  const primary = input.primaryArrival;
+  const arrives =
+    primary && input.minutesToStop != null && input.minutesToStop < 60
+      ? `Arrives ${input.formatClock(primary.epochMs)}`
+      : null;
+  return { ...sourceLineCore(source, input), arrives };
+}
+
+function sourceLineCore(source: SourceKind, input: TripModelInput): Omit<SourceLine, 'arrives'> {
+  if (source === 'scheduled') {
+    return { label: 'Scheduled', note: null, updated: null };
+  }
+  const note = timingValue(input.delay) ?? input.motionLabel ?? null;
+  if (input.lastUpdated == null) return { label: 'Live', note, updated: null };
+  if (source === 'aging') {
+    const age = Math.max(1, Math.floor((input.now - input.lastUpdated) / 60_000));
+    return { label: 'Live', note, updated: `Updated ${mins(age)} ago` };
+  }
+  return {
+    label: 'Live',
+    note,
+    updated: `Updated ${input.formatClock(input.lastUpdated)}`,
+  };
+}
+
+/**
+ * The facts under the hero: live arrivals get where the bus is. Timing lives
+ * in the source line; later buses live in the Today grid, where tapping one
+ * opens its own small sheet. Rows are omitted, never shown empty.
+ */
+function factsFor(source: SourceKind, input: TripModelInput): TripFact[] {
+  const facts: TripFact[] = [];
+  if (source !== 'scheduled') {
+    const n = input.stopsAhead;
+    if (n != null && n >= 0) {
+      // Motion only when timing took the source line's note.
+      const motion = timingValue(input.delay) ? input.motionLabel : null;
+      facts.push({
+        id: 'position',
+        label: 'Your bus',
+        value: stopsAwayLabel(n),
+        caption: input.busNearStopName ? `Near ${input.busNearStopName}` : motion,
+      });
+    }
+  }
+  return facts;
+}
+
+function timingValue(d: DelayLike | null): string | null {
+  if (!d) return null;
+  const m = Math.abs(Math.round(d.delayMinutes));
+  if (d.onTimeWindow === 'on-time' || m === 0) return 'On time';
+  return d.onTimeWindow === 'late' ? `${mins(m)} late` : `${mins(m)} early`;
+}
+
+/** "Next stop", "1 stop away", "4 stops away": where your bus is, as a value. */
+export function stopsAwayLabel(n: number): string {
+  return n === 0 ? 'Next stop' : n === 1 ? '1 stop away' : `${n} stops away`;
 }
 
 function stopsAheadLabel(n: number | null): string | null {
@@ -330,8 +427,8 @@ function detailFor(input: TripModelInput): string | null {
   if (!d) return null;
   const m = Math.abs(Math.round(d.delayMinutes));
   if (d.onTimeWindow === 'on-time') return 'On schedule';
-  if (d.onTimeWindow === 'late') return `${m} min behind schedule`;
-  return `${m} min ahead of schedule`;
+  if (d.onTimeWindow === 'late') return `${mins(m)} behind schedule`;
+  return `${mins(m)} ahead of schedule`;
 }
 
 /**
@@ -339,18 +436,18 @@ function detailFor(input: TripModelInput): string | null {
  * both ("Then 21:41 · 22:11"); never a bare minute count beside a clock time.
  */
 function thenFor(input: TripModelInput): string | null {
-  const picks = distinctLater(input).slice(0, 2).map((a) => a.epochMs);
+  const picks = distinctLater(input)
+    .slice(0, 2)
+    .map((a) => a.epochMs);
   if (picks.length === 0) return null;
-  const mins = picks.map((ms) => Math.max(0, Math.floor((ms - input.now) / 60_000)));
-  if (mins.every((m) => m < 60)) return `Then ${mins.join(' · ')} min`;
+  const away = picks.map((ms) => Math.max(0, Math.floor((ms - input.now) / 60_000)));
+  if (away.every((m) => m < 60)) {
+    return `Then ${away.join(' · ')} ${away[away.length - 1] === 1 ? 'min' : 'mins'}`;
+  }
   return `Then ${picks.map((ms) => input.formatClock(ms)).join(' · ')}`;
 }
 
-function actionFor(
-  minutes: number,
-  hero: HeroValue,
-  input: TripModelInput,
-): TripAction {
+function actionFor(minutes: number, hero: HeroValue, input: TripModelInput): TripAction {
   if (input.walkRemainingSeconds != null) {
     return { kind: 'walking', remainingSeconds: input.walkRemainingSeconds };
   }
@@ -360,7 +457,11 @@ function actionFor(
   if (leaveIn <= LEAVE_NOW_WINDOW_MIN) {
     return { kind: 'leave-now', following: input.isFollowing };
   }
-  return { kind: 'follow', leaveInMinutes: leaveIn, following: input.isFollowing };
+  return {
+    kind: 'follow',
+    leaveInMinutes: leaveIn,
+    following: input.isFollowing,
+  };
 }
 
 function a11yFor(hero: HeroValue, source: SourceKind, input: TripModelInput): string {
@@ -401,7 +502,18 @@ function arrivalNotes(
     notes.push({
       id: 'feed-down',
       icon: 'antenna.radiowaves.left.and.right.slash',
-      text: 'Live data is down on every route. Times are from the timetable',
+      title: 'Live data is down',
+      text: 'Every route is on the timetable for now',
+      tone: 'warning',
+    });
+  }
+
+  if (feedHealth === 'unreachable') {
+    notes.push({
+      id: 'offline',
+      icon: 'wifi.slash',
+      title: "Can't reach live data",
+      text: 'Showing the timetable until you’re back online',
       tone: 'warning',
     });
   }
@@ -418,8 +530,9 @@ function arrivalNotes(
     const route = input.routeCode ? `on ${input.routeCode} ` : '';
     notes.push({
       id: 'ghost',
-      icon: 'questionmark.circle',
-      text: `No bus ${route}is reporting yet. This one may not run`,
+      icon: 'questionmark.circle.fill',
+      title: `No bus ${route}is reporting yet`,
+      text: 'This one may not run',
       tone: 'warning',
     });
   }
@@ -427,16 +540,22 @@ function arrivalNotes(
   notes.push(lastBusNote(input, isLast ? primary.epochMs : null));
 
   if (input.rainNudge) {
-    notes.push({ id: 'rain', icon: 'cloud.rain', text: input.rainNudge, tone: 'warning' });
+    notes.push({
+      id: 'rain',
+      icon: RAIN_ICON[input.rainNudge.condition],
+      title: input.rainNudge.title,
+      text: input.rainNudge.message,
+      tone: 'warning',
+    });
   }
 
   notes.push(bunchingNote(isLive, later, input));
 
+  // Only when the facts row can't carry it (no stop count to anchor it).
   if (
     isLive &&
     input.busNearStopName &&
-    input.stopsAhead != null &&
-    input.stopsAhead >= 2 &&
+    input.stopsAhead == null &&
     input.arrivalStatus === 'en-route'
   ) {
     notes.push({
@@ -492,13 +611,13 @@ function bunchingNote(
   if (apart > BUNCHED_MIN) return null;
   const third = later[1];
   const gap = third ? Math.round((third.epochMs - second.epochMs) / 60_000) : null;
-  const apartText = apart <= 1 ? 'back to back' : `${apart} min apart`;
+  const apartText = apart <= 1 ? 'back to back' : `${mins(apart)} apart`;
   return {
     id: 'bunching',
     icon: 'bus.doubledecker',
     text:
       gap != null && gap >= 20
-        ? `Next two buses are ${apartText}, then a ${formatDuration(gap)} gap`
+        ? `Next two buses are ${apartText}, then a ${gap < 60 ? `${gap}-min` : formatDuration(gap)} gap`
         : `Next two buses are ${apartText}`,
     tone: 'info',
   };
@@ -538,12 +657,28 @@ function compactNotes(notes: readonly (TripNote | null)[]): TripNote[] {
   return notes.filter((n): n is TripNote => n != null).slice(0, MAX_NOTES);
 }
 
-/** "45 min", "1 h 5 min". */
+/**
+ * "1 min", "5 mins": every count of minutes the app shows. Hyphenated
+ * adjectives ("a 10-min walk") stay singular, as in English.
+ */
+export function mins(n: number): string {
+  return `${n} ${n === 1 ? 'min' : 'mins'}`;
+}
+
+/** "45 mins", "1 h 5 mins". */
 export function formatDuration(minutes: number): string {
-  if (minutes < 60) return `${minutes} min`;
+  if (minutes < 60) return mins(minutes);
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
-  return m === 0 ? `${h} h` : `${h} h ${m} min`;
+  return m === 0 ? `${h} h` : `${h} h ${mins(m)}`;
+}
+
+/** "in 1 min", "in 33 mins", "in 1 h 5 mins". */
+export function formatIn(minutes: number): string {
+  if (minutes < 60) return `in ${mins(minutes)}`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m === 0 ? `in ${h} h` : `in ${h} h ${mins(m)}`;
 }
 
 /** "3:05" for the walk countdown. */

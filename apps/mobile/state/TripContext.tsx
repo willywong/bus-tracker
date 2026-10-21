@@ -21,7 +21,8 @@ import { openDb } from '@/db/database';
 import {
   getRoutePolyline,
   getRoutes,
-  getStops,
+  getStopById,
+  getStopsByIds,
   getStopsForRouteOrdered,
   getTrafficSignals,
   type StopRow,
@@ -34,6 +35,7 @@ import { useSettings } from '@/hooks/useSettings';
 import { useStaticGtfs } from '@/hooks/useStaticGtfs';
 import { useRainNudge, useTripSideEffects } from '@/hooks/useTripSideEffects';
 import { useWalkTimer, type UseWalkTimerResult } from '@/hooks/useWalkTimer';
+import { sheetNavDirection } from '@/components/trip/sheetTransition';
 import { SHEET_INITIAL_DETENT, type DetentIndex } from '@/theme/design';
 import { devNow } from '@/utils/devClock';
 import { ensureNotificationPermission } from '@/services/reminders/notifications';
@@ -82,7 +84,16 @@ export interface TripContextValue {
   /** Current trip sheet detent (0 peek · 1 glance · 2 large). */
   detent: DetentIndex;
   setDetent: (d: DetentIndex) => void;
+  /** True while the map is being dragged from glance: the trip sheet holds at peek. */
+  holdPeek: boolean;
+  setHoldPeek: (on: boolean) => void;
+  /** A stop or bus picked on the map or in the sheet; the sheet shows its detail. */
+  selection: MapSelection | null;
+  select: (s: MapSelection | null) => void;
 }
+
+/** What the trip sheet is showing instead of the trip, when anything. */
+export type MapSelection = { kind: 'stop'; stopId: string } | { kind: 'bus'; vehicleId: string };
 
 const TripContext = createContext<TripContextValue | null>(null);
 
@@ -93,13 +104,13 @@ export function TripProvider({ children }: { children: ReactNode }) {
   const stopId = settings.preferredStopId;
   const hasFavorites = settings.favoritedRoutes.length > 0;
 
-  const eta = useEta({ stopId, routeCode });
-  const bus = useBusPosition({ routeCode: routeCode || undefined });
   const route = useRouteStatic(routeCode, stopId, [
     gtfs.ready,
     gtfs.result,
     gtfs.lastSettledAt,
   ]);
+  const eta = useEta({ stopId, routeCode, route });
+  const bus = useBusPosition({ routeCode: routeCode || undefined });
   const walk = useWalkTimer(settings.walkMinutes);
 
   const [now, setNow] = useState(() => devNow());
@@ -109,6 +120,24 @@ export function TripProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const [detent, setDetent] = useState<DetentIndex>(SHEET_INITIAL_DETENT);
+  const [holdPeek, setHoldPeek] = useState(false);
+  const [selection, setSelection] = useState<MapSelection | null>(null);
+  const selectionRef = useRef<MapSelection | null>(null);
+  const select = useCallback((s: MapSelection | null) => {
+    const prev = selectionRef.current;
+    // Picking the same thing again goes back to the trip.
+    const next = s && prev && JSON.stringify(s) === JSON.stringify(prev) ? null : s;
+    if (next === prev) return;
+    selectionRef.current = next;
+    // Tell the sheet's slide which way to go before the swap renders.
+    sheetNavDirection.set(next ? 1 : -1);
+    setSelection(next);
+  }, []);
+  // A new route or stop starts from the trip view.
+  useEffect(() => {
+    selectionRef.current = null;
+    setSelection(null);
+  }, [routeCode, stopId]);
   const [isFollowing, setIsFollowing] = useState(false);
   // A notification tap can switch route *and* follow; remember which route.
   const pendingFollow = useRef<string | null>(null);
@@ -173,7 +202,6 @@ export function TripProvider({ children }: { children: ReactNode }) {
     [userStopRow],
   );
   const rainNudge = useRainNudge(stopPoint, now);
-  const rainText = rainNudge ? `${rainNudge.title}. ${rainNudge.message}.` : null;
 
   const model = useMemo(
     () =>
@@ -203,7 +231,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
         routeCode,
         feedVehicleCount: bus.feedVehicleCount,
         busNearStopName: trackedLive && journey.busStop ? formatStopName(journey.busStop.name) : null,
-        rainNudge: rainText,
+        rainNudge,
       }),
     [
       hasFavorites,
@@ -226,7 +254,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
       journey.busStop,
       bus.feedVehicleCount,
       routeCode,
-      rainText,
+      rainNudge,
       motionLabel,
       settings.walkMinutes,
       settings.clockFormat,
@@ -321,6 +349,10 @@ export function TripProvider({ children }: { children: ReactNode }) {
       setLastBusReminder: side.setLastBusReminder,
       detent,
       setDetent,
+      holdPeek,
+      setHoldPeek,
+      selection,
+      select,
     }),
     [
       hasFavorites,
@@ -346,6 +378,9 @@ export function TripProvider({ children }: { children: ReactNode }) {
       side.lastBusReminder,
       side.setLastBusReminder,
       detent,
+      holdPeek,
+      selection,
+      select,
     ],
   );
 
@@ -402,14 +437,16 @@ function useRouteStatic(
     (async () => {
       try {
         const db = await openDb();
-        const [routes, allStops] = await Promise.all([getRoutes(db), getStops(db)]);
-        const row = routes.find((r) => r.code === routeCode);
+        const row = (await getRoutes(db)).find((r) => r.code === routeCode);
         if (!row) return;
         const [poly, ordered, signals] = await Promise.all([
           getRoutePolyline(db, row.route_id),
           getStopsForRouteOrdered(db, routeCode),
           getTrafficSignals(db, routeCode),
         ]);
+        // Only this route's stops: a scheduled trip never calls anywhere else.
+        const userStop =
+          ordered.find((s) => s.stop_id === stopId) ?? (await getStopById(db, stopId));
         if (cancelled) return;
         setData({
           routeCode,
@@ -421,9 +458,9 @@ function useRouteStatic(
           polyline: poly.map((p) => ({ lat: p.lat, lng: p.lng })),
           stops: ordered,
           stopsById: new Map(
-            allStops.map((s) => [s.stop_id, { lat: s.stop_lat, lng: s.stop_lon }]),
+            ordered.map((s) => [s.stop_id, { lat: s.stop_lat, lng: s.stop_lon }]),
           ),
-          userStop: allStops.find((s) => s.stop_id === stopId) ?? null,
+          userStop,
           signals: signals.map((s) => ({ id: s.osm_id, lat: s.lat, lng: s.lng })),
         });
       } catch (err) {
@@ -459,7 +496,8 @@ function useFavoriteStopPoints(
     (async () => {
       try {
         const db = await openDb();
-        const byId = new Map((await getStops(db)).map((s) => [s.stop_id, s]));
+        const stops = await getStopsByIds(db, routes.flatMap((code) => stopByRoute[code] ?? []));
+        const byId = new Map(stops.map((s) => [s.stop_id, s]));
         const out = routes.flatMap((code) => {
           const s = byId.get(stopByRoute[code] ?? '');
           return s ? [{ routeCode: code, stopId: s.stop_id, lat: s.stop_lat, lng: s.stop_lon }] : [];

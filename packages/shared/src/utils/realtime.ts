@@ -55,6 +55,10 @@ export type TripRouteMap = ReadonlyMap<string, RouteId>;
  *
  * Resolution order for the route code: tripToRoute lookup first, then a
  * fallback to `vehicle.trip.route_id` when it matches `allowedRouteCodes`.
+ * `allowedRouteCodes` may be a Map from the realtime `route_id` to the route
+ * key to report: Rapid KL's realtime feed sends its GTFS route_id ("U4000"),
+ * not the route code. The feeder feed sometimes appends a direction
+ * ("T155 Inbound"), so the first word is tried too.
  * The fallback exists because Prasarana's GTFS feeds use date-prefixed
  * trip_ids (e.g. `260313010076S10`) and the realtime feed rotates that
  * date prefix daily, so static-vs-realtime trip_ids drift apart whenever
@@ -65,11 +69,13 @@ export type TripRouteMap = ReadonlyMap<string, RouteId>;
  * `observedAt` is the entity's per-vehicle `timestamp` (seconds → ms)
  * when present, otherwise the caller-provided `fallbackNow`.
  */
+export type RouteAliases = ReadonlySet<RouteId> | ReadonlyMap<string, RouteId>;
+
 export function entitiesToPositions(
   feed: DecodedFeed,
   tripToRoute: TripRouteMap,
   fallbackNow: number,
-  allowedRouteCodes?: ReadonlySet<RouteId>,
+  allowedRouteCodes?: RouteAliases,
 ): VehiclePosition[] {
   const out: VehiclePosition[] = [];
   for (const entity of feed.entity) {
@@ -83,18 +89,15 @@ function toPosition(
   entity: DecodedEntity,
   tripToRoute: TripRouteMap,
   fallbackNow: number,
-  allowedRouteCodes?: ReadonlySet<RouteId>,
+  allowedRouteCodes?: RouteAliases,
 ): VehiclePosition | null {
   if (entity.is_deleted) return null;
   const v = entity.vehicle;
   if (!v || !v.position || !v.trip?.trip_id) return null;
 
   let routeId = tripToRoute.get(v.trip.trip_id);
-  if (!routeId) {
-    const fallback = v.trip.route_id as RouteId | undefined;
-    if (fallback && allowedRouteCodes?.has(fallback)) {
-      routeId = fallback;
-    }
+  if (!routeId && v.trip.route_id && allowedRouteCodes) {
+    routeId = resolveRouteAlias(v.trip.route_id, allowedRouteCodes);
   }
   if (!routeId) return null;
 
@@ -139,6 +142,23 @@ function toPosition(
     occupancyPercentage,
     wheelchairAccessible: asWheelchair(v.vehicle?.wheelchair_accessible),
   };
+}
+
+/**
+ * The followed route key a realtime `trip.route_id` names, if any: the raw id
+ * first, then its first word ("T155 Inbound" → "T155").
+ */
+export function resolveRouteAlias(raw: string, aliases: RouteAliases): RouteId | undefined {
+  const firstWord = raw.trim().split(/\s+/)[0];
+  for (const candidate of firstWord && firstWord !== raw ? [raw, firstWord] : [raw]) {
+    if (aliases instanceof Map) {
+      const hit = aliases.get(candidate);
+      if (hit) return hit;
+    } else if (aliases.has(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
 }
 
 /** A fix older than this no longer says where the bus is. */

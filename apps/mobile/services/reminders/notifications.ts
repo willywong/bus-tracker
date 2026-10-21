@@ -25,14 +25,16 @@ import {
   lastBusLeaveBy,
   type PlannedReminder,
 } from './plan';
+import { mins } from '@/components/trip/model';
 
 export const LEAVE_NOW_ID = 'bt.leave-now';
 export const LAST_BUS_ID = 'bt.last-bus';
 export const GET_OFF_ID = 'bt.get-off';
+export const DEPARTURE_ID = 'bt.departure';
 /** Android channel for reminders (iOS ignores channels). */
 export const REMINDER_CHANNEL_ID = 'reminders';
 
-export type ReminderKind = 'leave-now' | 'last-bus' | 'get-off' | 'commute';
+export type ReminderKind = 'leave-now' | 'last-bus' | 'get-off' | 'commute' | 'departure';
 
 const MINUTE_MS = 60_000;
 
@@ -172,7 +174,7 @@ export async function scheduleLeaveNow(
     identifier: LEAVE_NOW_ID,
     content: {
       title: `Leave now for ${p.routeCode}`,
-      body: `Bus at ${p.stopName} in ~${minutes} min (${source})`,
+      body: `Bus at ${p.stopName} in ~${mins(minutes)} (${source})`,
       interruptionLevel: 'timeSensitive',
       threadIdentifier: `bt.route.${p.routeCode}`,
       sound: 'default',
@@ -190,6 +192,74 @@ export async function scheduleLeaveNow(
 
 export function cancelLeaveNow(): Promise<void> {
   return cancelById(LEAVE_NOW_ID);
+}
+
+// ---------------------------------------------------------------------------
+// Departure: one bus picked from the Today grid
+// ---------------------------------------------------------------------------
+
+export interface DepartureReminderParams {
+  tripId: string;
+  routeCode: string;
+  stopName: string;
+  /** When the user should start walking. */
+  leaveAtMs: number;
+  /** When the bus is scheduled at the stop. */
+  busAtMs: number;
+}
+
+/** The pending departure reminder: which bus, and when it fires. */
+export interface DepartureReminder {
+  tripId: string;
+  leaveAtMs: number;
+}
+
+/**
+ * Schedules "leave now" for one timetabled bus the user picked, replacing
+ * any previous pick. Its own slot, so following the hero bus (which owns
+ * {@link LEAVE_NOW_ID}) never overwrites it. Returns false when the time to
+ * leave has already passed.
+ */
+export async function scheduleDepartureReminder(
+  p: DepartureReminderParams,
+  now: number = Date.now(),
+): Promise<boolean> {
+  await cancelById(DEPARTURE_ID);
+  if (!(p.leaveAtMs > now)) return false;
+  const minutes = Math.max(1, Math.round((p.busAtMs - p.leaveAtMs) / MINUTE_MS));
+  await Notifications.scheduleNotificationAsync({
+    identifier: DEPARTURE_ID,
+    content: {
+      title: `Leave now for the ${clock(p.busAtMs)} ${p.routeCode}`,
+      body: `Bus at ${p.stopName} in ~${mins(minutes)} (scheduled)`,
+      interruptionLevel: 'timeSensitive',
+      threadIdentifier: `bt.route.${p.routeCode}`,
+      sound: 'default',
+      data: {
+        kind: 'departure' satisfies ReminderKind,
+        tripId: p.tripId,
+        routeCode: p.routeCode,
+        fireAtMs: p.leaveAtMs,
+        busAtMs: p.busAtMs,
+      },
+    },
+    trigger: dateTrigger(p.leaveAtMs),
+  });
+  return true;
+}
+
+export function cancelDepartureReminder(): Promise<void> {
+  return cancelById(DEPARTURE_ID);
+}
+
+export async function getDepartureReminder(): Promise<DepartureReminder | null> {
+  const pending = await Notifications.getAllScheduledNotificationsAsync().catch(() => []);
+  const data = pending.find((n) => n.identifier === DEPARTURE_ID)?.content.data as
+    | { tripId?: unknown; fireAtMs?: unknown }
+    | undefined;
+  return typeof data?.tripId === 'string' && typeof data.fireAtMs === 'number'
+    ? { tripId: data.tripId, leaveAtMs: data.fireAtMs }
+    : null;
 }
 
 /** Cancels pending commute reminders that would fire within the same-moment window. */
@@ -235,8 +305,7 @@ export async function getCommuteSlots(): Promise<CommuteSlots> {
       0,
       Math.min(
         COMMUTE_MAX_PENDING,
-        IOS_MAX_PENDING_NOTIFICATIONS -
-          Math.max(others.length, RESERVED_NOTIFICATION_SLOTS),
+        IOS_MAX_PENDING_NOTIFICATIONS - Math.max(others.length, RESERVED_NOTIFICATION_SLOTS),
       ),
     ),
     otherFireTimesMs,
@@ -252,14 +321,10 @@ export async function cancelAllCommuteReminders(): Promise<void> {
   await Promise.all([
     ...pending
       .filter((r) => isCommuteReminderId(r.identifier))
-      .map((r) =>
-        Notifications.cancelScheduledNotificationAsync(r.identifier).catch(() => {}),
-      ),
+      .map((r) => Notifications.cancelScheduledNotificationAsync(r.identifier).catch(() => {})),
     ...presented
       .filter((n) => isCommuteReminderId(n.request.identifier))
-      .map((n) =>
-        Notifications.dismissNotificationAsync(n.request.identifier).catch(() => {}),
-      ),
+      .map((n) => Notifications.dismissNotificationAsync(n.request.identifier).catch(() => {})),
   ]);
 }
 
@@ -275,9 +340,7 @@ export async function replaceCommuteReminders(
   await Promise.all(
     pending
       .filter((r) => isCommuteReminderId(r.identifier))
-      .map((r) =>
-        Notifications.cancelScheduledNotificationAsync(r.identifier).catch(() => {}),
-      ),
+      .map((r) => Notifications.cancelScheduledNotificationAsync(r.identifier).catch(() => {})),
   );
   let count = 0;
   for (const r of planned) {
@@ -332,11 +395,7 @@ export async function scheduleLastBusReminder(
   now: number = Date.now(),
 ): Promise<string | null> {
   await cancelLastBusReminder();
-  const { leaveByMs, notifyAtMs } = lastBusLeaveBy(
-    p.lastBusMs,
-    p.walkMinutes,
-    p.leadMinutes,
-  );
+  const { leaveByMs, notifyAtMs } = lastBusLeaveBy(p.lastBusMs, p.walkMinutes, p.leadMinutes);
   if (!(notifyAtMs > now)) return null;
 
   return Notifications.scheduleNotificationAsync({

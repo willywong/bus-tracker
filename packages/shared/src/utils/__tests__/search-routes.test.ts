@@ -1,8 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { strToU8, zipSync } from "fflate";
+import { namespaceParsedGtfs } from "../categories.js";
 import { parseGtfsZip } from "../gtfs-parser.js";
-import { searchRoutes } from "../search-routes.js";
+import {
+  buildRouteSearchIndex,
+  buildRouteSearchIndexFromZip,
+  deserializeRouteSearchIndex,
+  searchRouteIndexes,
+  searchRoutes,
+  serializeRouteSearchIndex,
+} from "../search-routes.js";
 
 function fixture(): Uint8Array {
   const routeIds = Array.from({ length: 30 }, (_, i) => `R${i}`);
@@ -133,4 +141,60 @@ test("searchRoutes: respects limit cap", () => {
   assert.ok(hits.length <= 25);
   const unbounded = searchRoutes(parsed, "F", 1000);
   assert.ok(unbounded.length > 25);
+});
+
+test("the index built from the zip matches the one built from a parsed feed", async () => {
+  const zip = fixture();
+  assert.deepEqual(await buildRouteSearchIndexFromZip(zip), buildRouteSearchIndex(parseGtfsZip(zip)));
+});
+
+test("the zip index picks the first trip in trips.txt order, wherever its stop_times are", async () => {
+  // Trip A-2 comes first in trips.txt but last in stop_times, with its rows
+  // split up; A-1 (seen first) must give way to it.
+  const zip = zipSync({
+    "routes.txt": strToU8("route_id,route_short_name\nA,A1\n"),
+    "stops.txt": strToU8("stop_id,stop_name\nS1,One\nS2,Two\nS3,Three\nS4,Four\n"),
+    "trips.txt": strToU8("route_id,service_id,trip_id\nA,WK,A-2\nA,WK,A-1\n"),
+    "stop_times.txt": strToU8(
+      "trip_id,stop_id,stop_sequence\n" +
+        "A-1,S1,1\nA-1,S2,2\nA-2,S4,3\nA-1,S3,3\nA-2,S3,1\nA-2,S2,2\n",
+    ),
+  });
+  const fromZip = await buildRouteSearchIndexFromZip(zip);
+  assert.deepEqual(fromZip, buildRouteSearchIndex(parseGtfsZip(zip)));
+  assert.equal(fromZip.routes[0].origin, "Three");
+  assert.equal(fromZip.routes[0].destination, "Four");
+});
+
+test("building from a zip lets timers run while it works", async () => {
+  let ticks = 0;
+  const timer = setInterval(() => ticks++, 0);
+  try {
+    await buildRouteSearchIndexFromZip(fixture(), undefined, { sliceMs: 0 });
+  } finally {
+    clearInterval(timer);
+  }
+  assert.ok(ticks > 0);
+});
+
+test("building from bytes that aren't a zip fails", async () => {
+  await assert.rejects(buildRouteSearchIndexFromZip(strToU8("<html>502 Bad Gateway</html>")));
+  await assert.rejects(buildRouteSearchIndexFromZip(fixture().subarray(0, 200)));
+});
+
+test("a namespaced feed's zip index carries namespaced ids", async () => {
+  const zip = fixture();
+  const fromZip = await buildRouteSearchIndexFromZip(zip, "rapid-bus-kl");
+  const parsed = buildRouteSearchIndex(namespaceParsedGtfs(parseGtfsZip(zip), "rapid-bus-kl"), "rapid-bus-kl");
+  assert.deepEqual(fromZip, parsed);
+  assert.ok(fromZip.routes.every((r) => r.route_id.startsWith("kl:")));
+});
+
+test("a search index survives a JSON round trip and a version change drops it", async () => {
+  const index = await buildRouteSearchIndexFromZip(fixture(), "rapid-bus-kl");
+  const back = deserializeRouteSearchIndex(JSON.parse(JSON.stringify(serializeRouteSearchIndex(index))));
+  assert.deepEqual(back, index);
+  assert.deepEqual(searchRouteIndexes([back!], "Kepong"), searchRouteIndexes([index], "Kepong"));
+  assert.equal(deserializeRouteSearchIndex({ ...serializeRouteSearchIndex(index), v: 0 }), null);
+  assert.equal(deserializeRouteSearchIndex(null), null);
 });

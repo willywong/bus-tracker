@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { strToU8, zipSync } from "fflate";
-import { parseGtfsZip } from "../gtfs-parser.js";
+import { forEachCsvRow, parseGtfsZip, scanCsvColumns, scanCsvColumnsSteps } from "../gtfs-parser.js";
 
 function makeFixture(): Uint8Array {
   return zipSync({
@@ -78,4 +78,59 @@ test("parseGtfsZip tolerates missing optional files", () => {
   assert.equal(p.stops.length, 0);
   assert.equal(p.shapes.length, 0);
   assert.equal(p.calendar.length, 0);
+});
+
+test("forEachCsvRow streams rows across BOM, CRLF, blank lines and quotes", () => {
+  const rows: string[][] = [];
+  let seen: readonly string[] = [];
+  forEachCsvRow('﻿a, b\r\n1,2\r\n\r\n"x, y",3\n4,5', (r, headers) => {
+    rows.push(r);
+    seen = headers;
+  });
+  assert.deepEqual(seen, ["a", "b"]);
+  assert.deepEqual(rows, [["1", "2"], ["x, y", "3"], ["4", "5"]]);
+});
+
+test("scanCsvColumnsSteps matches scanCsvColumns however the bytes are split", () => {
+  const text = '\uFEFFstop_id, stop_name\r\nS1,Caf\u00e9 \u0645\r\n\r\n"S2","x, y"\nS3,\u{1F68C} last';
+  const bytes = strToU8(text);
+  const expected: string[][] = [];
+  scanCsvColumns(text, ["stop_name", "stop_id"], (r, [name, id]) => expected.push([r[name], r[id]]));
+  assert.deepEqual(expected, [["Caf\u00e9 \u0645", "S1"], ["x, y", "S2"], ["\u{1F68C} last", "S3"]]);
+  for (let cut = 0; cut <= bytes.length; cut++) {
+    const rows: string[][] = [];
+    const steps = scanCsvColumnsSteps(
+      [bytes.subarray(0, cut), bytes.subarray(cut)],
+      ["stop_name", "stop_id"],
+      (r, [name, id]) => rows.push([r[name], r[id]]),
+    );
+    for (const _ of steps);
+    assert.deepEqual(rows, expected, `split at byte ${cut}`);
+  }
+});
+
+test("parseGtfsZip with keepRoute keeps only that route's trips, stop_times and shapes", () => {
+  const zip = zipSync({
+    "routes.txt": strToU8("route_id,route_short_name\nA,A1\nB,B1\n"),
+    "stops.txt": strToU8("stop_id,stop_name,stop_lat,stop_lon\nS1,One,3,101\nS2,Two,3,101\n"),
+    "trips.txt": strToU8("route_id,service_id,trip_id,shape_id\nA,WK,A-1,SHA\nB,WK,B-1,SHB\n"),
+    "stop_times.txt": strToU8(
+      "trip_id,stop_id,stop_sequence,arrival_time,departure_time\n" +
+        "A-1,S1,1,07:00:00,07:00:00\nB-1,S2,1,08:00:00,08:00:00\n",
+    ),
+    "shapes.txt": strToU8(
+      "shape_id,shape_pt_lat,shape_pt_lon,shape_pt_sequence\nSHA,3,101,1\nSHB,3,101,1\n",
+    ),
+    "frequencies.txt": strToU8(
+      "trip_id,start_time,end_time,headway_secs\nA-1,07:00:00,09:00:00,900\nB-1,07:00:00,09:00:00,900\n",
+    ),
+  });
+  const p = parseGtfsZip(zip, { keepRoute: (r) => r.route_short_name === "A1" });
+  assert.deepEqual(p.routes.map((r) => r.route_id), ["A"]);
+  assert.deepEqual(p.trips.map((t) => t.trip_id), ["A-1"]);
+  assert.deepEqual(p.stopTimes.map((st) => st.trip_id), ["A-1"]);
+  assert.deepEqual(p.shapes.map((s) => s.shape_id), ["SHA"]);
+  assert.deepEqual(p.frequencies.map((f) => f.trip_id), ["A-1"]);
+  // Stops stay whole; the bundle cut picks the ones it needs.
+  assert.equal(p.stops.length, 2);
 });

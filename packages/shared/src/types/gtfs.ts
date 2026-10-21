@@ -65,6 +65,19 @@ export interface GtfsStopTime {
   departure_time?: string;
 }
 
+/**
+ * A headway-based service window for a template trip (frequencies.txt).
+ * Rapid KL and Kuantan publish their timetables this way.
+ */
+export interface GtfsFrequency {
+  trip_id: string;
+  start_time: string;
+  end_time: string;
+  headway_secs: number;
+  /** 1 = instances start exactly on the headway grid; 0 = headway is approximate. */
+  exact_times?: 0 | 1;
+}
+
 export interface GtfsShapePoint {
   shape_id: string;
   shape_pt_lat: number;
@@ -106,6 +119,12 @@ export interface TrafficSignal {
 
 export interface T816Bundle {
   generatedAt: number;
+  /**
+   * data.gov.my bus category the bundle was cut from (`rapid-bus-kl`, …).
+   * Absent on legacy feeder-only bundles. Ids from every category but the
+   * feeder are namespaced (`kl:U4000`).
+   */
+  category?: string;
   routes: BundledRoute[];
   stops: GtfsStop[];
   trips: GtfsTrip[];

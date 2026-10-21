@@ -3,9 +3,9 @@
 // `now` is always passed in.
 
 import type { WeatherArea } from "./areas";
-import type { ForecastRow, RainNudge, WarningRow } from "./types";
+import type { ForecastRow, RainCondition, RainNudge, WarningRow } from "./types";
 
-export type { RainNudge } from "./types";
+export type { RainCondition, RainNudge } from "./types";
 
 const MYT_OFFSET_MS = 8 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
@@ -85,9 +85,17 @@ export interface ForecastPhrase {
   precip: Precip;
   /** True for "di satu dua tempat" (isolated). */
   isolated: boolean;
+  /** "Hujan lebat": heavy rain. */
+  heavy: boolean;
   /** Concise English, e.g. "Thunderstorms in places". */
   english: string;
+  /** How much of the area: a few spots, parts, most, all; null when unsaid. */
+  extent: Extent | null;
+  /** Where in the area, when MET says. */
+  locality: "inland" | "coast" | null;
 }
+
+export type Extent = "few" | "parts" | "most" | "all";
 
 function normalise(text: string): string {
   return text.toLowerCase().replace(/\s+/g, " ").trim();
@@ -104,7 +112,7 @@ export function translateForecast(text: string | null | undefined): ForecastPhra
   if (!text || !text.trim()) return null;
   const t = normalise(text);
 
-  if (t.includes("tiada hujan")) return { precip: "none", isolated: false, english: "No rain" };
+  if (t.includes("tiada hujan")) return { precip: "none", isolated: false, heavy: false, english: "No rain", extent: null, locality: null };
 
   const thunder = t.includes("ribut petir");
   const rain = !thunder && /\bhujan\b/.test(t);
@@ -113,7 +121,7 @@ export function translateForecast(text: string | null | undefined): ForecastPhra
     if (/\b(ber)?jerebu\b/.test(t)) english = "Hazy";
     else if (t.includes("mendung")) english = "Cloudy";
     else if (t.includes("cerah")) english = "Fair";
-    return { precip: "none", isolated: false, english };
+    return { precip: "none", isolated: false, heavy: false, english, extent: null, locality: null };
   }
 
   const heavy = rain && t.includes("lebat");
@@ -122,16 +130,29 @@ export function translateForecast(text: string | null | undefined): ForecastPhra
   const isolated = t.includes("satu dua tempat");
 
   let english: string;
-  if (isolated) english = `Isolated ${lower}`;
-  else if (t.includes("kebanyakan tempat")) english = `${base} in most places`;
-  else if (t.includes("beberapa tempat")) english = `${base} in places`;
-  else if (t.includes("menyeluruh")) english = `Widespread ${lower}`;
-  else english = base;
+  let extent: Extent | null;
+  if (isolated) {
+    english = `Isolated ${lower}`;
+    extent = "few";
+  } else if (t.includes("kebanyakan tempat")) {
+    english = `${base} in most places`;
+    extent = "most";
+  } else if (t.includes("beberapa tempat")) {
+    english = `${base} in places`;
+    extent = "parts";
+  } else if (t.includes("menyeluruh")) {
+    english = `Widespread ${lower}`;
+    extent = "all";
+  } else {
+    english = base;
+    extent = null;
+  }
 
-  if (t.includes("kawasan pantai")) english += " near the coast";
-  else if (t.includes("kawasan pedalaman")) english += " inland";
+  const locality = t.includes("kawasan pantai") ? "coast" : t.includes("kawasan pedalaman") ? "inland" : null;
+  if (locality === "coast") english += " near the coast";
+  else if (locality === "inland") english += " inland";
 
-  return { precip: thunder ? "thunderstorm" : "rain", isolated, english };
+  return { precip: thunder ? "thunderstorm" : "rain", isolated, heavy, english, extent, locality };
 }
 
 // ---------------------------------------------------------------------------
@@ -290,6 +311,25 @@ export function slotFor(nowMs: number): Slot {
   return { period: "night", date, endsAtMs: mytDateAtHour(addDays(date, 1), 5) };
 }
 
+const ADVICE = "Leave a few minutes early.";
+
+/** "in parts of Petaling", "across most of Selangor, mostly inland". */
+export function wherePhrase(place: string, extent: Extent | null, locality: "inland" | "coast" | null): string {
+  const base =
+    extent === "few"
+      ? `in a few spots around ${place}`
+      : extent === "parts"
+        ? `in parts of ${place}`
+        : extent === "most"
+          ? `across most of ${place}`
+          : extent === "all"
+            ? `across ${place}`
+            : `around ${place}`;
+  if (locality === "inland") return `${base}, mostly inland`;
+  if (locality === "coast") return `${base}, mostly near the coast`;
+  return base;
+}
+
 const PERIOD_PHRASE: Record<ForecastPeriod, string> = {
   morning: "this morning",
   afternoon: "this afternoon",
@@ -347,8 +387,9 @@ export function buildRainNudge(input: BuildRainNudgeInput): RainNudge | null {
     const until = best.validToMs !== null ? ` until ${formatUntil(best.validToMs, nowMs)}` : "";
     return {
       kind: "warning",
+      condition: best.kind,
       title: WARNING_TITLE[best.kind],
-      message: `${best.place}${until} — leave a few minutes early`,
+      message: `In effect for ${best.place}${until}. ${ADVICE}`,
       validUntilMs: best.validToMs,
       sourceLabel: "MET Malaysia",
     };
@@ -366,12 +407,18 @@ export function buildRainNudge(input: BuildRainNudgeInput): RainNudge | null {
   const phrase = translateForecast(periodText(row, slot.period));
   if (!phrase || phrase.precip === "none") return null;
 
-  const what = phrase.precip === "thunderstorm" ? "Thunderstorms" : "Rain";
+  const condition: RainCondition =
+    phrase.precip === "thunderstorm" ? "thunderstorm" : phrase.heavy ? "heavy-rain" : "rain";
+  const what = condition === "thunderstorm" ? "Thunderstorms" : condition === "heavy-rain" ? "Heavy rain" : "Rain";
   const likelihood = phrase.isolated ? "possible" : "likely";
+  // The title already names the weather; the message says where, then what
+  // to do, as plain sentences.
+  const where = wherePhrase(displayLocationName(row, area), phrase.extent, phrase.locality);
   return {
     kind: "forecast",
+    condition,
     title: `${what} ${likelihood} ${PERIOD_PHRASE[slot.period]}`,
-    message: `${displayLocationName(row, area)}: ${phrase.english.charAt(0).toLowerCase()}${phrase.english.slice(1)} — allow a few extra minutes`,
+    message: `Expected ${where}. ${ADVICE}`,
     validUntilMs: slot.endsAtMs,
     sourceLabel: "MET Malaysia",
   };

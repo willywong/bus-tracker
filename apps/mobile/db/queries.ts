@@ -1,4 +1,9 @@
-import { toMalaysiaParts } from "@bus-tracker/shared";
+import {
+  FREQUENCY_INSTANCE_SEPARATOR,
+  parseFrequencyInstanceId,
+  rawGtfsId,
+  toMalaysiaParts,
+} from "@bus-tracker/shared";
 import type { Db } from "./database";
 
 export interface StopRow {
@@ -182,6 +187,35 @@ export async function getTripToRouteMap(
   const out = new Map<string, string>();
   for (const row of rows) out.set(row.trip_id, row.code);
   return out;
+}
+
+/** A followed route as the realtime poller needs it. */
+export interface RealtimeRouteRow {
+  code: string;
+  route_id: string;
+  /** data.gov.my category; null on rows stored before categories existed (feeder). */
+  category: string | null;
+}
+
+export async function getRealtimeRoutes(
+  db: Db,
+  routeCodes: readonly string[],
+): Promise<RealtimeRouteRow[]> {
+  if (routeCodes.length === 0) return [];
+  const placeholders = routeCodes.map(() => "?").join(",");
+  return db.getAllAsync<RealtimeRouteRow>(
+    `SELECT code, route_id, category FROM routes WHERE code IN (${placeholders});`,
+    ...routeCodes,
+  );
+}
+
+/** Category a stored route was fetched from, or null if unknown. */
+export async function getRouteCategory(db: Db, routeCode: string): Promise<string | null> {
+  const row = await db.getFirstAsync<{ category: string | null }>(
+    "SELECT category FROM routes WHERE code = ? LIMIT 1;",
+    routeCode,
+  );
+  return row?.category ?? null;
 }
 
 export interface TrafficSignalRow {
@@ -570,6 +604,11 @@ export async function resolveStaticTripId(
     return { tripId: exact.trip_id, source: "exact" };
   }
 
+  // Headway-based feeds (Rapid KL, Kuantan): the live trip_id names the
+  // frequency template, which we store expanded as `<template>@HH:MM`.
+  const instance = await resolveFrequencyInstance(db, liveTripId);
+  if (instance) return { tripId: instance, source: "exact" };
+
   // Tier 2: strip leading YYMMDD if present and look for any static trip on
   // this route whose trip_id ends with the same suffix.
   const suffix = stripTripIdDatePrefix(liveTripId);
@@ -645,6 +684,12 @@ export async function resolveTripStops(
     return { stops: exact, source: "exact", resolvedTripId: liveTripId };
   }
 
+  const instance = await resolveFrequencyInstance(db, liveTripId);
+  if (instance) {
+    const stops = await getTripStopsWithNames(db, instance);
+    if (stops.length > 0) return { stops, source: "exact", resolvedTripId: instance };
+  }
+
   // Tier 2: strip leading YYMMDD if present and look for any static trip
   // (constrained to this route) whose trip_id ends with the same suffix.
   const suffix = stripTripIdDatePrefix(liveTripId);
@@ -711,10 +756,79 @@ export async function resolveTripStops(
   return { stops: [], source: "exact", resolvedTripId: null };
 }
 
+/**
+ * Maps a live trip on a headway-based route (Rapid KL, Kuantan) to one of the
+ * stored runs of its template. The realtime layer names live trips
+ * `<template>@<run start>` from GTFS-RT `start_time`; Prasarana's runs rarely
+ * start on the published grid, so the stored run nearest that start wins.
+ * Without a start time, the run that most recently left its first stop is
+ * used. All runs share the template's stops; only their times differ. Null
+ * when `liveTripId` isn't a headway trip.
+ */
+export async function resolveFrequencyInstance(
+  db: Db,
+  liveTripId: string,
+  now: Date = new Date(),
+): Promise<string | null> {
+  const parsed = parseFrequencyInstanceId(liveTripId);
+  const template = parsed?.templateId ?? liveTripId;
+  const lo = template + FREQUENCY_INSTANCE_SEPARATOR;
+  // Every instance id sorts between "<template>@" and "<template>A" ('A'
+  // follows '@'), so this is a primary-key range scan.
+  const hi = template + String.fromCharCode(FREQUENCY_INSTANCE_SEPARATOR.charCodeAt(0) + 1);
+  const rows = await db.getAllAsync<{ trip_id: string; dep: number | null }>(
+    `SELECT t.trip_id AS trip_id, MIN(st.departure_seconds) AS dep
+       FROM trips t
+       JOIN stop_times st ON st.trip_id = t.trip_id
+      WHERE t.trip_id >= ? AND t.trip_id < ?
+      GROUP BY t.trip_id
+      ORDER BY dep ASC;`,
+    lo,
+    hi,
+  );
+  return pickFrequencyInstance(rows, parsed?.startSeconds ?? null, toMalaysiaParts(now).secSinceMidnight);
+}
+
+/**
+ * Chooses a run of a headway template. `rows` are the runs with their first
+ * departure (seconds since service-day midnight, may exceed 86400), sorted
+ * ascending. Exported for tests.
+ */
+export function pickFrequencyInstance(
+  rows: readonly { trip_id: string; dep: number | null }[],
+  startSeconds: number | null,
+  nowSec: number,
+): string | null {
+  const timed = rows.filter((r): r is { trip_id: string; dep: number } => r.dep != null);
+  if (timed.length === 0) return rows[0]?.trip_id ?? null;
+  // A start or clock just after midnight may belong to yesterday's service
+  // day, whose late runs are stored as 24:xx.
+  const distance = (dep: number, t: number) => Math.min(Math.abs(dep - t), Math.abs(dep - (t + 86400)));
+  if (startSeconds != null) {
+    let best = timed[0];
+    for (const r of timed) {
+      if (distance(r.dep, startSeconds) < distance(best.dep, startSeconds)) best = r;
+    }
+    return best.trip_id;
+  }
+  let best: { trip_id: string; dep: number } | null = null;
+  for (const r of timed) {
+    if (r.dep <= nowSec) best = r;
+  }
+  if (!best) {
+    for (const r of timed) {
+      if (r.dep >= 86400 && r.dep <= nowSec + 86400) best = r;
+    }
+  }
+  return (best ?? timed[0]).trip_id;
+}
+
 /** Returns the stable suffix of a Prasarana-style trip_id with a leading
  *  6-digit date (YYMMDD), or null when the input doesn't match that shape. */
-function stripTripIdDatePrefix(tripId: string): string | null {
-  const m = /^\d{6}(.+)$/.exec(tripId);
+export function stripTripIdDatePrefix(tripId: string): string | null {
+  // Penang trip ids reach us namespaced (`pg:261016010252S5`); the date
+  // prefix sits after the namespace. The suffix still matches stored ids.
+  const m = /^\d{6}(.+)$/.exec(rawGtfsId(tripId));
   return m ? m[1] : null;
 }
 
@@ -885,4 +999,64 @@ export async function getStopById(
     "SELECT stop_id, stop_name, stop_lat, stop_lon, wheelchair_boarding FROM stops WHERE stop_id = ? LIMIT 1;",
     stopId,
   );
+}
+
+/** The stops with these ids, in no particular order; unknown ids are skipped. */
+export async function getStopsByIds(
+  db: Db,
+  stopIds: readonly string[],
+): Promise<StopRow[]> {
+  const ids = [...new Set(stopIds)];
+  if (ids.length === 0) return [];
+  return db.getAllAsync<StopRow>(
+    `SELECT stop_id, stop_name, stop_lat, stop_lon, wheelchair_boarding FROM stops
+      WHERE stop_id IN (${ids.map(() => "?").join(",")});`,
+    ...ids,
+  );
+}
+
+/** A route that calls at a stop: its code and long name. */
+export interface StopRouteRow {
+  code: string;
+  longName: string | null;
+}
+
+/**
+ * Every route in the bundle that calls at a stop, by route code. Used by the
+ * stop detail sheet ("Also stops here").
+ */
+export async function getRoutesServingStop(
+  db: Db,
+  stopId: string,
+): Promise<StopRouteRow[]> {
+  return db.getAllAsync<StopRouteRow>(
+    `SELECT DISTINCT r.code AS code, r.long_name AS longName
+       FROM stop_times st
+       JOIN trips t ON t.trip_id = st.trip_id
+       JOIN routes r ON r.route_id = t.route_id
+      WHERE st.stop_id = ?
+      ORDER BY r.code;`,
+    stopId,
+  );
+}
+
+/**
+ * Headsign of a live trip ("Stesen MRT Phileo Damansara"), resolving the
+ * live trip id to a static one first; falls back to the route's usual
+ * headsign. Null when the bundle has none.
+ */
+export async function getLiveTripHeadsign(
+  db: Db,
+  liveTripId: string,
+  routeCode: string,
+): Promise<string | null> {
+  const resolved = await resolveStaticTripId(db, liveTripId, routeCode);
+  if (resolved) {
+    const row = await db.getFirstAsync<{ headsign: string | null }>(
+      "SELECT trip_headsign AS headsign FROM trips WHERE trip_id = ? LIMIT 1;",
+      resolved.tripId,
+    );
+    if (row?.headsign && row.headsign.trim() !== '') return row.headsign.trim();
+  }
+  return getPrimaryTripHeadsign(db, routeCode);
 }

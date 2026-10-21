@@ -6,7 +6,7 @@ import { areaForLocation } from "./areas";
 import { buildRainNudge } from "./nudge";
 import type { ForecastRow, RainNudge } from "./types";
 
-export type { RainNudge } from "./types";
+export type { RainCondition, RainNudge } from "./types";
 export { areaForLocation, type WeatherArea } from "./areas";
 export { buildRainNudge, translateForecast } from "./nudge";
 

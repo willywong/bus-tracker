@@ -1,9 +1,15 @@
 import { Button, Host, Text as SwiftText } from '@expo/ui/swift-ui';
-import { buttonBorderShape, buttonStyle, controlSize, font, tint } from '@expo/ui/swift-ui/modifiers';
+import {
+  buttonBorderShape,
+  buttonStyle,
+  controlSize,
+  font,
+  tint,
+} from '@expo/ui/swift-ui/modifiers';
 import { StyleSheet, Text, useColorScheme, View } from 'react-native';
 
 import { Hero, SourceMark } from '@/components/trip/Hero';
-import type { HeroValue, TripModel } from '@/components/trip/model';
+import { mins, type HeroValue, type TripModel } from '@/components/trip/model';
 import { Hairline, KeyValueRow, ToggleRow } from '@/components/trip/Rows';
 import type { RideContextValue } from '@/state/RideContext';
 import { color, hex, pick, space, type } from '@/theme/design';
@@ -74,7 +80,7 @@ export function RideBody({ ride, base }: { ride: RideContextValue; base: TripMod
         ) : null}
         {ride.minutesLeft != null && p?.phase === 'riding' ? (
           <>
-            <KeyValueRow label="Time left" value={`about ${ride.minutesLeft} min`} />
+            <KeyValueRow label="Time left" value={`about ${mins(ride.minutesLeft)}`} />
             <Hairline />
           </>
         ) : null}

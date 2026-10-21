@@ -1,5 +1,4 @@
 import {
-  Button,
   Form,
   Host,
   HStack,
@@ -11,16 +10,19 @@ import {
   Text,
 } from '@expo/ui/swift-ui';
 import {
+  animation,
+  Animation,
+  environment,
   foregroundStyle,
   monospacedDigit,
   padding,
-  pickerStyle,
-  scrollContentBackground,
+  frame,
   tag,
   tint,
 } from '@expo/ui/swift-ui/modifiers';
 import Constants from 'expo-constants';
 import { Stack, useRouter } from 'expo-router';
+import { useState } from 'react';
 import { useColorScheme } from 'react-native';
 
 import { FavoritesSection } from '@/components/settings/FavoritesSection';
@@ -33,8 +35,9 @@ import {
   type MapType,
 } from '@/hooks/useSettings';
 import { useTrip } from '@/state/TripContext';
-import { color, hex, pick } from '@/theme/design';
+import { hex, pick } from '@/theme/design';
 import { haptics } from '@/utils/haptics';
+import { mins } from '@/components/trip/model';
 
 const clockFormatLabel: Record<ClockFormat, string> = {
   '24h': '24-hour',
@@ -55,6 +58,7 @@ export default function SettingsScreen() {
   const settings = useSettings();
   const trip = useTrip();
   const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
+  const [editing, setEditing] = useState(false);
 
   if (!settings.ready) return null;
 
@@ -70,27 +74,40 @@ export default function SettingsScreen() {
         </Stack.Toolbar.Button>
       </Stack.Toolbar>
       <Host style={{ flex: 1 }} useViewportSizeMeasurement>
-        <Form modifiers={[scrollContentBackground('hidden')]}>
+        <Form
+          modifiers={[
+            tint(pick(hex.ink, scheme)),
+            // Edit (in Your routes) shows the system ⊖ and ≡ on each route.
+            environment('editMode', editing ? 'active' : 'inactive'),
+            animation(Animation.default, editing ? 1 : 0),
+          ]}
+        >
           <FavoritesSection
             onRequestChangeStop={(code) =>
-              router.push({ pathname: '/add-route', params: { code, mode: 'change' } })
+              router.push({
+                pathname: '/add-route',
+                params: { code, mode: 'change' },
+              })
             }
+            onAddRoute={() => router.push('/add-route')}
+            editing={editing}
+            onToggleEditing={() => setEditing((e) => !e)}
           />
-          <Section>
-            <Button
-              systemImage="plus"
-              label="Add Route"
-              onPress={() => router.push('/add-route')}
-              modifiers={[tint(pick(hex.ink, scheme))]}
-            />
-          </Section>
 
           <Section
             title="Walking"
-            footer={<Text>How long it takes you to walk to your stop. “Leave in…” counts down from this.</Text>}
+            footer={
+              <Text>
+                How long it takes you to walk to your stop. “Leave in…” counts down from this.
+              </Text>
+            }
           >
             <HStack spacing={12} modifiers={[padding({ vertical: 6 })]}>
-              <Image systemName="figure.walk" size={17} color={color.secondaryLabel} />
+              <Image
+                systemName="figure.walk"
+                size={17}
+                modifiers={[foregroundStyle({ type: 'hierarchical', style: 'secondary' })]}
+              />
               <Slider
                 value={settings.walkMinutes}
                 min={1}
@@ -98,7 +115,9 @@ export default function SettingsScreen() {
                 step={1}
                 onValueChange={(v) => settings.setWalkMinutes(Math.round(v))}
               />
-              <Text modifiers={[monospacedDigit()]}>{`${settings.walkMinutes} min`}</Text>
+              <Text modifiers={[monospacedDigit(), frame({ minWidth: 64, alignment: 'trailing' })]}>
+                {mins(settings.walkMinutes)}
+              </Text>
             </HStack>
           </Section>
 
@@ -125,7 +144,6 @@ export default function SettingsScreen() {
             <Picker
               label="Map"
               selection={mapIndex}
-              modifiers={[pickerStyle('segmented')]}
               onSelectionChange={(i) => {
                 const choice = MAP_TYPES[Number(i)];
                 if (choice) {

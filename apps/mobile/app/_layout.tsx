@@ -1,7 +1,8 @@
 import { DarkTheme, DefaultTheme, ThemeProvider, Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
-import { useColorScheme } from 'react-native';
+import { useColorScheme, useWindowDimensions } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import 'react-native-reanimated';
 import '../global.css';
 
@@ -12,7 +13,7 @@ import { SettingsProvider, useSettings } from '@/hooks/useSettings';
 import { StaticGtfsProvider } from '@/hooks/useStaticGtfs';
 import { RideProvider } from '@/state/RideContext';
 import { TripProvider } from '@/state/TripContext';
-import { color, SHEET_DETENTS, SHEET_INITIAL_DETENT } from '@/theme/design';
+import { color, SHEET_INITIAL_DETENT, sheetDetents } from '@/theme/design';
 import { configureNotifications } from '@/services/reminders/notifications';
 // Background tasks must be defined at module scope so iOS can run them on a
 // headless launch (commute re-plan, arrival geofence).
@@ -59,6 +60,9 @@ export default function RootLayout() {
 function AppStack() {
   const colorScheme = useColorScheme();
   const { ready } = useSettings();
+  const { height: windowHeight } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const detents = sheetDetents(windowHeight, insets.top);
   useQuickActions();
 
   useEffect(() => {
@@ -76,7 +80,7 @@ function AppStack() {
           name="trip"
           options={{
             presentation: 'formSheet',
-            sheetAllowedDetents: [...SHEET_DETENTS],
+            sheetAllowedDetents: detents,
             sheetInitialDetentIndex: SHEET_INITIAL_DETENT,
             // The map stays interactive behind the peek and glance detents.
             sheetLargestUndimmedDetentIndex: 1,
@@ -108,6 +112,40 @@ function AppStack() {
             headerShown: true,
             headerTransparent: true,
             title: 'Where are you getting off?',
+            contentStyle: { backgroundColor: SHEET_BACKGROUND },
+          }}
+        />
+        <Stack.Screen
+          name="stops"
+          options={{
+            presentation: 'formSheet',
+            sheetAllowedDetents: [0.6, 1],
+            sheetGrabberVisible: true,
+            headerShown: true,
+            headerTransparent: true,
+            contentStyle: { backgroundColor: SHEET_BACKGROUND },
+          }}
+        />
+        <Stack.Screen
+          name="warnings"
+          options={{
+            presentation: 'formSheet',
+            sheetAllowedDetents: 'fitToContents',
+            sheetGrabberVisible: true,
+            headerShown: true,
+            headerTransparent: true,
+            title: 'Heads-up',
+            contentStyle: { backgroundColor: SHEET_BACKGROUND },
+          }}
+        />
+        <Stack.Screen
+          name="departure"
+          options={{
+            presentation: 'formSheet',
+            sheetAllowedDetents: 'fitToContents',
+            sheetGrabberVisible: true,
+            headerShown: true,
+            headerTransparent: true,
             contentStyle: { backgroundColor: SHEET_BACKGROUND },
           }}
         />

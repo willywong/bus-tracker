@@ -24,7 +24,7 @@ export function openDb(): Promise<Db> {
   return dbPromise;
 }
 
-async function migrate(db: Db): Promise<void> {
+export async function migrate(db: Db): Promise<void> {
   const row = await db.getFirstAsync<{ value: string }>(
     "SELECT value FROM meta WHERE key = ?;",
     META_KEYS.schemaVersion,
@@ -72,6 +72,26 @@ async function migrate(db: Db): Promise<void> {
     await addColumnIfMissing(db, "stops", "wheelchair_boarding", "INTEGER");
     await addColumnIfMissing(db, "trips", "trip_headsign", "TEXT");
     await db.runAsync("DELETE FROM meta WHERE key = ?;", META_KEYS.fetchedAt);
+  }
+
+  // v5 -> v6: routes from every Prasarana bus category, not just the MRT
+  // feeder. Each route records the category it came from; existing rows are
+  // all feeder rows. Refetch so they're re-cut by the category-aware filter.
+  if (current < 6) {
+    await addColumnIfMissing(db, "routes", "category", "TEXT");
+    await db.runAsync(
+      "UPDATE routes SET category = 'rapid-bus-mrtfeeder' WHERE category IS NULL;",
+    );
+    await db.runAsync("DELETE FROM meta WHERE key = ?;", META_KEYS.fetchedAt);
+  }
+
+  // v6 -> v7: removing a route used to leave its stops behind. deleteRouteRows
+  // now prunes them; this clears the ones left earlier. Nothing else changes,
+  // so the cached bundle stays valid.
+  if (current < 7) {
+    await db.runAsync(
+      "DELETE FROM stops WHERE NOT EXISTS (SELECT 1 FROM stop_times st WHERE st.stop_id = stops.stop_id);",
+    );
   }
 }
 

@@ -1,4 +1,4 @@
-import type { LatLng } from "./route.js";
+import { snapToRoute, type LatLng } from "./route.js";
 
 export interface ScheduledStopTime {
   stopId: string;
@@ -14,7 +14,7 @@ export interface InterpolateScheduledPositionArgs {
   stopTimes: readonly ScheduledStopTime[];
   /** Lookup from `stop_id` to LatLng. Stops missing from the map yield null. */
   stopsById: ReadonlyMap<string, LatLng>;
-  /** Unused — kept for call-site compatibility. */
+  /** The route line. The ghost is drawn on it, level with its origin stop. */
   polyline?: readonly LatLng[];
   /** Seconds since the trip's service-day midnight. */
   nowSec: number;
@@ -28,6 +28,9 @@ export interface InterpolateScheduledPositionArgs {
  * stop until either a live GTFS-RT vehicle claims the trip (in which case
  * the map hides the ghost entirely) or the trip's scheduled terminus passes
  * (in which case we return null so the next trip's ghost can take over).
+ *
+ * Stop pins sit on the kerb or in a lay-by, not in the lane, so the origin
+ * stop is projected onto the route line when one is given and close by.
  */
 export function interpolateScheduledPosition(
   args: InterpolateScheduledPositionArgs,
@@ -43,5 +46,7 @@ export function interpolateScheduledPosition(
 
   if (nowSec >= lastTime) return null;
 
-  return stopsById.get(first.stopId) ?? null;
+  const origin = stopsById.get(first.stopId);
+  if (!origin) return null;
+  return args.polyline ? snapToRoute(origin, args.polyline).point : origin;
 }

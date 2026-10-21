@@ -4,7 +4,7 @@ import { Platform } from 'react-native';
 
 import { formatStopName } from '@/components/map/format';
 import { openDb } from '@/db/database';
-import { getStops } from '@/db/queries';
+import { getStopsByIds } from '@/db/queries';
 import { useSettings } from '@/hooks/useSettings';
 
 type TrackAction = QuickActions.Action & { params: { code: string } };
@@ -43,7 +43,8 @@ export function useQuickActions(): void {
       const names = new Map<string, string>();
       try {
         const db = await openDb();
-        for (const s of await getStops(db)) names.set(s.stop_id, formatStopName(s.stop_name));
+        const ids = favoritedRoutes.slice(0, MAX_ACTIONS).flatMap((code) => preferredStopByRoute[code] ?? []);
+        for (const s of await getStopsByIds(db, ids)) names.set(s.stop_id, formatStopName(s.stop_name));
       } catch {
         // Stop names are a nicety; the route code alone still works.
       }

@@ -1,12 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 
-import {
-  computeScheduleDelay,
-  type EtaSource,
-  type ScheduleDelay,
-} from '@bus-tracker/shared';
+import { computeScheduleDelay, type EtaSource, type ScheduleDelay } from '@bus-tracker/shared';
 import type { ScheduledDeparture } from '@/db/queries';
 import { devNow } from '@/utils/devClock';
+import { mins } from '@/components/trip/model';
 
 export interface ApproachingBus {
   minutesToStop: number | null;
@@ -68,8 +65,7 @@ export function resolveEta(args: ResolveEtaArgs): ResolvedEta {
       : null;
   const scheduledEpochMs = nextScheduled?.departureEpochMs ?? null;
 
-  const liveUsable =
-    live?.minutesToStop != null && !isLiveStale ? live : null;
+  const liveUsable = live?.minutesToStop != null && !isLiveStale ? live : null;
 
   if (liveUsable) {
     const delay =
@@ -112,10 +108,10 @@ export function resolveEta(args: ResolveEtaArgs): ResolvedEta {
 
 export function formatCountdownShort(minutesFromNow: number): string {
   if (minutesFromNow <= 1) return 'now';
-  if (minutesFromNow < 60) return `in ${minutesFromNow} min`;
+  if (minutesFromNow < 60) return `in ${mins(minutesFromNow)}`;
   const hours = Math.floor(minutesFromNow / 60);
-  const mins = minutesFromNow % 60;
-  if (hours < 24) return mins === 0 ? `in ${hours}h` : `in ${hours}h ${mins}m`;
+  const rest = minutesFromNow % 60;
+  if (hours < 24) return rest === 0 ? `in ${hours}h` : `in ${hours}h ${rest}m`;
   return '—';
 }
 
@@ -155,8 +151,8 @@ export function formatDeltaMin(delay: ScheduleDelay | null): string | null {
   if (!delay) return null;
   const m = Math.round(delay.delayMinutes);
   if (delay.onTimeWindow === 'on-time') return 'on time';
-  if (m > 0) return `+${m} min`;
-  return `${Math.abs(m)} min early`;
+  if (m > 0) return `+${mins(m)}`;
+  return `${mins(Math.abs(m))} early`;
 }
 
 export type DelayTone = 'on-time' | 'late' | 'early';
@@ -174,9 +170,9 @@ export function formatDelayLabel(
     return { text: 'On schedule', tone: 'on-time' };
   }
   if (delay.onTimeWindow === 'late') {
-    return { text: `${m} min late`, tone: 'late' };
+    return { text: `${mins(m)} late`, tone: 'late' };
   }
-  return { text: `${m} min early`, tone: 'early' };
+  return { text: `${mins(m)} early`, tone: 'early' };
 }
 
 /**
@@ -207,7 +203,7 @@ export function formatVehicleObservedAge(
   }
   const m = Math.floor(age / 60_000);
   if (m < 2) return '1 min ago';
-  return `${m} min ago`;
+  return `${mins(m)} ago`;
 }
 
 export const STALE_TICKER_MS = 90_000;
@@ -260,7 +256,7 @@ export function formatLastUpdatedShort(ageMs: number): string {
   const minutes = Math.floor(ageMs / 60_000);
   if (minutes < 1) return 'Just now';
   if (minutes < 2) return '1 min ago';
-  return `${minutes} min ago`;
+  return `${mins(minutes)} ago`;
 }
 
 export function useLastUpdatedLabel(lastUpdated: number | null): {
@@ -293,9 +289,7 @@ export function useLastUpdatedLabel(lastUpdated: number | null): {
  * `nextRefreshAt` is set. Returns null when the store isn't polling (no
  * subscriber or app backgrounded).
  */
-export function useRefreshCountdownSeconds(
-  nextRefreshAt: number | null,
-): number | null {
+export function useRefreshCountdownSeconds(nextRefreshAt: number | null): number | null {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (nextRefreshAt == null) return;
@@ -309,12 +303,7 @@ export function useRefreshCountdownSeconds(
   return Math.max(0, Math.min(60, secs));
 }
 
-export type HeroState =
-  | 'waiting'
-  | 'relaxed'
-  | 'leaveNow'
-  | 'walking'
-  | 'hurry';
+export type HeroState = 'waiting' | 'relaxed' | 'leaveNow' | 'walking' | 'hurry';
 
 export function resolveHeroState(args: {
   isWalking: boolean;
@@ -394,10 +383,7 @@ export function getArrivalStatus(input: ArrivalStatusInput): ArrivalStatus {
   // Arriving: visibly close by distance OR time. The OR-clause catches the
   // stuck-in-traffic case (close in minutes but further in meters) and the
   // missing-forwardMeters fallback.
-  if (
-    (meters != null && meters < ARRIVING_METERS) ||
-    (mins != null && mins <= ARRIVING_MINUTES)
-  ) {
+  if ((meters != null && meters < ARRIVING_METERS) || (mins != null && mins <= ARRIVING_MINUTES)) {
     return 'arriving';
   }
 
@@ -433,22 +419,21 @@ export function useArrivalStatus(input: {
     mode: input.mode,
   });
 
-  const [arrivedLatch, setArrivedLatch] = useState<
-    { vehicleId: string | null; since: number } | null
-  >(null);
-  const [passedLatch, setPassedLatch] = useState<
-    { vehicleId: string; since: number } | null
-  >(null);
+  const [arrivedLatch, setArrivedLatch] = useState<{
+    vehicleId: string | null;
+    since: number;
+  } | null>(null);
+  const [passedLatch, setPassedLatch] = useState<{
+    vehicleId: string;
+    since: number;
+  } | null>(null);
 
   // Track the last primary vehicle that was arriving or arrived — it's the
   // candidate that should flip to 'passed' if it rolls off or enters the
   // passed set.
   const trackedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (
-      input.vehicleId &&
-      (raw === 'arriving' || raw === 'arrived')
-    ) {
+    if (input.vehicleId && (raw === 'arriving' || raw === 'arrived')) {
       trackedRef.current = input.vehicleId;
     }
   }, [input.vehicleId, raw]);
@@ -466,9 +451,7 @@ export function useArrivalStatus(input: {
   // Clear the arrived latch when the tracked vehicle rolls over to a different
   // trip — we may start a passed latch instead (see below).
   useEffect(() => {
-    setArrivedLatch((prev) =>
-      prev && prev.vehicleId !== input.vehicleId ? null : prev,
-    );
+    setArrivedLatch((prev) => (prev && prev.vehicleId !== input.vehicleId ? null : prev));
   }, [input.vehicleId]);
 
   // Expire the arrived latch after ARRIVED_LATCH_MS.
@@ -507,9 +490,7 @@ export function useArrivalStatus(input: {
       return;
     }
     setPassedLatch((prev) =>
-      prev && prev.vehicleId === tracked
-        ? prev
-        : { vehicleId: tracked, since: devNow() },
+      prev && prev.vehicleId === tracked ? prev : { vehicleId: tracked, since: devNow() },
     );
     trackedRef.current = null;
   }, [input.vehicleId, input.passedVehicleIds, input.isStale]);

@@ -12,11 +12,10 @@ const MINUTE_MS = 60_000;
 
 /** iOS keeps at most 64 pending local notifications per app; extras are silently dropped. */
 export const IOS_MAX_PENDING_NOTIFICATIONS = 64;
-/** Slots kept free for one-off alerts (leave-now, last bus, get-off) and anything else. */
+/** Slots kept free for one-off alerts (leave-now, picked departure, last bus, get-off). */
 export const RESERVED_NOTIFICATION_SLOTS = 4;
 /** Default cap on commute reminders scheduled at once. */
-export const COMMUTE_MAX_PENDING =
-  IOS_MAX_PENDING_NOTIFICATIONS - RESERVED_NOTIFICATION_SLOTS;
+export const COMMUTE_MAX_PENDING = IOS_MAX_PENDING_NOTIFICATIONS - RESERVED_NOTIFICATION_SLOTS;
 
 /** Identifier prefix for every scheduled commute reminder. */
 export const COMMUTE_ID_PREFIX = 'commute-';
@@ -165,26 +164,14 @@ function nonNegative(n: number): number {
  * that). Results are sorted by fire time and capped at `maxReminders`.
  */
 export function planCommuteReminders(input: PlanCommuteInput): PlannedReminder[] {
-  const {
-    rules,
-    departuresByDay,
-    walkMinutes,
-    bufferMinutes,
-    routeCode,
-    stopName,
-  } = input;
+  const { rules, departuresByDay, walkMinutes, bufferMinutes, routeCode, stopName } = input;
   if (!rules.enabled) return [];
 
   const nowMs = toMs(input.now);
   const days = Math.max(0, Math.floor(input.days ?? 7));
-  const maxReminders = Math.max(
-    0,
-    Math.floor(input.maxReminders ?? COMMUTE_MAX_PENDING),
-  );
+  const maxReminders = Math.max(0, Math.floor(input.maxReminders ?? COMMUTE_MAX_PENDING));
   const fmt = input.formatClock ?? ((ms: number) => formatMalaysiaClock(ms));
-  const weekdays = new Set(
-    rules.weekdays.filter((d) => Number.isInteger(d) && d >= 0 && d <= 6),
-  );
+  const weekdays = new Set(rules.weekdays.filter((d) => Number.isInteger(d) && d >= 0 && d <= 6));
   if (weekdays.size === 0 || days === 0 || maxReminders === 0) return [];
 
   const target = Math.min(1439, Math.max(0, Math.floor(rules.targetMinuteOfDay)));
@@ -211,7 +198,7 @@ export function planCommuteReminders(input: PlanCommuteInput): PlannedReminder[]
 
     const route = routeCode ? ` for ${routeCode}` : '';
     const at = stopName ? ` at ${stopName}` : '';
-    const walkCopy = walk > 0 ? ` · ${walk} min walk` : '';
+    const walkCopy = walk > 0 ? ` · ${walk}-min walk` : '';
     out.push({
       id: commuteReminderId(day.date),
       date: day.date,

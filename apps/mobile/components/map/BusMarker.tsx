@@ -1,4 +1,5 @@
 import { SymbolView } from 'expo-symbols';
+import { memo, useCallback } from 'react';
 import { Animated, StyleSheet, View } from 'react-native';
 import {
   AnimatedRegion,
@@ -17,9 +18,17 @@ const MarkerAnimated = RawMarkerAnimated as unknown as Animated.AnimatedComponen
 
 // Marker views are hosted natively by MapKit; DynamicColorIOS / PlatformColor
 // don't survive that bridge, so colours arrive as resolved hex strings.
-// Every marker is a fixed 48pt square with its glyph at the exact centre:
+// Every marker is a fixed square with its glyph at the exact centre:
 // Apple Maps ignores `anchor` and re-centres views whose size changes.
-const FRAME = 48;
+// The frame is `collapsable={false}`: react-native-maps sizes the marker from
+// its first native subview, and a flattened frame would leave only the disc,
+// pushing the marker off its coordinate by the disc's inset.
+const FRAME = 56;
+const WEDGE_W = 10;
+const WEDGE_H = 7;
+/** Gap between the disc's edge and its heading wedge. */
+const WEDGE_GAP = 1.5;
+const HALO = 50;
 
 interface BusMarkerProps {
   /** Animated region that glides between position fixes. */
@@ -27,21 +36,26 @@ interface BusMarkerProps {
   ink: string;
   paper: string;
   live: string;
-  /** The bus heading to your stop — larger, live dot, always on top. */
+  /** The bus heading to your stop — larger, solid, live dot, always on top. */
   primary: boolean;
   /** Already past your stop — faded so it doesn't read as "your bus". */
   passed: boolean;
   bearing?: number | null;
   accessibilityLabel: string;
-  onPress?: () => void;
+  /** Open in the sheet: solid, with a halo so it stands out from the rest. */
+  selected?: boolean;
+  vehicleId: string;
+  /** Stable across renders, so an unchanged marker skips re-rendering. */
+  onSelect?: (vehicleId: string) => void;
 }
 
 /**
- * A live bus in Calm Mono: a paper disc with an ink ring and a direction
- * chevron rotated to the bus's bearing. Your bus gets the green live dot
- * (the app's only colour); other buses are smaller and lighter.
+ * A live bus in Calm Mono: a disc with an upright bus glyph and a heading
+ * wedge just outside it, rotated to the bus's bearing (the glyph never
+ * turns, so it always reads as a bus). Your bus is solid ink with the green
+ * live dot (the app's only colour); other buses are smaller paper discs.
  */
-export function BusMarker({
+export const BusMarker = memo(function BusMarker({
   region,
   ink,
   paper,
@@ -50,9 +64,15 @@ export function BusMarker({
   passed,
   bearing,
   accessibilityLabel,
-  onPress,
+  selected = false,
+  vehicleId,
+  onSelect,
 }: BusMarkerProps) {
-  const size = primary ? 34 : 28;
+  const onPress = useCallback(() => onSelect?.(vehicleId), [onSelect, vehicleId]);
+  const solid = primary || selected;
+  const size = solid ? 34 : 28;
+  const fill = solid ? ink : paper;
+  const glyph = solid ? paper : ink;
   const hasHeading = typeof bearing === 'number' && Number.isFinite(bearing);
   const inset = (FRAME - size) / 2;
 
@@ -62,12 +82,26 @@ export function BusMarker({
         region as unknown as React.ComponentProps<typeof MarkerAnimated>['coordinate']
       }
       flat
-      zIndex={primary ? 3 : 2}
+      zIndex={selected ? 4 : primary ? 3 : 2}
       displayPriority="required"
       onPress={onPress}
       accessibilityLabel={accessibilityLabel}
     >
-      <View style={[styles.frame, { opacity: passed ? 0.4 : primary ? 1 : 0.7 }]}>
+      <View
+        style={[styles.frame, { opacity: solid ? 1 : passed ? 0.45 : 0.85 }]}
+        collapsable={false}
+      >
+        {selected ? <View style={[styles.halo, { backgroundColor: ink }]} /> : null}
+        {hasHeading ? (
+          <View style={[styles.frameFill, { transform: [{ rotate: `${bearing}deg` }] }]}>
+            <View
+              style={[
+                styles.wedge,
+                { top: inset - WEDGE_GAP - WEDGE_H, borderBottomColor: ink },
+              ]}
+            />
+          </View>
+        ) : null}
         <View
           style={[
             styles.disc,
@@ -77,37 +111,26 @@ export function BusMarker({
               width: size,
               height: size,
               borderRadius: size / 2,
-              borderColor: ink,
-              borderWidth: primary ? 2 : 1.5,
-              backgroundColor: paper,
+              borderColor: solid ? paper : ink,
+              borderWidth: solid ? 2.5 : 2,
+              backgroundColor: fill,
             },
           ]}
         >
-          {hasHeading ? (
-            <View style={{ transform: [{ rotate: `${bearing}deg` }] }}>
-              <SymbolView
-                name="location.north.fill"
-                size={primary ? 15 : 12}
-                tintColor={ink}
-                resizeMode="scaleAspectFit"
-              />
-            </View>
-          ) : (
-            <SymbolView
-              name="bus.fill"
-              size={primary ? 14 : 11}
-              tintColor={ink}
-              resizeMode="scaleAspectFit"
-            />
-          )}
+          <SymbolView
+            name="bus.fill"
+            size={solid ? 16 : 13}
+            tintColor={glyph}
+            resizeMode="scaleAspectFit"
+          />
         </View>
         {primary && !passed ? (
           <View
             style={[
               styles.liveDot,
               {
-                left: inset + size - 9,
-                top: inset - 3,
+                left: inset + size - 10,
+                top: inset - 2,
                 backgroundColor: live,
                 borderColor: paper,
               },
@@ -117,7 +140,7 @@ export function BusMarker({
       </View>
     </MarkerAnimated>
   );
-}
+});
 
 interface GhostBusMarkerProps {
   coordinate: { latitude: number; longitude: number };
@@ -138,7 +161,7 @@ export function GhostBusMarker({ coordinate, color, background }: GhostBusMarker
       zIndex={1}
       accessibilityLabel="Scheduled bus position, not live"
     >
-      <View style={styles.frame}>
+      <View style={styles.frame} collapsable={false}>
         <View style={[styles.ghost, { borderColor: color, backgroundColor: background }]}>
           <View style={[styles.ghostDot, { backgroundColor: color }]} />
         </View>
@@ -154,6 +177,34 @@ const styles = StyleSheet.create({
     width: FRAME,
     height: FRAME,
   },
+  frameFill: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    width: FRAME,
+    height: FRAME,
+    alignItems: 'center',
+  },
+  // A triangle from borders: transparent sides, ink base.
+  wedge: {
+    position: 'absolute',
+    width: 0,
+    height: 0,
+    borderLeftWidth: WEDGE_W / 2,
+    borderRightWidth: WEDGE_W / 2,
+    borderBottomWidth: WEDGE_H,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+  },
+  halo: {
+    position: 'absolute',
+    left: (FRAME - HALO) / 2,
+    top: (FRAME - HALO) / 2,
+    width: HALO,
+    height: HALO,
+    borderRadius: HALO / 2,
+    opacity: 0.14,
+  },
   disc: {
     position: 'absolute',
     alignItems: 'center',
@@ -162,9 +213,9 @@ const styles = StyleSheet.create({
   },
   liveDot: {
     position: 'absolute',
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+    width: 13,
+    height: 13,
+    borderRadius: 6.5,
     borderWidth: 2.5,
   },
   ghost: {

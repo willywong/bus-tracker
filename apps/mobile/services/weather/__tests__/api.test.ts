@@ -157,7 +157,7 @@ describe("getRainNudge facade", () => {
     const client = createWeatherClient({ fetchImpl: f.impl });
     const nudge = await getRainNudge({ lat: 3.1073, lng: 101.6067, now: at1646, client });
     assert.equal(nudge?.title, "Thunderstorm warning");
-    assert.equal(nudge?.message, "Petaling until 18:00 — leave a few minutes early");
+    assert.equal(nudge?.message, "In effect for Petaling until 18:00. Leave a few minutes early.");
     assert.deepEqual([...f.calls].sort(), [forecastUrl("Ds057"), WARNINGS_URL].sort());
   });
 
@@ -173,7 +173,7 @@ describe("getRainNudge facade", () => {
     const client = createWeatherClient({ fetchImpl: f.impl });
     const nudge = await getRainNudge({ lat: 3.0449, lng: 101.4456, now: at1646, client });
     assert.ok(f.calls.includes(forecastUrl("St008")));
-    assert.equal(nudge?.message, "Selangor: thunderstorms in places inland — allow a few extra minutes");
+    assert.equal(nudge?.message, "Expected in parts of Selangor, mostly inland. Leave a few minutes early.");
   });
 
   test("outside the Klang Valley: null and no requests", async () => {

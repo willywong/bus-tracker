@@ -15,12 +15,8 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { openDb } from "@/db/database";
 import {
-  getRoutePolyline,
-  getRoutes,
   getScheduledStopTimeForTrip,
-  getStops,
   resolveStaticTripId,
-  type PolylinePoint,
   type ScheduledDeparture,
   type StopRow,
 } from "@/db/queries";
@@ -115,68 +111,58 @@ interface StaticCtx {
   intermediateCandidates: LatLng[];
 }
 
+/** The active route's geometry as `useRouteStatic` (TripContext) loads it. */
+export interface EtaRouteGeometry {
+  polyline: LatLng[];
+  stops: readonly StopRow[];
+  userStop: StopRow | null;
+}
+
 export function useEta({
   stopId,
   routeCode,
+  route,
 }: {
   stopId: string;
   routeCode: RouteId;
+  /** Null while loading. */
+  route: EtaRouteGeometry | null;
 }): UseEtaResult {
   const { positions, lastUpdated: lastLiveFetchAt, error: rtError } =
     useBusPosition({ routeCode });
 
-  const [staticCtx, setStaticCtx] = useState<StaticCtx | null>(null);
-  const [staticError, setStaticError] = useState<Error | null>(null);
   const [now, setNow] = useState(() => devNow());
 
   const previousByVehicleRef = useRef(
     new Map<string, { lat: number; lng: number }>(),
   );
 
-  // 1. Load static data once per (stopId, routeCode).
-  useEffect(() => {
-    let cancelled = false;
-    setStaticError(null);
-    setStaticCtx(null);
-    (async () => {
-      try {
-        const db = await openDb();
-        const [routes, stops] = await Promise.all([getRoutes(db), getStops(db)]);
-        const route =
-          routes.find((r) => r.code === routeCode) ?? routes[0] ?? null;
-        if (!route) throw new Error(`no route ${routeCode} in cache`);
-
-        const stop = stops.find((s: StopRow) => s.stop_id === stopId);
-        if (!stop) throw new Error(`stop ${stopId} not found in cache`);
-
-        const polyPoints = await getRoutePolyline(db, route.route_id);
-        if (polyPoints.length < 2) {
-          throw new Error(`polyline for route ${route.route_id} is empty`);
-        }
-
-        if (cancelled) return;
-        const polyline: LatLng[] = polyPoints.map((p: PolylinePoint) => ({
-          lat: p.lat,
-          lng: p.lng,
-        }));
-        const intermediateCandidates: LatLng[] = stops
+  // 1. Static geometry comes from the trip's route data (`useRouteStatic`),
+  // so the polyline and stops are read from SQLite once, not once per hook.
+  const { staticCtx, staticError } = useMemo((): {
+    staticCtx: StaticCtx | null;
+    staticError: Error | null;
+  } => {
+    if (!route) return { staticCtx: null, staticError: null };
+    if (!route.userStop) {
+      return { staticCtx: null, staticError: new Error(`stop ${stopId} not found in cache`) };
+    }
+    if (route.polyline.length < 2) {
+      return { staticCtx: null, staticError: new Error(`polyline for route ${routeCode} is empty`) };
+    }
+    return {
+      staticCtx: {
+        stop: { lat: route.userStop.stop_lat, lng: route.userStop.stop_lon },
+        polyline: route.polyline,
+        // This route's stops only: other saved routes' stops near the shape
+        // would count as stops the bus passes.
+        intermediateCandidates: route.stops
           .filter((s) => s.stop_id !== stopId)
-          .map((s) => ({ lat: s.stop_lat, lng: s.stop_lon }));
-
-        setStaticCtx({
-          stop: { lat: stop.stop_lat, lng: stop.stop_lon },
-          polyline,
-          intermediateCandidates,
-        });
-      } catch (err) {
-        if (cancelled) return;
-        setStaticError(err instanceof Error ? err : new Error(String(err)));
-      }
-    })();
-    return () => {
-      cancelled = true;
+          .map((s) => ({ lat: s.stop_lat, lng: s.stop_lon })),
+      },
+      staticError: null,
     };
-  }, [stopId, routeCode]);
+  }, [route, stopId, routeCode]);
 
   // 2. Drive `now` forward every 15s so `isStale` stays current.
   useEffect(() => {
@@ -281,16 +267,23 @@ export function useEta({
     return toFiniteOrNull(hit?.speed);
   }, [composition?.vehicleId, positions]);
 
-  const current: ApproachingBus | null =
-    composition?.vehicleId != null && composition.forwardMeters != null
-      ? {
-          minutesToStop: roundedMinutes,
-          vehicleId: composition.vehicleId,
-          forwardMeters: composition.forwardMeters,
-          source: composition.source,
-          speedKmh: currentSpeedKmh,
-        }
-      : null;
+  const currentVehicleId = composition?.vehicleId ?? null;
+  const currentForwardMeters = composition?.forwardMeters ?? null;
+  const currentSource = composition?.source ?? null;
+  // Memoized: everything downstream (arrivals, the trip model) keys off it.
+  const current: ApproachingBus | null = useMemo(
+    () =>
+      currentVehicleId != null && currentForwardMeters != null
+        ? {
+            minutesToStop: roundedMinutes,
+            vehicleId: currentVehicleId,
+            forwardMeters: currentForwardMeters,
+            source: currentSource,
+            speedKmh: currentSpeedKmh,
+          }
+        : null,
+    [currentVehicleId, currentForwardMeters, currentSource, roundedMinutes, currentSpeedKmh],
+  );
 
   // Schedule overlay: upcoming departures for (stop, route) plus per-trip
   // match for the currently-picked vehicle.
@@ -582,7 +575,8 @@ export function useEta({
     passedVehicleIds,
   });
 
-  return {
+  // One object per real change, so the trip context's memo holds.
+  return useMemo(() => ({
     minutesToStop: resolved.minutesToStop,
     isStale,
     source: composition?.source ?? null,
@@ -606,5 +600,27 @@ export function useEta({
     polylineMeters,
     arrivalStatus,
     passedVehicleIds,
-  };
+  }), [
+    resolved,
+    isStale,
+    composition?.source,
+    composition?.vehicleId,
+    lastComputedAt,
+    error,
+    current,
+    nextBus,
+    scheduled.upcoming,
+    currentScheduled,
+    currentScheduledEpochMs,
+    nextScheduledExcludingCurrent,
+    primaryArrival,
+    secondaryArrival,
+    scheduled.firstEpochMs,
+    scheduled.lastEpochMs,
+    scheduled.serviceEnded,
+    scheduled.beforeServiceStart,
+    polylineMeters,
+    arrivalStatus,
+    passedVehicleIds,
+  ]);
 }

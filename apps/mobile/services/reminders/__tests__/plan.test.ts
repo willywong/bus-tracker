@@ -117,7 +117,7 @@ test('plans one reminder per enabled weekday, first bus at/after target', () => 
   assert.equal(mon.fireAtMs, my('2026-10-19', '07:52'));
   assert.equal(mon.title, 'Leave by 07:52 for T816');
   assert.match(mon.body, /Scheduled bus at Hotel Lisa De Inn at 08:00/);
-  assert.match(mon.body, /6 min walk/);
+  assert.match(mon.body, /6-min walk/);
 });
 
 test('target between departures picks the next one', () => {

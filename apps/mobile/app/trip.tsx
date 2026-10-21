@@ -10,35 +10,72 @@ import {
 import { nearbyRailStations } from '@bus-tracker/shared';
 import { SymbolView, type SFSymbol } from 'expo-symbols';
 import { useNavigation, useRouter } from 'expo-router';
-import { useEffect, useMemo, type ReactNode } from 'react';
-import { Linking, ScrollView, StyleSheet, Text, useColorScheme, View } from 'react-native';
-import Animated, { FadeIn, useReducedMotion } from 'react-native-reanimated';
+import { useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react';
+import {
+  Linking,
+  StyleSheet,
+  Text,
+  useColorScheme,
+  useWindowDimensions,
+  View,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
+import Animated, {
+  FadeIn,
+  FadeOut,
+  interpolate,
+  useAnimatedScrollHandler,
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { formatClockHHMM } from '@/components/tracker/logic';
+import { rideMinutes } from '@/components/ride/model';
 import { RideBody } from '@/components/ride/RideBody';
 import { Connections } from '@/components/trip/Connections';
-import { Hero, StatusLine } from '@/components/trip/Hero';
+import { BusPosition } from '@/components/trip/BusPosition';
+import { HeroBlock } from '@/components/trip/Hero';
+import { mins, stopsAwayLabel, type TripState } from '@/components/trip/model';
+import { DataSources } from '@/components/trip/DataSources';
+import { EdgeSwipeBack } from '@/components/trip/EdgeSwipeBack';
 import { TripRows } from '@/components/trip/Notes';
-import { OnTheWay } from '@/components/trip/OnTheWay';
+import { tripStatusItem, tripWarnings, WarningBadges } from '@/components/trip/Warnings';
+import { BusDetailSheet, StopDetailSheet } from '@/components/detail/DetailSheet';
+import { AllStopsButton, OnTheWay } from '@/components/trip/OnTheWay';
+import { PeekCard, TripPeekAction } from '@/components/trip/PeekCard';
 import { PrimaryAction } from '@/components/trip/PrimaryAction';
-import { Hairline, LinkRow, SectionLabel, ToggleRow } from '@/components/trip/Rows';
+import { Hairline, LinkRow, ROW_ICON_INSET, ToggleRow } from '@/components/trip/Rows';
+import { Section, SECTION_RULE, SheetBody } from '@/components/trip/SheetBody';
 import { SheetHeader } from '@/components/trip/SheetHeader';
+import { sheetPushIn, sheetPushOut } from '@/components/trip/sheetTransition';
 import { Timetable } from '@/components/trip/Timetable';
+import type { ScheduledDeparture } from '@/db/queries';
 import { useSettings } from '@/hooks/useSettings';
 import { ensureNotificationPermission } from '@/services/reminders/notifications';
 import { useRide } from '@/state/RideContext';
 import { useTrip } from '@/state/TripContext';
 import {
   color,
+  EASE_OUT,
   hex,
   MARGIN,
   motion,
+  PEEK_TOP,
   pick,
+  SHEET_INITIAL_DETENT,
+  sheetDetents,
   space,
   type,
   type DetentIndex,
 } from '@/theme/design';
+
+/** After the map settles, how long before all detents return (the snap must land first). */
+const COLLAPSE_SETTLE_MS = 300;
+/** Detents come back after this long even if the map never reports settling. */
+const HOLD_PEEK_MAX_MS = 5000;
 
 type DetentListener = (
   event: 'sheetDetentChange',
@@ -61,6 +98,12 @@ export default function TripSheet() {
   const ride = useRide();
   const { model } = trip;
   const peek = trip.detent === 0;
+  // The live dot leads the capsule beside the number, then any warnings.
+  const statusItem = tripStatusItem(model);
+  const peekWarnings = [
+    ...(statusItem ? [statusItem] : []),
+    ...tripWarnings(model, settings.walkMinutes),
+  ];
   const userStop = trip.route?.userStop ?? null;
   const stopPoint = useMemo(
     () => (userStop ? { lat: userStop.stop_lat, lng: userStop.stop_lon } : null),
@@ -72,8 +115,7 @@ export default function TripSheet() {
   );
 
   useEffect(() => {
-    const addListener = (navigation as unknown as { addListener: DetentListener })
-      .addListener;
+    const addListener = (navigation as unknown as { addListener: DetentListener }).addListener;
     return addListener.call(navigation, 'sheetDetentChange', (e) => {
       const i = Math.max(0, Math.min(2, e.data.index)) as DetentIndex;
       trip.setDetent(i);
@@ -81,11 +123,66 @@ export default function TripSheet() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navigation]);
 
+  // Dragging the map drops the sheet from glance to peek. The native sheet
+  // only takes a detent index at presentation, so while the map is dragged
+  // it is offered the peek detent alone (UIKit snaps to it and makes it the
+  // selected one). Once the map settles, and the snap has landed, all three
+  // come back and the sheet stays at peek; restoring mid-drag undoes the
+  // snap. UIKit doesn't report a change it didn't see the user make, so the
+  // detent is set here too.
+  const { height: windowHeight } = useWindowDimensions();
+  const { holdPeek, setHoldPeek, setDetent } = trip;
+  const held = useRef(false);
+  useEffect(() => {
+    const detents = sheetDetents(windowHeight, insets.top);
+    if (holdPeek) {
+      held.current = true;
+      // The initial index only matters at presentation, but must stay in range.
+      navigation.setOptions({
+        sheetAllowedDetents: [detents[0]],
+        sheetInitialDetentIndex: 0,
+        sheetLargestUndimmedDetentIndex: 0,
+      });
+      setDetent(0);
+      // In case the map never reports settling.
+      const safety = setTimeout(() => setHoldPeek(false), HOLD_PEEK_MAX_MS);
+      return () => clearTimeout(safety);
+    }
+    if (!held.current) return;
+    held.current = false;
+    const t = setTimeout(
+      () =>
+        navigation.setOptions({
+          sheetAllowedDetents: detents,
+          sheetInitialDetentIndex: SHEET_INITIAL_DETENT,
+          sheetLargestUndimmedDetentIndex: 1,
+        }),
+      COLLAPSE_SETTLE_MS,
+    );
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [holdPeek]);
+
   const scrollStyle = [styles.scroll, { paddingBottom: insets.bottom + space.xl }];
+
+  // A stop tapped in the sheet opens its detail; your own stop is the trip.
+  const { select } = trip;
+  const openStop = useCallback(
+    (id: string) => select(id === trip.stopId ? null : { kind: 'stop', stopId: id }),
+    [select, trip.stopId],
+  );
+  const back = useCallback(() => select(null), [select]);
+  const stopCount = trip.route?.stops.length ?? 0;
+  const openAllStops = () => router.push('/stops');
+  const openDeparture = (d: ScheduledDeparture) =>
+    router.push({
+      pathname: '/departure',
+      params: { tripId: d.tripId, at: String(d.departureEpochMs) },
+    });
 
   if (model.state === 'empty') {
     return (
-      <ScrollView contentContainerStyle={scrollStyle}>
+      <SheetScroll contentContainerStyle={scrollStyle} scheme={scheme}>
         <EmptyState
           icon="bus"
           title="Track your bus"
@@ -94,14 +191,14 @@ export default function TripSheet() {
           onAction={() => router.push('/add-route')}
           scheme={scheme}
         />
-      </ScrollView>
+      </SheetScroll>
     );
   }
 
   if (ride.active) {
     const p = ride.progress;
     return (
-      <ScrollView contentContainerStyle={scrollStyle} showsVerticalScrollIndicator={false}>
+      <SheetScroll contentContainerStyle={scrollStyle} scheme={scheme}>
         <SheetHeader
           routeCode={trip.routeCode}
           title={ride.destination ? `To ${ride.destination.name}` : trip.stopName}
@@ -115,23 +212,79 @@ export default function TripSheet() {
                 ? { text: 'Here', unit: null, kind: 'word' }
                 : p.phase === 'next-is-yours'
                   ? { text: 'Next', unit: null, kind: 'word' }
-                  : { text: String(p.stopsToGo), unit: 'stops', kind: 'minutes' }
+                  : {
+                      text: String(p.stopsToGo),
+                      unit: 'stops',
+                      kind: 'minutes',
+                    }
+          }
+          strip={
+            p && p.phase !== 'arrived'
+              ? {
+                  left: {
+                    icon: 'bus',
+                    text: `About ${mins(rideMinutes(p.remainingMeters))}`,
+                  },
+                  right: {
+                    text: formatKm(p.remainingMeters),
+                    trailing: 'to go',
+                  },
+                }
+              : null
           }
         />
-        <View style={[styles.body, peek && styles.hidden]} accessibilityElementsHidden={peek}>
+        <SheetBody peek={peek}>
           <RideBody ride={ride} base={model} />
-        </View>
-      </ScrollView>
+        </SheetBody>
+      </SheetScroll>
     );
   }
 
-  const isLive = model.source !== 'scheduled';
-  const liveTripId = trip.eta.primaryArrival?.sched?.tripId ?? null;
+  if (trip.selection) {
+    const sel = trip.selection;
+    const key = sel.kind === 'stop' ? `stop:${sel.stopId}` : `bus:${sel.vehicleId}`;
+    return (
+      <EdgeSwipeBack key={key} onBack={back}>
+        <SheetScroll contentContainerStyle={scrollStyle} scheme={scheme} swap>
+          {sel.kind === 'stop' ? (
+            <StopDetailSheet stopId={sel.stopId} peek={peek} onBack={back} onStopPress={openStop} />
+          ) : (
+            <BusDetailSheet
+              vehicleId={sel.vehicleId}
+              peek={peek}
+              onBack={back}
+              onStopPress={openStop}
+            />
+          )}
+        </SheetScroll>
+      </EdgeSwipeBack>
+    );
+  }
+
+  // The bus the hero counts down to, live or scheduled.
+  const arrivingTripId = trip.eta.primaryArrival?.sched?.tripId ?? null;
   const showJourney = model.state === 'arrival' && trip.eta.primaryArrival?.kind === 'live';
+  // Same guard as OnTheWay, so the section never shows as a bare label.
+  const journeyShown =
+    showJourney &&
+    trip.journey.ready &&
+    trip.journey.userStop != null &&
+    trip.journey.busStop != null;
   const hasLastBus = model.notes.some((n) => n.id === 'last-bus');
 
+  const peekHasAction = model.action.kind !== 'tight' && model.action.kind !== 'none';
+  const stopsAhead = trip.journey.stopsAhead;
+  const peekTrailing =
+    !showJourney || !model.sourceLine.arrives || !trip.eta.primaryArrival
+      ? null
+      : peekHasAction
+        ? { label: 'Arrives', value: formatClockHHMM(trip.eta.primaryArrival.epochMs) }
+        : stopsAhead != null
+          ? { label: '', value: stopsAwayLabel(stopsAhead) }
+          : null;
+
   return (
-    <ScrollView contentContainerStyle={scrollStyle} showsVerticalScrollIndicator={false}>
+    <SheetScroll key="trip" contentContainerStyle={scrollStyle} scheme={scheme} swap>
       <SheetHeader
         routeCode={trip.routeCode}
         title={trip.stopName}
@@ -139,17 +292,51 @@ export default function TripSheet() {
         status={model.state === 'arrival' || model.state === 'before-service' ? model.status : null}
         source={model.source}
         compact={model.hero}
+        peekContent={
+          <PeekCard
+            hero={model.hero}
+            source={model.source}
+            liveMark={false}
+            stopsAhead={showJourney ? trip.journey.stopsAhead : null}
+            aside={model.sourceLine.arrives ?? model.detail}
+            accessory={
+              peekWarnings.length > 0 ? (
+                <WarningBadges items={peekWarnings} onPress={() => router.push('/warnings')} />
+              ) : null
+            }
+            action={
+              // "Too soon" is the walker in the warnings capsule above, so it
+              // has no text of its own here.
+              model.action.kind !== 'tight' ? (
+                <TripPeekAction
+                  action={model.action}
+                  walkMinutes={settings.walkMinutes}
+                  onFollow={trip.follow}
+                  onUnfollow={trip.unfollow}
+                  onStartWalking={trip.startWalking}
+                  onCancelWalking={trip.cancelWalking}
+                />
+              ) : null
+            }
+            // Later buses live in the Today grid. While the rail holds the
+            // top row, "Arrives …" moves here so the clock time isn't lost;
+            // with no button, it takes the left and this says how far.
+            trailing={peekTrailing}
+          />
+        }
       />
 
-      {/* The peek detent shows the header row only; the body stays mounted
-          (no SwiftUI host re-creation) but invisible so nothing peeks out
-          clipped under it. */}
-      <View style={[styles.body, peek && styles.hidden]} accessibilityElementsHidden={peek}>
+      <SheetBody peek={peek}>
         <StateBody scheme={scheme} />
 
-        <TripRows model={model} />
+        <TripRows
+          model={model}
+          walkMinutes={settings.walkMinutes}
+          inlineWarnings={!showsHero(model.state)}
+        />
 
-        {model.state === 'arrival' || model.action.kind === 'walking' ? (
+        {(model.state === 'arrival' || model.action.kind === 'walking') &&
+        model.action.kind !== 'tight' ? (
           <PrimaryAction
             action={model.action}
             walkMinutes={settings.walkMinutes}
@@ -161,9 +348,10 @@ export default function TripSheet() {
           />
         ) : null}
 
-        {showJourney && trip.journey.ready ? (
+        {journeyShown ? (
           <Section title="On the way">
-            <OnTheWay journey={trip.journey} arrivalLabel={model.compact} />
+            <OnTheWay journey={trip.journey} arrivalLabel={model.compact} onStopPress={openStop} />
+            {stopCount > 0 ? <AllStopsButton count={stopCount} onPress={openAllStops} /> : null}
           </Section>
         ) : null}
 
@@ -172,7 +360,8 @@ export default function TripSheet() {
             <Timetable
               departures={trip.eta.scheduledUpcoming}
               formatClock={formatClockHHMM}
-              liveTripId={isLive ? liveTripId : null}
+              arrivingTripId={arrivingTripId}
+              onPressDeparture={openDeparture}
               firstBusToday={trip.eta.firstBusToday}
               lastBusToday={trip.eta.lastBusToday}
             />
@@ -186,59 +375,136 @@ export default function TripSheet() {
         ) : null}
 
         <View style={styles.options}>
-          <Hairline />
           {model.state === 'arrival' ? (
             <>
               <ToggleRow
+                icon="lock.iphone"
                 title="Follow on Lock Screen"
                 value={trip.isFollowing}
                 onValueChange={(on) => (on ? trip.follow() : trip.unfollow())}
                 accessibilityLabel="Follow this bus on the Lock Screen"
               />
-              <Hairline />
+              <Hairline inset={ROW_ICON_INSET} />
             </>
           ) : null}
           {hasLastBus ? (
             <>
               <ToggleRow
+                icon="moon"
                 title="Remind me before the last bus"
-                caption={`${10 + settings.walkMinutes} min before it leaves, from the timetable`}
+                caption={`${mins(10 + settings.walkMinutes)} before it leaves, from the timetable`}
                 value={trip.lastBusReminder}
                 onValueChange={(on) => {
                   trip.setLastBusReminder(on);
                   if (on) void ensureNotificationPermission().catch(() => {});
                 }}
               />
-              <Hairline />
+              <Hairline inset={ROW_ICON_INSET} />
+            </>
+          ) : null}
+          {!journeyShown && stopCount > 0 ? (
+            <>
+              <LinkRow
+                icon="list.bullet"
+                title={`All stops on ${trip.routeCode}`}
+                value={String(stopCount)}
+                onPress={openAllStops}
+              />
+              <Hairline inset={ROW_ICON_INSET} />
             </>
           ) : null}
           {ride.destinations.length > 0 ? (
             <>
-              <LinkRow title="Alert me before my stop" onPress={() => router.push('/ride')} />
-              <Hairline />
+              <LinkRow
+                icon="bell"
+                title="Alert me before my stop"
+                onPress={() => router.push('/ride')}
+              />
+              <Hairline inset={ROW_ICON_INSET} />
             </>
           ) : null}
           {stopPoint ? (
             <>
               <LinkRow
+                icon="figure.walk"
                 title="Walking directions"
-                value={`${settings.walkMinutes} min`}
+                value={mins(settings.walkMinutes)}
                 external
                 onPress={() => openWalkingDirections(stopPoint)}
                 accessibilityHint="Opens Apple Maps"
               />
-              <Hairline />
+              <Hairline inset={ROW_ICON_INSET} />
             </>
           ) : null}
         </View>
 
-        <Text style={styles.about}>
-          Live bus positions from data.gov.my. Live times are estimated from
-          each bus’s position; scheduled times come from the timetable.
-        </Text>
-      </View>
-    </ScrollView>
+        <DataSources />
+      </SheetBody>
+    </SheetScroll>
   );
+}
+
+/**
+ * The sheet's scroll view with a paper edge under the grabber: once content
+ * scrolls, it fades out beneath the sheet's top instead of sliding, clipped,
+ * behind the grabber. The edge is invisible at rest so it never veils the
+ * header, and fades in over the first few points of scroll (UI thread).
+ */
+function SheetScroll({
+  contentContainerStyle,
+  scheme,
+  swap = false,
+  children,
+}: {
+  contentContainerStyle: StyleProp<ViewStyle>;
+  scheme: 'light' | 'dark';
+  /** Slide in and out when the trip and a detail swap (keyed by the caller). */
+  swap?: boolean;
+  children: ReactNode;
+}) {
+  const reduceMotion = useReducedMotion();
+  const y = useSharedValue(0);
+  const onScroll = useAnimatedScrollHandler((e) => {
+    y.set(e.contentOffset.y);
+  });
+  const edgeStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(y.get(), [0, TOP_EDGE_FADE_IN], [0, 1], 'clamp'),
+  }));
+  const paper = pick(hex.paper, scheme);
+  return (
+    <Animated.View
+      style={styles.fill}
+      entering={swap ? (reduceMotion ? SWAP_FADE_IN : sheetPushIn) : undefined}
+      exiting={swap ? (reduceMotion ? SWAP_FADE_OUT : sheetPushOut) : undefined}
+    >
+      <Animated.ScrollView
+        contentContainerStyle={contentContainerStyle}
+        showsVerticalScrollIndicator={false}
+        onScroll={onScroll}
+        scrollEventThrottle={16}
+      >
+        {children}
+      </Animated.ScrollView>
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.topEdge,
+          {
+            backgroundImage: `linear-gradient(to bottom, ${paper} 55%, ${paper}00 100%)`,
+          },
+          edgeStyle,
+        ]}
+      />
+    </Animated.View>
+  );
+}
+
+// Reduce Motion: the same swap as a plain crossfade, no travel.
+const SWAP_FADE_IN = FadeIn.duration(motion.pushIn).delay(motion.pushOverlap);
+const SWAP_FADE_OUT = FadeOut.duration(motion.pushOut);
+
+function formatKm(meters: number): string {
+  return meters < 1000 ? `${Math.round(meters / 10) * 10} m` : `${(meters / 1000).toFixed(1)} km`;
 }
 
 /** Hands off to Apple Maps in walking mode (Look Around included there). */
@@ -246,11 +512,20 @@ function openWalkingDirections(stop: { lat: number; lng: number }) {
   void Linking.openURL(`https://maps.apple.com/?daddr=${stop.lat},${stop.lng}&dirflg=w`);
 }
 
+/** States whose body is an empty state rather than the hero number. */
+function showsHero(state: TripState): boolean {
+  return !(state === 'loading' || state === 'service-ended' || state === 'no-service');
+}
+
 /** Hero area for the current state — the map above never changes. */
 function StateBody({ scheme }: { scheme: 'light' | 'dark' }) {
   const trip = useTrip();
+  const settings = useSettings();
+  const router = useRouter();
   const { model } = trip;
   const reduceMotion = useReducedMotion();
+  const status = tripStatusItem(model);
+  const warnings = [...(status ? [status] : []), ...tripWarnings(model, settings.walkMinutes)];
 
   switch (model.state) {
     case 'loading':
@@ -300,20 +575,20 @@ function StateBody({ scheme }: { scheme: 'light' | 'dark' }) {
           entering={reduceMotion ? undefined : FadeIn.duration(motion.crossfade)}
           style={styles.heroBlock}
         >
-          <Hero model={model} />
-          <StatusLine model={model} />
+          <HeroBlock
+            model={model}
+            accessory={
+              warnings.length > 0 ? (
+                <WarningBadges items={warnings} onPress={() => router.push('/warnings')} />
+              ) : null
+            }
+          />
+          {model.facts.map((f) => (
+            <BusPosition key={f.id} title={f.value} caption={f.caption} />
+          ))}
         </Animated.View>
       );
   }
-}
-
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <View style={styles.section}>
-      <SectionLabel>{title}</SectionLabel>
-      {children}
-    </View>
-  );
 }
 
 /** Thin SF Symbol, plain type, one ink button. No illustration chrome. */
@@ -372,24 +647,30 @@ function EmptyState({
   );
 }
 
+/** Points of scroll over which the top edge fades in. */
+const TOP_EDGE_FADE_IN = 12;
+
 const styles = StyleSheet.create({
   scroll: {
-    paddingTop: space.lg,
+    paddingTop: PEEK_TOP,
   },
-  body: {
-    paddingHorizontal: MARGIN,
-    paddingTop: space.xxs,
-    gap: space.lg,
+  fill: {
+    flex: 1,
   },
-  hidden: {
-    opacity: 0,
+  // Solid under the grabber, then a short fade.
+  topEdge: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: PEEK_TOP + 12,
   },
   heroBlock: {
-    gap: space.xs,
+    gap: space.lg,
   },
   placeholderNumber: {
-    width: 120,
-    height: 96,
+    width: 72,
+    height: 56,
     borderRadius: 16,
     borderCurve: 'continuous',
     backgroundColor: color.fill,
@@ -398,16 +679,13 @@ const styles = StyleSheet.create({
     ...type.status,
     color: color.secondaryLabel,
   },
-  section: {
-    gap: space.xxs,
-    marginTop: space.sm,
-  },
+  // Major sections are split by a full-width hairline; rows inside a
+  // section keep their own (inset) hairlines.
   options: {
-    marginTop: space.sm,
-  },
-  about: {
-    ...type.footnote,
-    color: color.secondaryLabel,
+    marginHorizontal: -MARGIN,
+    paddingHorizontal: MARGIN,
+    borderTopWidth: SECTION_RULE,
+    borderTopColor: color.hairline,
   },
   empty: {
     alignItems: 'center',
