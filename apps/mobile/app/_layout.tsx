@@ -196,6 +196,19 @@ function AppStack() {
           }}
         />
         <Stack.Screen
+          name="line"
+          options={{
+            presentation: 'formSheet',
+            sheetAllowedDetents: [0.6, 1],
+            sheetGrabberVisible: true,
+            // The line on the map stays visible and usable at 0.6.
+            sheetLargestUndimmedDetentIndex: 0,
+            headerShown: true,
+            headerTransparent: true,
+            contentStyle: { backgroundColor: SHEET_BACKGROUND },
+          }}
+        />
+        <Stack.Screen
           name="settings"
           options={{
             presentation: 'formSheet',

@@ -1,5 +1,5 @@
 import { ContentUnavailableView, Host } from '@expo/ui/swift-ui';
-import { Stack, useLocalSearchParams, useRouter, type Href } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useMemo } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
@@ -43,8 +43,7 @@ export default function StationScreen() {
 
   const openLine = useCallback(
     (routeId: string, dir: 0 | 1) => {
-      // `/line` arrives in 13/04; typed routes don't know it yet.
-      router.push({ pathname: '/line', params: { line: routeId, dir: String(dir) } } as unknown as Href);
+      router.push({ pathname: '/line', params: { line: routeId, dir: String(dir) } });
     },
     [router],
   );

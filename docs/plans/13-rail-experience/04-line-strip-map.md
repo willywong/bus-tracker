@@ -80,3 +80,43 @@
 - `/line?line=<routeId>&dir=0|1` exists and opens `station` per row.
 - `strip.ts` (`stripModel`, `trainRunTimes`) is reusable for 15/06 go-mode rail progress ("about").
 - 05 wires the remaining entry points and the map focus (`RailLayer.focus` = this line while the sheet is open).
+
+## Implementation notes
+
+- **Route.** `app/line.tsx` is registered right after `station` in `_layout.tsx`, with the Step 1 options. Its params are `line` (a `net.routes.id` such as `rail:KJ`, `rail:KGL`, `rail:MR` or `ktm:KC05_KB18`) and `dir` (`'0' | '1'`; anything else reads as 0). An array param takes its first value. If a line runs only one way, it falls back to dir 0. The picker swaps `dir` with `router.setParams`, so sheets don't stack. Deep link: `t816://line?line=rail:KJ&dir=1`.
+  - Rows push `/station` with `{ station: stationId }`.
+  - The `as unknown as Href` cast for `/line` in `app/station.tsx` is gone. Metro had already regenerated `.expo/types/router.d.ts` with `/line`. The `/station` cast in `app/index.tsx` was out of scope and stays.
+- **The model lives in the app, not in shared.** It is `components/rail/stripModel.ts`, not `packages/shared/src/transit/strip.ts`. Another task was editing `packages/shared/src/transit/index.ts` at the same time. Like `stationModel.ts`, the module is pure and its tests run under `pnpm --filter mobile test`. It can move to shared later without API changes, for example if 15/06 needs it outside the app.
+- **Absolute runs, not a wrapping phase.** This is a deviation from Steps 2, 3 and 6.
+  - `StripModel.runs` lists every departure from the first stop today, in service seconds: the union of each window's grid, or each timetabled trip. A slot is one run. Its key is `pattern:dep`, so React keys stay stable as time passes.
+  - The shared clock (`useTrainClock`) is a service second, not a phase in `[0, h)`. Each `EstimatedTrain` computes `interpolate(clock, times, beadYs, CLAMP)`, where `times[s]` is the run's service second at station `s`.
+  - This gives the same UI-thread cost and the same seed/reseed semantics: `seed = { t, at: -1 }`, and the frame callback anchors `at` to the first frame timestamp.
+  - It also covers three cases the phase model couldn't:
+    - trains that left in an earlier window still show after the headway changes (09:00);
+    - KTM trips run on their own scheduled times (`runTimes` per trip);
+    - trains appear and leave on their own, with no wrap.
+  - `trainRunTimes(m, t)` follows the specified signature and returns every `0 ≤ t − dep ≤ totalRunSec`. Unlike the sketch, it includes runs from an earlier window.
+- **`slotWindow(runs, t, totalRunSec, offsets, ys, viewTopY, viewBottomY)`** returns run indices, not `{ kMin, count }`.
+  - A run is mounted when its train is in the viewport ± one row at any point in `[t, t + 20 s]` (`LOOKAHEAD_SEC`), so a train entering the viewport between the 15 s recomputes is already mounted.
+  - Past `MAX_TRAINS = 12`, the runs nearest the viewport centre are kept.
+- **Measured rows.** `StripMap` measures each row with `onLayout` and reports bead centres to the screen (`onBeadYs`); until then it uses `beadY(i)`. The rail, beads and trains all use the measured centres, so beads stay on the rail at Dynamic Type XL.
+- **Location never prompts.** The screen uses `Location.getForegroundPermissionsAsync()` and then `getLastKnownPositionAsync()`; it does not call `useLocationPermission`, which requests permission. Without a fix it falls back to the trip's `route.userStop`. The pin appears only within 2 km (`NEAREST_MAX_M`).
+- **Header.**
+  - The status reads "every N mins now" inside a window, "First 06:00" before the first train, and "No more trains today" after the last.
+  - On a timetabled (KTM) line it reads "Next 08:00".
+  - Off the network's service date it reads "Timetable unavailable", and the strip still draws with no trains.
+  - Clocks follow the 12/24 h setting (`formatClockHHMM`).
+  - `last` is the last grid departure, as in 13/01 (KJ shows "Last 23:12").
+  - The caption is part of the header's single VoiceOver element.
+  - A route missing from the network shows "Line not found", or "Timetable unavailable" when health says that feed has expired.
+- **Badge** comes from `RAIL_LINES` by name, then from the network stations' lines (KTM shows "KTM", as on the station sheet), then from the route itself.
+- **Pause rules** are as specified: `active = isFocused && appState active && !reduceMotion && slots.length > 0`. A reseed from the wall clock happens on each `trip.now` tick, on scroll end, on direction change, on focus and on resume. Under Reduce Motion the reseed is the only movement.
+- **Files:**
+  - `app/line.tsx`;
+  - `components/rail/{stripModel.ts, stripLayout.ts, StripMap.tsx, EstimatedTrains.tsx}`;
+  - tests in `components/rail/__tests__/{stripModel,stripLayout}.test.ts`: 13 model tests (the 6 named, plus earlier-window runs, header/caption, KTM trips, off-date, nearest, and fixture KJ and KTM) and 5 layout tests (the 3 named, plus lookahead and `yAtRun`).
+- **For 13/05:**
+  - Call `setRailFocus({ stationId: null, routeIds: [model.routeId], point: null })` from a `useFocusEffect` in `app/line.tsx`.
+  - The deep-link parser should map `line/<routeId>/<dir>` to `/line?line=…&dir=…`.
+- **For 15/05 and 15/06:** link with `router.push({ pathname: '/line', params: { line: routeId, dir: '0' | '1' } })`. For "about" progress, use `stripModel` + `trainRunTimes` + `runTimes` from `@/components/rail/stripModel`.
+- **JS-only** (Metro reload).
