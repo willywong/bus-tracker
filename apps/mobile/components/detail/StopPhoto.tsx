@@ -36,12 +36,15 @@ export function StopPhoto({
   lng,
   onOpen,
   onUnavailable,
+  aspectRatio = 2,
 }: {
   lat: number;
   lng: number;
   onOpen: () => void;
   /** No key, no panorama here, or the image failed to load. */
   onUnavailable?: () => void;
+  /** Width over height of the photo; 2:1 by default, 16:9 for stations. */
+  aspectRatio?: number;
 }) {
   const [pano, setPano] = useState<Pano | null>(null);
   const [failed, setFailed] = useState(false);
@@ -82,7 +85,7 @@ export function StopPhoto({
 
   const heading = Math.round(bearing(pano, { lat, lng }));
   const uri =
-    `${BASE}?size=640x320&scale=2&location=${pano.lat},${pano.lng}` +
+    `${BASE}?size=640x${Math.round(640 / aspectRatio)}&scale=2&location=${pano.lat},${pano.lng}` +
     `&heading=${heading}&fov=75&pitch=0&source=outdoor&key=${KEY}`;
 
   return (
@@ -95,7 +98,7 @@ export function StopPhoto({
     >
       <Image
         source={{ uri, headers: HEADERS }}
-        style={styles.image}
+        style={[styles.image, { aspectRatio }]}
         resizeMode="cover"
         onError={() => {
           setFailed(true);

@@ -183,6 +183,19 @@ function AppStack() {
           }}
         />
         <Stack.Screen
+          name="station"
+          options={{
+            presentation: 'formSheet',
+            sheetAllowedDetents: [0.5, 1],
+            sheetGrabberVisible: true,
+            // The focused map stays visible and usable at 0.5.
+            sheetLargestUndimmedDetentIndex: 0,
+            headerShown: true,
+            headerTransparent: true,
+            contentStyle: { backgroundColor: SHEET_BACKGROUND },
+          }}
+        />
+        <Stack.Screen
           name="settings"
           options={{
             presentation: 'formSheet',
