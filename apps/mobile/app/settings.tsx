@@ -39,6 +39,14 @@ import { useTrip } from '@/state/TripContext';
 import { hex, pick } from '@/theme/design';
 import { haptics } from '@/utils/haptics';
 import { mins } from '@/components/trip/model';
+import {
+  complete,
+  lookAround,
+  mapsErrorCode,
+  resolve,
+  snapshot,
+  walk,
+} from '@/modules/transit-maps';
 
 const clockFormatLabel: Record<ClockFormat, string> = {
   '24h': '24-hour',
@@ -179,9 +187,60 @@ export default function SettingsScreen() {
             {(__DEV__ || process.env.EXPO_PUBLIC_DEV_TOOLS === '1') && (
               <Button label="Network build timing" onPress={() => router.push('/dev-network')} />
             )}
+            {/* Temporary (plan 15/01): MapKit probe. Remove before 15/02 merges. */}
+            {__DEV__ && <Button label="MapKit probe" onPress={() => void runMapsProbe()} />}
           </Section>
         </Form>
       </Host>
     </>
   );
+}
+
+/**
+ * Temporary (plan 15/01): runs each `transit-maps` call once and logs the
+ * result to the Metro console under `[maps-probe]`. Remove before 15/02 merges.
+ */
+async function runMapsProbe() {
+  const log = (label: string, value: unknown) =>
+    console.log(`[maps-probe] ${label}`, JSON.stringify(value));
+  const fail = (label: string) => (e: unknown) => {
+    log(`${label} failed`, { code: mapsErrorCode(e), message: String(e) });
+    return null;
+  };
+  const KLCC = { lat: 3.1579, lng: 101.7116 };
+  const PAVILION = { lat: 3.149, lng: 101.7134 };
+  const BUKIT_BINTANG = { lat: 3.1466, lng: 101.7108 };
+
+  // Fast typing: every call but the last should come back superseded.
+  const burst = await Promise.all(['k', 'kl', 'klc', 'klcc'].map((q) => complete(q).catch(fail(`complete(${q})`))));
+  log('complete burst superseded', burst.map((b) => b?.superseded ?? 'error'));
+  const klcc = burst[burst.length - 1];
+  if (klcc) {
+    log(`complete("klcc") ${klcc.results.length} results`, klcc.results);
+    const first = klcc.results[0];
+    if (first) log('resolve(first)', await resolve(first.id).catch(fail('resolve')));
+  }
+
+  const path = await walk(KLCC, PAVILION).catch(fail('walk'));
+  if (path) {
+    log('walk KLCC → Pavilion', {
+      minutes: Math.round(path.seconds / 6) / 10,
+      meters: Math.round(path.meters),
+      points: path.coords.length,
+    });
+  }
+
+  for (const pass of [1, 2]) {
+    const t0 = performance.now();
+    const uri = await lookAround(BUKIT_BINTANG.lat, BUKIT_BINTANG.lng, 640, 360).catch(fail('lookAround'));
+    log(`lookAround Bukit Bintang pass ${pass} (${Math.round(performance.now() - t0)} ms)`, uri);
+  }
+
+  for (const pass of [1, 2]) {
+    const t0 = performance.now();
+    const uri = await snapshot({ ...KLCC, latDelta: 0.0054, lngDelta: 0.0054 }, 320, 180, false).catch(
+      fail('snapshot'),
+    );
+    log(`snapshot KLCC pass ${pass} (${Math.round(performance.now() - t0)} ms)`, uri);
+  }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Image, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { color, space } from '@/theme/design';
@@ -28,14 +28,33 @@ interface Pano {
  * A Street View photo of the stop: the nearest outdoor panorama, turned to
  * face the stop. Looked up first through the metadata endpoint (no image
  * is requested unless one exists), and tapping it opens the full Street
- * View. Nothing renders without a key or without imagery here.
+ * View. Nothing renders without a key or without imagery here;
+ * `onUnavailable` then fires so a caller can fall through to another source.
  */
-export function StopPhoto({ lat, lng, onOpen }: { lat: number; lng: number; onOpen: () => void }) {
+export function StopPhoto({
+  lat,
+  lng,
+  onOpen,
+  onUnavailable,
+}: {
+  lat: number;
+  lng: number;
+  onOpen: () => void;
+  /** No key, no panorama here, or the image failed to load. */
+  onUnavailable?: () => void;
+}) {
   const [pano, setPano] = useState<Pano | null>(null);
   const [failed, setFailed] = useState(false);
+  const unavailable = useRef(onUnavailable);
+  useEffect(() => {
+    unavailable.current = onUnavailable;
+  }, [onUnavailable]);
 
   useEffect(() => {
-    if (!KEY) return;
+    if (!KEY) {
+      unavailable.current?.();
+      return;
+    }
     let cancelled = false;
     setPano(null);
     setFailed(false);
@@ -44,10 +63,16 @@ export function StopPhoto({ lat, lng, onOpen }: { lat: number; lng: number; onOp
     })
       .then((r) => r.json())
       .then((m: { status: string; location?: { lat: number; lng: number }; date?: string }) => {
-        if (cancelled || m.status !== 'OK' || !m.location) return;
+        if (cancelled) return;
+        if (m.status !== 'OK' || !m.location) {
+          unavailable.current?.();
+          return;
+        }
         setPano({ lat: m.location.lat, lng: m.location.lng, date: m.date ?? null });
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled) unavailable.current?.();
+      });
     return () => {
       cancelled = true;
     };
@@ -72,7 +97,10 @@ export function StopPhoto({ lat, lng, onOpen }: { lat: number; lng: number; onOp
         source={{ uri, headers: HEADERS }}
         style={styles.image}
         resizeMode="cover"
-        onError={() => setFailed(true)}
+        onError={() => {
+          setFailed(true);
+          unavailable.current?.();
+        }}
       />
       <View style={styles.caption}>
         <Text style={styles.captionText}>

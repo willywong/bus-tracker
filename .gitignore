@@ -4,6 +4,8 @@ dist/
 .DS_Store
 ios/
 android/
+# Local Expo modules keep their native sources in git
+!apps/mobile/modules/*/ios/
 .expo/
 *.tsbuildinfo
 
