@@ -125,3 +125,50 @@
 ## Handoff to next step ([06-golden-journey-tests.md](./06-golden-journey-tests.md))
 - `retime`, `liveNow`, `plannerRealtimeRoutes` and `PlannerFeedRoutes` are exported from `packages/shared/src/transit/index.ts`; `LiveSnapshot` is in `plan.ts` (04).
 - The mobile store has `setExtraRoutes('planner', …)`, `snapshot.byCategory` and `snapshot.plannerSkipped`. 15/04 wires them in `usePlanner`.
+
+## Implementation notes
+- **Public API** (`@bus-tracker/shared`; `index.ts` re-exports these by name, so the helpers stay internal):
+  ```ts
+  retime(its: Itinerary[], live: LiveSnapshot, net: TransitNetwork, ctx: RetimeContext): Itinerary[];
+  type RetimeContext = Pick<PlanQuery, 'to' | 'walkMetersPerMin' | 'modes'>;
+  liveNow(live: LiveSnapshot): number | null;
+  plannerRealtimeRoutes(its: readonly Itinerary[], net: TransitNetwork, now: number): PlannerFeedRoutes[];
+  interface PlannerFeedRoutes { category: PlannerLiveCategory; aliases: Map<string, string>; routes: string[] }
+  type PlannerLiveCategory = 'rapid-bus-mrtfeeder' | 'rapid-bus-kl';
+  LIVE_HORIZON_MS, CATCH_MARGIN_MS, MAX_LIVE_SHIFT_SEC, UPDATED_MIN_SHIFT_MS
+  ```
+  `retime` is in `transit/retime.ts`. The steps 1–3 helpers are in `transit/live.ts`: `liveCategoryOf`, `firstLiveLeg`, `findPattern` and `liveBoarding`. The commented `retime` signature in `plan.ts` is now a one-line pointer to `retime.ts`.
+- **Deviations from the steps:**
+  - **Step 4.3:** when the nearest approaching bus fails the catch or shift check, the next approaching bus is tried (spec §4.3: "if *a* live bus will reach the stop after you can"). Example: one bus is 30 s out and the one behind it is 6 min out. The rider catches the second one, and that bus is used.
+  - **Step 4.4:** `delta` is rounded to whole seconds, so every time stays on the second grid that the headway re-board uses. `Timing.live.asOf` is the fix's `observedAt`, not the category's poll time.
+  - **Step 4.4:** legs before the live ride are not moved. If you are snapped to the stop, `departAt` moves with the bus. After an access walk it stays as planned.
+  - **Step 4.6:** the tail uses `egressStops` for `ctx.to`, not `accessStops` as written. This follows 03's notes; `maxWalkMeters` takes its default.
+  - **Step 4.6:** the tail cannot be walk-only, because `rangeRaptor` records only journeys with at least one ride. It always starts at the broken ride's boarding stop.
+  - **Step 4.5:** a headway ride is re-boarded only on its windows (`earliestBoardInto(…, tripHi = 0)`), so it stays a headway leg. If its windows have closed, the transfer counts as broken.
+  - **Step 4.6:** with no tail found, the walk before the broken ride is still shifted, and the broken ride and everything after it are left exactly as planned.
+  - **Step 4.6:** after every retime, `warnings` are recomputed with `legWarnings`, not only after a splice. `rides`, `walkMeters` and `id` are recomputed every time too.
+  - **Step 6:** `tick()` checks the "due" rule only for feeds whose `intervalMs` is longer than the poll interval, which in practice means planner-only feeds. Followed feeds are still fetched on every tick, so pull-to-refresh and foreground resume stay immediate, as before. `feedVehicleCount` sums only followed feeds.
+  - **Step 6:** `setExtraRoutes` triggers a tick only when the store was idle. When polling is already running, the next scheduled tick picks up the new plan, so planner changes never add requests outside the poll cadence.
+  - **Step 6:** `byCategory[c].asOf` is the category's last successful fetch. Its positions are the plausible fixes, without the outlier filter or the dedup that `positions` gets.
+  - **Step 6:** `loadPlan` with no followed routes builds the plan from the extras alone and never opens the DB.
+  - **Step 6:** `realtime-mock.ts` gained the new snapshot fields and a no-op `setExtraRoutes`. Its `byCategory` carries the mock T816 under the feeder category.
+- **Conflict with 15/04 (resolve there):** 15/04's step 2 text plans `setPlannerRoutes(routes)`, `RealtimeFeedPlan.plannerOnly` and building `LiveSnapshot` by grouping `positions`. This task ships `setExtraRoutes('planner', plannerRealtimeRoutes(base, net, now))` instead, and the store passes `{ byCategory: snapshot.byCategory }` directly. `positions` holds only followed routes, so grouping them would lose the planner's buses. A planner-only feed is the one with `intervalMs === PLANNER_INTERVAL_MS`.
+- **Workspace sharing (risk for 15/04 and 15/06):** a tail re-plan runs `rangeRaptor` on the network's shared workspace. Do not call `retime` while a `plan()` generator on the same `net` is suspended between slices, because it would clobber `plan`'s labels. Finish or discard the plan first.
+- **For 06:**
+  - A retimed itinerary stays internally consistent (times monotonic, `CHANGE_SEC` kept), except in the `'missed-connection'` case. There, the shifted legs into the missed ride can end after it leaves, or less than `CHANGE_SEC` before it.
+  - `id` changes only when a tail re-plan changes the rides.
+  - The fixture case is `Lisa → KLCC` with `modes: ['feeder', 'lrt', 'mrt', 'monorail']` at 08:00 on 2026-10-28. Its fastest itinerary is T816 08:24:44 → walk → MRT KG (headway 360) → walk → LRT KJ (headway 240). A bus at `12000757` heading toward `12000762`, with its fix 1 min before the board, gives `deltaSec` 120, and every downstream time moves by exactly that.
+- **Tests:**
+  - `retime.test.ts`, 16 tests. The step 7 list, plus:
+    - `liveNow`;
+    - an access-walk `reachAt` case;
+    - alias matching (label, raw GTFS id, wrong route, wrong category);
+    - a delay that still makes the transfer;
+    - order, tags and no input mutation.
+  - `realtimePlan.test.ts`, +3 tests.
+  - Mutation checks fail the suite: dropping `CHANGE_SEC` in propagation, `reachAt` ignoring the access walk, no catch margin, no stale-category gate, no next-bus fallback, and the tail ignoring `ctx.modes`.
+- **Verification:**
+  - `pnpm --filter @bus-tracker/shared test`: 369/369.
+  - `pnpm --filter mobile test`: 297/297.
+  - `pnpm type-check`: clean.
+  - No device or Metro check was run; this is JS-only.

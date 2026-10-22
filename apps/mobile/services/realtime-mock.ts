@@ -106,6 +106,8 @@ export function createMockRealtimeStore(): RealtimeStore {
     nextRefreshAt: null,
     isRefreshing: false,
     feedVehicleCount: null,
+    byCategory: {},
+    plannerSkipped: [],
   };
   const listeners = new Set<() => void>();
   let refCount = 0;
@@ -221,6 +223,8 @@ export function createMockRealtimeStore(): RealtimeStore {
       nextRefreshAt: devNow() + TICK_MS,
       isRefreshing: false,
       feedVehicleCount: 1,
+      byCategory: { "rapid-bus-mrtfeeder": { asOf: devNow(), positions: [position] } },
+      plannerSkipped: [],
     };
     notify();
     cursor += ADVANCE_METERS_PER_TICK;
@@ -270,6 +274,9 @@ export function createMockRealtimeStore(): RealtimeStore {
     setRouteCodes() {
       // no-op in mock mode — the mock always simulates MOCK_ROUTE_CODE
     },
+    setExtraRoutes() {
+      // no-op in mock mode
+    },
     setFilter() {
       // no-op in mock mode
     },
@@ -290,6 +297,8 @@ export function createMockRealtimeStore(): RealtimeStore {
           nextRefreshAt: null,
           isRefreshing: false,
           feedVehicleCount: null,
+          byCategory: {},
+          plannerSkipped: [],
         };
       },
       refCount: () => refCount,

@@ -13,9 +13,17 @@ import {
   type BusCategory,
   type DecodedEntity,
   type DecodedFeed,
+  type PlannerFeedRoutes,
   type RouteId,
   type VehiclePosition,
 } from "@bus-tracker/shared";
+
+/** A category with a followed route is polled every 30 s, matching the feeds' update cadence. */
+export const FOLLOWED_INTERVAL_MS = 30_000;
+/** A category only the planner needs is polled every 60 s, and only from spare budget (spec §4.3). */
+export const PLANNER_INTERVAL_MS = 60_000;
+/** data.gov.my's realtime budget across every polled category. */
+export const MAX_REQUESTS_PER_MINUTE = 4;
 
 /** What the poller needs to read one category's vehicle-position feed. */
 export interface RealtimeFeedPlan {
@@ -27,8 +35,10 @@ export interface RealtimeFeedPlan {
    * the route code ("T816", "401"); Rapid KL sends its GTFS route_id ("U4000").
    */
   aliases: Map<string, RouteId>;
-  /** Followed route keys this feed is polled for. */
+  /** Route keys this feed is polled for: followed ones, plus the planner's route labels. */
   routes: Set<RouteId>;
+  /** How often to fetch it: {@link FOLLOWED_INTERVAL_MS}, or {@link PLANNER_INTERVAL_MS} for a planner-only category. */
+  intervalMs: number;
 }
 
 export interface RealtimePlan {
@@ -40,6 +50,18 @@ export interface RealtimePlan {
    * should be rebuilt on the next poll.
    */
   complete: boolean;
+  /**
+   * Categories the planner asked for but that are not polled: no spare
+   * budget. Their itineraries stay "Scheduled", and say so.
+   */
+  plannerSkipped: BusCategory[];
+}
+
+/** Requests per minute `plan` makes: Σ 60 s / `intervalMs`. */
+export function requestsPerMinute(plan: Pick<RealtimePlan, "feeds">): number {
+  let n = 0;
+  for (const f of plan.feeds) n += 60_000 / f.intervalMs;
+  return n;
 }
 
 export interface StoredRoute {
@@ -52,17 +74,24 @@ export interface StoredRoute {
  * Works out which vehicle-position feeds to poll for the followed routes —
  * one per category actually followed, never all of them — and how to map
  * each feed's vehicles back to route keys.
+ *
+ * `extra` is what the journey planner needs (`plannerRealtimeRoutes`). In a
+ * category already polled for a followed route its routes ride along at no
+ * cost. Otherwise the category is polled every {@link PLANNER_INTERVAL_MS}
+ * only while the plan stays within {@link MAX_REQUESTS_PER_MINUTE}; if it
+ * would not, it goes to `plannerSkipped` instead.
  */
 export function buildRealtimePlan(
   routeCodes: readonly string[],
   stored: readonly StoredRoute[],
   tripToRoute: ReadonlyMap<string, string>,
+  extra: readonly PlannerFeedRoutes[] = [],
 ): RealtimePlan {
   const byCategory = new Map<BusCategory, RealtimeFeedPlan>();
   const entry = (category: BusCategory) => {
     let e = byCategory.get(category);
     if (!e) {
-      e = { category, tripToRoute: new Map(), aliases: new Map(), routes: new Set() };
+      e = { category, tripToRoute: new Map(), aliases: new Map(), routes: new Set(), intervalMs: FOLLOWED_INTERVAL_MS };
       byCategory.set(category, e);
     }
     return e;
@@ -95,10 +124,30 @@ export function buildRealtimePlan(
     }
   }
 
-  return {
-    feeds: [...byCategory.values()].filter((f) => BUS_CATEGORY_INFO[f.category].hasRealtime),
-    complete,
-  };
+  const feeds = [...byCategory.values()].filter((f) => BUS_CATEGORY_INFO[f.category].hasRealtime);
+  const plannerSkipped: BusCategory[] = [];
+  for (const x of extra) {
+    let f = feeds.find((g) => g.category === x.category);
+    if (!f) {
+      const candidate: RealtimeFeedPlan = {
+        category: x.category,
+        tripToRoute: new Map(),
+        aliases: new Map(),
+        routes: new Set(),
+        intervalMs: PLANNER_INTERVAL_MS,
+      };
+      if (requestsPerMinute({ feeds: [...feeds, candidate] }) > MAX_REQUESTS_PER_MINUTE) {
+        if (!plannerSkipped.includes(x.category)) plannerSkipped.push(x.category);
+        continue;
+      }
+      feeds.push((f = candidate));
+    }
+    // A followed route's own alias wins; the planner's labels are the same keys for Klang Valley routes.
+    for (const [k, v] of x.aliases) if (!f.aliases.has(k)) f.aliases.set(k, v);
+    for (const r of x.routes) f.routes.add(r);
+  }
+
+  return { feeds, complete, plannerSkipped };
 }
 
 /** Rows written before categories existed are all feeder rows. */

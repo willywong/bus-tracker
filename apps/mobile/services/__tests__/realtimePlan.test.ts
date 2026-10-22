@@ -2,7 +2,15 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { DecodedFeed } from "@bus-tracker/shared";
 
-import { buildRealtimePlan, positionsFromFeed, routeFeedHealth, tripMapRouteCodes } from "../realtimePlan";
+import type { PlannerFeedRoutes } from "@bus-tracker/shared";
+
+import {
+  buildRealtimePlan,
+  positionsFromFeed,
+  requestsPerMinute,
+  routeFeedHealth,
+  tripMapRouteCodes,
+} from "../realtimePlan";
 
 const NOW = Date.UTC(2026, 9, 21, 4, 0, 0);
 
@@ -192,4 +200,100 @@ test("other routes' buses are dropped before their ids are namespaced", () => {
     ["MINE", "401 Penang", "pg:261016010252S5"],
   ]);
   assert.equal(otherStopReads, 0);
+});
+
+const FEEDER_EXTRA: PlannerFeedRoutes = {
+  category: "rapid-bus-mrtfeeder",
+  aliases: new Map([["30000025", "T816"], ["T816", "T816"]]),
+  routes: ["T816"],
+};
+const KL_EXTRA: PlannerFeedRoutes = {
+  category: "rapid-bus-kl",
+  aliases: new Map([["U7700", "770"], ["770", "770"]]),
+  routes: ["770"],
+};
+
+test("planner extras merge into a followed category at 30 s", () => {
+  const plan = buildRealtimePlan(
+    ["T789"],
+    [{ code: "T789", route_id: "30000026", category: "rapid-bus-mrtfeeder" }],
+    new Map(),
+    [FEEDER_EXTRA],
+  );
+  assert.equal(plan.feeds.length, 1);
+  const [f] = plan.feeds;
+  assert.equal(f.category, "rapid-bus-mrtfeeder");
+  assert.equal(f.intervalMs, 30_000);
+  assert.deepEqual([...f.routes], ["T789", "T816"]);
+  assert.equal(f.aliases.get("T816"), "T816");
+  assert.equal(f.aliases.get("T789"), "T789");
+  assert.deepEqual(plan.plannerSkipped, []);
+  assert.equal(requestsPerMinute(plan), 2);
+  // The planner's bus is in the feed's positions; the poller keeps `positions` to followed routes.
+  const positions = positionsFromFeed(
+    f,
+    feed([
+      { id: "MINE", trip_id: "a", route_id: "T789" },
+      { id: "PLAN", trip_id: "b", route_id: "T816 Inbound" },
+      { id: "OTHER", trip_id: "c", route_id: "T815" },
+    ]),
+    NOW,
+  );
+  assert.deepEqual(positions.map((p) => [p.vehicleId, p.routeId]), [["MINE", "T789"], ["PLAN", "T816"]]);
+});
+
+test("planner-only category polls at 60 s when budget allows", () => {
+  const plan = buildRealtimePlan(
+    ["T789"],
+    [{ code: "T789", route_id: "30000026", category: "rapid-bus-mrtfeeder" }],
+    new Map(),
+    [KL_EXTRA],
+  );
+  assert.deepEqual(plan.feeds.map((f) => [f.category, f.intervalMs]), [
+    ["rapid-bus-mrtfeeder", 30_000],
+    ["rapid-bus-kl", 60_000],
+  ]);
+  assert.deepEqual([...plan.feeds[1].routes], ["770"]);
+  assert.deepEqual(plan.plannerSkipped, []);
+  assert.equal(requestsPerMinute(plan), 3);
+  // Rapid KL sends its GTFS route_id.
+  const positions = positionsFromFeed(plan.feeds[1], feed([{ id: "WVH1", trip_id: "weekday_U7700_x_2", route_id: "U7700" }]), NOW);
+  assert.deepEqual(positions.map((p) => p.routeId), ["770"]);
+
+  // With nothing followed, both planner categories fit: 1 + 1 per minute.
+  const only = buildRealtimePlan([], [], new Map(), [FEEDER_EXTRA, KL_EXTRA]);
+  assert.deepEqual(only.feeds.map((f) => [f.category, f.intervalMs]), [
+    ["rapid-bus-mrtfeeder", 60_000],
+    ["rapid-bus-kl", 60_000],
+  ]);
+  assert.equal(requestsPerMinute(only), 2);
+});
+
+test("planner-only category goes to plannerSkipped when two followed categories use the budget", () => {
+  const plan = buildRealtimePlan(
+    ["T789", "400"],
+    [
+      { code: "T789", route_id: "30000026", category: "rapid-bus-mrtfeeder" },
+      { code: "400", route_id: "kl:U4000", category: "rapid-bus-kl" },
+    ],
+    new Map(),
+    [FEEDER_EXTRA, KL_EXTRA],
+  );
+  // Both planner categories are followed ones: they ride along, nothing skipped.
+  assert.deepEqual(plan.plannerSkipped, []);
+  assert.equal(requestsPerMinute(plan), 4);
+
+  const penangAndKl = buildRealtimePlan(
+    ["401 Penang", "400"],
+    [
+      { code: "401 Penang", route_id: "pg:30000019", category: "rapid-bus-penang" },
+      { code: "400", route_id: "kl:U4000", category: "rapid-bus-kl" },
+    ],
+    new Map(),
+    [FEEDER_EXTRA, KL_EXTRA],
+  );
+  assert.deepEqual(penangAndKl.feeds.map((f) => f.category), ["rapid-bus-penang", "rapid-bus-kl"]);
+  assert.deepEqual(penangAndKl.plannerSkipped, ["rapid-bus-mrtfeeder"]);
+  assert.ok(requestsPerMinute(penangAndKl) <= 4);
+  assert.ok(penangAndKl.feeds[1].routes.has("770"), "the followed KL feed still carries the planner's route");
 });

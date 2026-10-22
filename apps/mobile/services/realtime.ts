@@ -6,6 +6,7 @@ import {
   parseRetryAfterMs,
   vehiclePositionsUrl,
   type BusCategory,
+  type PlannerFeedRoutes,
   type VehiclePosition,
 } from "@bus-tracker/shared";
 import { AppState, type AppStateStatus } from "react-native";
@@ -13,6 +14,7 @@ import { openDb } from "@/db/database";
 import { getRealtimeRoutes, getTripToRouteMap } from "@/db/queries";
 import {
   buildRealtimePlan,
+  FOLLOWED_INTERVAL_MS,
   positionsFromFeed,
   routeFeedHealth,
   tripMapRouteCodes,
@@ -28,6 +30,7 @@ import {
 const POLL_INTERVAL_MS = 30_000;
 
 export interface RealtimeSnapshot {
+  /** Vehicles on **followed** routes only; planner-only buses never show as "my buses". */
   positions: VehiclePosition[];
   lastUpdated: number | null;
   lastError: Error | null;
@@ -47,6 +50,14 @@ export interface RealtimeSnapshot {
    * network, so a Rapid KL feed with buses can hide a feeder outage.
    */
   feedHealthByRoute?: Readonly<Record<string, RouteFeedHealth>>;
+  /**
+   * Every polled category's plausible vehicles on every route it is polled
+   * for (followed and planner), with the time of its last good fetch. This
+   * is the journey engine's `LiveSnapshot.byCategory` (spec §4.4).
+   */
+  byCategory: Record<string, { asOf: number; positions: VehiclePosition[] }>;
+  /** Planner categories not polled for lack of budget: their itineraries stay "Scheduled". */
+  plannerSkipped: BusCategory[];
 }
 
 export type PositionFilter = (incoming: VehiclePosition[]) => VehiclePosition[];
@@ -70,6 +81,14 @@ export interface RealtimeStore {
    * stops polling entirely.
    */
   setRouteCodes(codes: readonly string[]): void;
+  /**
+   * Routes the journey planner wants live positions for
+   * (`plannerRealtimeRoutes`). They ride along in followed categories; other
+   * categories are polled every 60 s only from spare budget, else reported in
+   * `plannerSkipped`. Clears the cached feed plan. Polling runs while there
+   * are followed routes or extras.
+   */
+  setExtraRoutes(source: "planner", extra: readonly PlannerFeedRoutes[]): void;
   setFilter(filter: PositionFilter): void;
   resetFilterState(): void;
   __forTests: {
@@ -105,7 +124,7 @@ export class FeedFetchError extends Error {
 
 export interface RealtimeDeps {
   fetchFeed: (category: BusCategory, signal: AbortSignal) => Promise<Uint8Array>;
-  loadPlan: (routeCodes: readonly string[]) => Promise<RealtimePlan>;
+  loadPlan: (routeCodes: readonly string[], extra: readonly PlannerFeedRoutes[]) => Promise<RealtimePlan>;
   appState: AppStateLike;
   now: () => number;
   pollIntervalMs: number;
@@ -125,13 +144,13 @@ const defaultDeps: RealtimeDeps = {
     }
     return new Uint8Array(await res.arrayBuffer());
   },
-  loadPlan: async (routeCodes) => {
-    if (routeCodes.length === 0) return { feeds: [], complete: true };
+  loadPlan: async (routeCodes, extra) => {
+    if (routeCodes.length === 0) return buildRealtimePlan([], [], new Map(), extra);
     const db = await openDb();
     const stored = await getRealtimeRoutes(db, routeCodes);
     // Headway networks' vehicles resolve by route_id; skip their trip ids.
     const tripMap = await getTripToRouteMap(db, tripMapRouteCodes(stored));
-    return buildRealtimePlan(routeCodes, stored, tripMap);
+    return buildRealtimePlan(routeCodes, stored, tripMap, extra);
   },
   appState: AppState,
   now: Date.now,
@@ -153,27 +172,47 @@ function sameRouteCodes(
   return true;
 }
 
+function sameExtraRoutes(
+  a: readonly PlannerFeedRoutes[],
+  b: readonly PlannerFeedRoutes[],
+): boolean {
+  const key = (x: readonly PlannerFeedRoutes[]) =>
+    x.map((f) => `${f.category}:${[...f.routes].sort().join(",")}`).sort();
+  return sameRouteCodes(key(a), key(b));
+}
+
+const EMPTY_SNAPSHOT: RealtimeSnapshot = {
+  positions: [],
+  lastUpdated: null,
+  lastError: null,
+  nextRefreshAt: null,
+  isRefreshing: false,
+  feedVehicleCount: null,
+  byCategory: {},
+  plannerSkipped: [],
+};
+
 export function createRealtimeStore(
   deps: Partial<RealtimeDeps> = {},
 ): RealtimeStore {
   const cfg: RealtimeDeps = { ...defaultDeps, ...deps };
 
-  let snapshot: RealtimeSnapshot = {
-    positions: [],
-    lastUpdated: null,
-    lastError: null,
-    nextRefreshAt: null,
-    isRefreshing: false,
-    feedVehicleCount: null,
-  };
+  let snapshot: RealtimeSnapshot = EMPTY_SNAPSHOT;
   const listeners = new Set<Listener>();
   let refCount = 0;
 
   let routeCodes: readonly string[] = [];
+  let extraRoutes: readonly PlannerFeedRoutes[] = [];
+  /** Followed routes or planner extras: something to poll for. */
+  const wanted = () => routeCodes.length > 0 || extraRoutes.length > 0;
   /** Cached once every followed route is in SQLite; rebuilt each poll until then. */
   let plan: RealtimePlan | null = null;
   /** Last good positions per feed, so one feed failing doesn't blank the others' buses. */
   const lastByCategory = new Map<BusCategory, VehiclePosition[]>();
+  /** When each feed was last fetched (attempted), so a 60 s planner feed is skipped on the ticks in between. */
+  const lastFetchAt = new Map<BusCategory, number>();
+  /** When each feed last answered: `byCategory[c].asOf`. */
+  const lastOkAt = new Map<BusCategory, number>();
   const healthByCategory = new Map<BusCategory, FeedHealth>();
   /** A 429 / Retry-After from one feed while others succeeded; slows the next poll. */
   let partialThrottle: FeedFetchError | null = null;
@@ -198,6 +237,8 @@ export function createRealtimeStore(
           ? patch.feedVehicleCount
           : snapshot.feedVehicleCount,
       feedHealthByRoute: patch.feedHealthByRoute ?? snapshot.feedHealthByRoute,
+      byCategory: patch.byCategory ?? snapshot.byCategory,
+      plannerSkipped: patch.plannerSkipped ?? snapshot.plannerSkipped,
       // Preserve the current next-refresh estimate across tick results;
       // scheduleNext() rewrites it when the follow-up timer is armed.
       nextRefreshAt: snapshot.nextRefreshAt,
@@ -230,7 +271,7 @@ export function createRealtimeStore(
 
   async function tick(): Promise<void> {
     if (refCount === 0) return;
-    if (routeCodes.length === 0) return;
+    if (!wanted()) return;
     if (cfg.appState.currentState !== "active") return;
 
     cancelInflight();
@@ -239,36 +280,49 @@ export function createRealtimeStore(
     setRefreshing(true);
 
     const codesForTick = routeCodes;
+    const extrasForTick = extraRoutes;
     let current: RealtimePlan | null = plan;
     try {
-      current ??= await cfg.loadPlan(codesForTick);
+      current ??= await cfg.loadPlan(codesForTick, extrasForTick);
       // Only cache a plan built for the codes still being watched: a tick
       // aborted by setRouteCodes/stop can resume after the newer one.
-      if (ctrl.signal.aborted || codesForTick !== routeCodes) return;
+      if (ctrl.signal.aborted || codesForTick !== routeCodes || extrasForTick !== extraRoutes) return;
       if (current.complete) plan = current;
       const feedsForTick = current.feeds;
+      // A planner-only feed (60 s) is fetched every other tick; a followed
+      // feed every tick, so pull-to-refresh and resume stay immediate.
+      const startedAt = cfg.now();
+      const dueFeeds = feedsForTick.filter(
+        (f) =>
+          f.intervalMs <= cfg.pollIntervalMs ||
+          startedAt - (lastFetchAt.get(f.category) ?? -Infinity) >= f.intervalMs - 1_000,
+      );
+      for (const f of dueFeeds) lastFetchAt.set(f.category, startedAt);
       const results = await Promise.allSettled(
-        current.feeds.map(async (f) => ({
+        dueFeeds.map(async (f) => ({
           plan: f,
           feed: decodeFeed(await cfg.fetchFeed(f.category, ctrl.signal)),
         })),
       );
       if (ctrl.signal.aborted) return;
       const now = cfg.now();
-      let feedVehicleCount: number | null = feedsForTick.length > 0 ? 0 : null;
+      const followedFeeds = feedsForTick.filter((f) => f.intervalMs === FOLLOWED_INTERVAL_MS);
+      let feedVehicleCount: number | null = followedFeeds.length > 0 ? 0 : null;
       let firstError: unknown = null;
       partialThrottle = null;
       for (const [i, r] of results.entries()) {
-        const category = feedsForTick[i].category;
+        const category = dueFeeds[i].category;
+        const followedFeed = dueFeeds[i].intervalMs === FOLLOWED_INTERVAL_MS;
         if (r.status === "fulfilled") {
           // Vehicles resolve by static trip_id first, then by the feed's
           // `trip.route_id` — date-prefix drift between the static bundle
           // and the realtime feed, and Rapid KL's headway templates, both
           // miss the trip lookup.
           lastByCategory.set(category, positionsFromFeed(r.value.plan, r.value.feed, now));
+          lastOkAt.set(category, now);
           const count = countPlausibleVehicles(r.value.feed, now);
           healthByCategory.set(category, { vehicleCount: count, error: null });
-          feedVehicleCount = (feedVehicleCount ?? 0) + count;
+          if (followedFeed) feedVehicleCount = (feedVehicleCount ?? 0) + count;
         } else {
           if (isAbortError(r.reason)) return;
           firstError ??= r.reason;
@@ -283,10 +337,20 @@ export function createRealtimeStore(
         console.warn("[realtime] a feed failed; keeping its last positions:", (firstError as Error)?.message ?? firstError);
       }
       const feedHealthByRoute = routeFeedHealth(codesForTick, current, healthByCategory);
+      const byCategory: RealtimeSnapshot["byCategory"] = {};
+      for (const f of feedsForTick) {
+        const positions = lastByCategory.get(f.category);
+        const asOf = lastOkAt.get(f.category);
+        if (positions && asOf !== undefined) {
+          byCategory[f.category] = { asOf, positions: dropImplausibleFixes(positions, now) };
+        }
+      }
+      // Map markers and ETAs: followed routes only.
+      const followed = new Set(codesForTick);
       const raw = dropImplausibleFixes(
         feedsForTick.flatMap((f) => lastByCategory.get(f.category) ?? []),
         now,
-      );
+      ).filter((p) => followed.has(p.routeId));
       const filtered = positionFilter(raw);
       // Dedup by vehicleId — keep the latest-observed entry per id. The GTFS-RT
       // fallback chain in entitiesToPositions drops to trip_id when all vehicle
@@ -311,7 +375,17 @@ export function createRealtimeStore(
           );
         }
       }
-      commit({ positions: deduped, lastError: null, feedVehicleCount, feedHealthByRoute }, true);
+      commit(
+        {
+          positions: deduped,
+          lastError: null,
+          feedVehicleCount,
+          feedHealthByRoute,
+          byCategory,
+          plannerSkipped: current.plannerSkipped,
+        },
+        true,
+      );
       consecutiveFailures = 0;
     } catch (err) {
       if (ctrl.signal.aborted) return;
@@ -328,7 +402,7 @@ export function createRealtimeStore(
       setRefreshing(false);
       if (
         refCount > 0 &&
-        routeCodes.length > 0 &&
+        wanted() &&
         cfg.appState.currentState === "active"
       ) {
         scheduleNext();
@@ -377,7 +451,7 @@ export function createRealtimeStore(
     if (!appStateSub) {
       appStateSub = cfg.appState.addEventListener("change", onAppStateChange);
     }
-    if (routeCodes.length === 0) return;
+    if (!wanted()) return;
     if (cfg.appState.currentState === "active") {
       void tick();
     }
@@ -388,6 +462,8 @@ export function createRealtimeStore(
     cancelInflight();
     plan = null;
     lastByCategory.clear();
+    lastFetchAt.clear();
+    lastOkAt.clear();
     healthByCategory.clear();
     partialThrottle = null;
     outlier.reset();
@@ -421,17 +497,38 @@ export function createRealtimeStore(
       routeCodes = [...next];
       plan = null;
       lastByCategory.clear();
+      lastFetchAt.clear();
+      lastOkAt.clear();
       healthByCategory.clear();
       partialThrottle = null;
-      if (routeCodes.length === 0) {
+      if (!wanted()) {
         clearTimer();
         cancelInflight();
         setRefreshing(false);
         setNextRefreshAt(null);
-        commit({ positions: [] }, false);
+        commit({ positions: [], byCategory: {}, plannerSkipped: [] }, false);
         return;
       }
       if (refCount > 0 && cfg.appState.currentState === "active") {
+        void tick();
+      }
+    },
+    setExtraRoutes(_source, next) {
+      if (sameExtraRoutes(extraRoutes, next)) return;
+      const wasPolling = wanted();
+      extraRoutes = [...next];
+      plan = null;
+      if (!wanted()) {
+        clearTimer();
+        cancelInflight();
+        setRefreshing(false);
+        setNextRefreshAt(null);
+        commit({ positions: [], byCategory: {}, plannerSkipped: [] }, false);
+        return;
+      }
+      // Already polling: the next scheduled tick picks the new plan up, so
+      // the planner never adds requests outside the poll cadence.
+      if (!wasPolling && refCount > 0 && cfg.appState.currentState === "active") {
         void tick();
       }
     },
@@ -446,16 +543,10 @@ export function createRealtimeStore(
         stopPolling();
         refCount = 0;
         routeCodes = [];
+        extraRoutes = [];
         listeners.clear();
         consecutiveFailures = 0;
-        snapshot = {
-          positions: [],
-          lastUpdated: null,
-          lastError: null,
-          nextRefreshAt: null,
-          isRefreshing: false,
-          feedVehicleCount: null,
-        };
+        snapshot = EMPTY_SNAPSHOT;
         positionFilter = (p) => p;
       },
       refCount() {

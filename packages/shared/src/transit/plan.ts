@@ -45,8 +45,7 @@ export interface LiveSnapshot {      // one entry per polled category
 }
 export interface PlanResult { itineraries: Itinerary[]; excludedFeeds: FeedId[] } // banner from excludedFeeds, even when empty
 // export function plan(net: TransitNetwork, q: PlanQuery): Generator<void, PlanResult>; // yields between rounds
-// export function retime(its: Itinerary[], live: LiveSnapshot, net: TransitNetwork,
-//   ctx: Pick<PlanQuery, 'to' | 'walkMetersPerMin' | 'modes'>): Itinerary[];
+// `retime(its, live, net, ctx: Pick<PlanQuery, 'to' | 'walkMetersPerMin' | 'modes'>): Itinerary[]` is in retime.ts (14/05).
 
 /** The range `plan()` searches after `departAt`: 14/00's decision kept the 40-min window. */
 export const PLAN_WINDOW_SEC = RANGE_WINDOW_SEC;
