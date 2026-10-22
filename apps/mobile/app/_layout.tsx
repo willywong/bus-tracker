@@ -201,6 +201,18 @@ function AppStack() {
             contentStyle: { backgroundColor: SHEET_BACKGROUND },
           }}
         />
+        {/* Temporary (plan 14/00): planner timing harness. */}
+        <Stack.Screen
+          name="dev-planner"
+          options={{
+            presentation: 'formSheet',
+            sheetAllowedDetents: [1],
+            sheetGrabberVisible: true,
+            headerShown: true,
+            headerTransparent: true,
+            contentStyle: { backgroundColor: SHEET_BACKGROUND },
+          }}
+        />
       </Stack>
     </ThemeProvider>
   );
