@@ -279,7 +279,7 @@ export function TripView({ peek, scheme }: { peek: boolean; scheme: 'light' | 'd
 }
 
 /** Hands off to Apple Maps in walking mode (Look Around included there). */
-function openWalkingDirections(stop: { lat: number; lng: number }) {
+export function openWalkingDirections(stop: { lat: number; lng: number }) {
   void Linking.openURL(`https://maps.apple.com/?daddr=${stop.lat},${stop.lng}&dirflg=w`);
 }
 
