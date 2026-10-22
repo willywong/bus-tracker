@@ -44,7 +44,8 @@ const CROSSFADE_OUT = FadeOut.duration(motion.crossfade).easing(EASE_OUT).reduce
  * 3. the proportional journey bar;
  * 4. Live or Scheduled (glyph and word), changes and walk, and the tag. For
  *    4 s after a retime moved it, that line reads "Updated · was 9:12".
- * A warning sits under it. 15/05 reuses this row as the itinerary's peek.
+ * A warning sits under it. 15/05 reuses this row as the itinerary's peek:
+ * without `onPress` it's one plain VoiceOver element, not a button.
  */
 export function ResultRow({
   it,
@@ -58,7 +59,7 @@ export function ResultRow({
   routes: RouteInfo;
   /** `run.updatedIds.has(it.id)`. */
   updated: boolean;
-  onPress: () => void;
+  onPress?: () => void;
 }) {
   const leave = leaveLabel(it, now, formatClockHHMM);
   const arrive = formatClockHHMM(it.arriveAt);
@@ -70,13 +71,9 @@ export function ResultRow({
   const warning = warningNote(it);
   const missed = it.warnings.includes('missed-connection');
 
-  return (
-    <RowButton
-      onPress={onPress}
-      style={styles.row}
-      accessibilityLabel={resultAccessibilityLabel(it, now, formatClockHHMM, routes)}
-      accessibilityHint="Shows the steps and the map"
-    >
+  const label = resultAccessibilityLabel(it, now, formatClockHHMM, routes);
+  const content = (
+    <>
       <View style={styles.line}>
         <Host matchContents>
           <SwiftText
@@ -135,6 +132,19 @@ export function ResultRow({
       </View>
 
       {warning ? <Text style={[styles.warning, missed && styles.warningUrgent]}>{warning}</Text> : null}
+    </>
+  );
+
+  if (!onPress) {
+    return (
+      <View style={styles.row} accessible accessibilityLabel={label}>
+        {content}
+      </View>
+    );
+  }
+  return (
+    <RowButton onPress={onPress} style={styles.row} accessibilityLabel={label} accessibilityHint="Shows the steps and the map">
+      {content}
     </RowButton>
   );
 }

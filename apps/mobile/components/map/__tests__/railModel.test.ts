@@ -18,6 +18,7 @@ import {
   railStationMarks,
   railStationsFor,
   railZoomBand,
+  stationsInFocus,
   zoomFromRegion,
 } from '@/components/map/railModel';
 
@@ -244,4 +245,17 @@ test('zoomFromRegion returns ~11 for KL_REGION on a 393 pt wide screen', () => {
   assert.ok(Math.abs(z - 11) < 0.25, `zoom ${z}`);
   // Halving the span is one zoom level in.
   assert.ok(Math.abs(zoomFromRegion(0.125, 393) - z - 1) < 1e-9);
+});
+
+test('stationsInFocus keeps only stations on a focused line, all without focus', () => {
+  const line = (routeId: string, color: string) => ({ routeId, color, coords: [] });
+  const mark = (id: string, colors: string[]) => ({ id, name: id, lat: 0, lng: 0, colors, interchange: colors.length > 1, label: id });
+  const lines = [line('rail:KJ', '#E0115F'), line('rail:MR', '#84C341')];
+  const stations = [mark('kl-sentral', ['#e0115f', '#84c341']), mark('bukit-bintang', ['#84C341']), mark('kelana-jaya', ['#E0115F'])];
+  assert.equal(stationsInFocus(stations, lines, null), stations);
+  assert.deepEqual(
+    stationsInFocus(stations, lines, ['rail:MR']).map((s) => s.id),
+    ['kl-sentral', 'bukit-bintang'],
+  );
+  assert.deepEqual(stationsInFocus(stations, lines, ['rail:XX']), []);
 });

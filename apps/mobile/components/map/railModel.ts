@@ -195,6 +195,21 @@ export function railStationMarks(stations: readonly RailStation[]): RailStationD
 }
 
 /**
+ * The stations to mark under a focus: only those on a focused line (matched
+ * by line colour, since a mark carries colours, not route ids), so the 15%
+ * lines don't keep full-strength squares. No focus: every station.
+ */
+export function stationsInFocus(
+  stations: readonly RailStationDraw[],
+  lines: readonly RailLineDraw[],
+  focus: readonly string[] | null,
+): readonly RailStationDraw[] {
+  if (!focus) return stations;
+  const colors = new Set(lines.filter((l) => focus.includes(l.routeId)).map((l) => l.color.toUpperCase()));
+  return stations.filter((s) => s.colors.some((c) => colors.has(c.toUpperCase())));
+}
+
+/**
  * Alpha suffix for a line's `#RRGGBB`. A focus (an itinerary's lines) keeps
  * its routes full and drops the rest to 15%; otherwise lines are full, or
  * 35% when zoomed out (`dim`).

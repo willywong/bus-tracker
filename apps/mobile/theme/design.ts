@@ -157,17 +157,20 @@ export function sheetDetents(windowHeight: number, topInset: number): [number, n
 }
 
 /**
- * Detents for the `itinerary` sheet: the same peek as the trip sheet (so it
- * covers the trip peek exactly), half, large.
+ * The itinerary peek holds its header, the result row and Go, so it stands
+ * taller than the trip peek it covers.
  */
+const ITINERARY_PEEK_HEIGHT = PEEK_CONTENT_HEIGHT + 60;
+
+/** Detents for the `itinerary` sheet: peek (header, row and Go), half, large. */
 export function itineraryDetents(windowHeight: number, topInset: number): [number, number, number] {
-  return [peekDetent(windowHeight, topInset), 0.5, 1];
+  return [peekDetent(windowHeight, topInset, ITINERARY_PEEK_HEIGHT, 0.45), 0.5, 1];
 }
 
 /** Peek as a fraction of the sheet's largest height. The cap leaves room on an iPhone SE (212 / 647pt). */
-function peekDetent(windowHeight: number, topInset: number): number {
+function peekDetent(windowHeight: number, topInset: number, height = PEEK_CONTENT_HEIGHT, cap = 0.35): number {
   const max = Math.max(1, windowHeight - topInset);
-  return Math.min(0.35, PEEK_CONTENT_HEIGHT / max);
+  return Math.min(cap, height / max);
 }
 export const SHEET_INITIAL_DETENT = 1;
 export type DetentIndex = 0 | 1 | 2;

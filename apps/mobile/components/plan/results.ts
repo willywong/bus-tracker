@@ -71,7 +71,8 @@ export function routeInfoOf(net: { routes: { longName: string[]; textColor: stri
   };
 }
 
-function rideChip(l: Ride, routes: RouteInfo): Chip {
+/** One ride's chip (also the itinerary timeline's, 15/05). */
+export function rideChip(l: Ride, routes: RouteInfo): Exclude<Chip, { kind: 'walk' }> {
   if (isBus(l)) return { kind: 'bus', label: l.label, every: everyOf(l) };
   return {
     kind: 'rail',

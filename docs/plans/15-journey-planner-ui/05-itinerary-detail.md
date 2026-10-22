@@ -183,3 +183,64 @@ The map fits all legs and draws them in order over 650 ms (all at once under Red
 - `useOpenItinerary()`, `ItineraryLayer` and `timelineRows` are ready for Go mode. 06 reuses the layer and timeline with a "current leg" highlight.
 - `walkPaths` are cached per itinerary, so Go mode reuses them for off-route distance.
 - The Go button calls `ride.startJourney(it)`, which 06 implements.
+
+## Implementation notes
+- **Files.**
+  - Pure: `components/itinerary/model.ts` has `timelineRows`, `railBetween`, `rideSummary`, `timelineLabels`, `headerSubtitle`, `detailNotes`, `railRouteIds`, `findSuccessor` and `resolveOpen`. `components/map/drawOn.ts` has `drawSchedule`, `easeOutTimeAt` and `DrawLeg`. `components/map/itineraryGeometry.ts` has `itineraryDrawLegs`, `sliceShape` and `walkRequests`.
+  - Views: `components/itinerary/{Timeline,GoButton}.tsx` and `components/map/ItineraryLayer.tsx`.
+  - Hook: `hooks/useWalkPaths.ts`.
+  - Edited: `state/PlannerContext.tsx`, `app/itinerary.tsx` and `app/index.tsx`, plus three small shared edits: `results.ts` exports `rideChip`, `ResultRow.onPress` is optional (without it the row is one plain VoiceOver element), and `DetailHeader` takes `backLabel`.
+  - Tests: `components/itinerary/__tests__/model.test.ts` (11: the 8 named, plus rails/labels, detail notes and the open-id fallback) and `components/map/__tests__/drawOn.test.ts` (5 named, plus 2 for the leg geometry).
+- **Open id after a retime (step 2).** It stays in step with `run`. `setOpenId(id)` records the id and its index in the results. `resolveOpen(open, prev, its)` then tries, in order:
+  1. the id;
+  2. `findSuccessor(prev)`;
+  3. the same index, clamped;
+  4. with no results (a re-plan in flight), the last itinerary shown.
+
+  The provider moves `openId` to whatever it returns, so `walkPaths` and `focusLeg` follow the itinerary. `useOpenItinerary()` reads `planner.openItinerary`. The successor still carries `previousArriveAt` and `'missed-connection'` from `retime`.
+- **Rail focus.** `useRailFocus({ stationId: null, routeIds, point: null })` replaces `trip.setRailFocus(...)`, as 13/05 says. A bus-only itinerary claims nothing, so the rail stays at full strength.
+- **Map (`index.tsx`).**
+  - While an itinerary is open, the trip's `RouteLayer`, ghost, bus markers and `RouteShimmer` hide. Bus markers stop their glides first, as the My buses toggle does. `ItineraryLayer` is the last `MapView` child, keyed `${drawKey}|${railKey}`.
+  - `drawKey` is the id plus the ride legs' point counts. A walk path that arrives later remounts only that walk's polyline (keyed by its point count), never the whole layer, so a draw in progress isn't restarted.
+  - The camera steps:
+    1. Opening fits every leg.
+    2. The draw starts on the first `onRegionChangeComplete`, or after 400 ms.
+    3. A detent change re-fits, unless the map was panned.
+    4. Each `focusLeg.nonce` fits that leg.
+    5. Recenter fits the legs.
+    6. Closing re-frames the trip.
+  - `frameTrip`'s route, detent and selection effects are skipped while an itinerary is open. In the 13/05 rail-focus effect, the itinerary's own claim doesn't re-fit, a station over it frames the station (13/05), and closing that station fits the legs again.
+  - Bottom padding is `(windowHeight − insets.top) × itineraryDetents()[min(d, 1)] + 32`, plus `insets.bottom` at peek, as the trip sheet's height adds it.
+- **Draw state.** A draw plays once per opening. `onDrawn` sets `itDrawn`, so a later remount (a rail restyle, a successor) shows the finished legs at once. Under Reduce Motion everything is drawn at once. Bus and rail chunk casings use butt caps, so a casing doesn't cover the end of the ink before it. The swap to one polyline per leg goes in a `Fragment` keyed `${drawKey}-final`.
+- **Geometry.**
+  - Rail legs slice the stored `rail_shapes` line (13/02) between the two stations. Each station is projected onto the segments, not snapped to the nearest vertex, because Douglas–Peucker leaves long straights with no vertices.
+  - A slice is refused when a station is more than 150 m off the shape, or when the slice is more than 1.6 × the stop-to-stop path + 300 m (the wrong pass of a loop). The leg then runs `[from, ...via, to]`.
+  - Phase 12 exposes no bus shapes. The one bus geometry on hand is the tracked route's `trip.route.polyline`, used for a bus leg with that label (e.g. T816) under the same checks. Other bus legs run stop to stop.
+  - Walks are `[from, ...path, to]` once the path is loaded.
+- **Walk paths.** `useWalkPaths(it)` runs in `itinerary.tsx` once per open id. It requests walks of at least 40 m, at most four, one at a time. `ERR_THROTTLED` stops the rest; every other error keeps the straight dotted line, silently. `walkPaths` is cleared when `run.key` changes.
+- **Timeline model deviations.**
+  - `timelineRows(it, net, clock)` takes a clock, not `now`, to format "Live · as of 08:41". Live timing has no stop count, so "Live · 2 stops away" never shows.
+  - `TimeCell` adds `{ kind: 'about'; at }`. A headway over 5 min shows an "about" time, under the board's honesty rule: ≤ 5 min reads "every N mins", longer reads "about". The alight time of any headway leg is "about". KTM is timetabled, so it is `scheduled`, with the clock glyph.
+  - Board and alight rows carry `end`. When a ride starts or ends the journey (no walk, or only a snap walk under 30 s, which gets no row, like the chips), that row draws the end pin and no separate end row is added.
+  - Walk rows carry `change`. `Chip` is `rideChip` from `components/plan/results.ts`.
+- **Sheet deviations.**
+  - The body also starts with Go. The sheet opens at 0.5, where the peek's Go is hidden, so without it Go would only show after collapsing to peek.
+  - The detail keeps "Updated · was 9:12" for as long as `previousArriveAt` differs, instead of flashing it. A missed connection reads "Connection missed. Times updated · was 9:12" in orange.
+  - Stations open with `router.push`. A ride row's head (chip, "towards …") is the tappable, spoken element, and its `DisclosureGroup` is a separate element, so it can be expanded with VoiceOver.
+  - With no itinerary (e.g. after a JS reload) the sheet says "This route is no longer available" under the back button rather than showing nothing.
+- **Not done.**
+  - `ride.startJourney` doesn't exist yet, so Go is a no-op until 06.
+  - On device, still to check:
+    - the replace between `plan` and `itinerary` animates cleanly;
+    - the `[0.1, 6]` dot pattern renders (else `[2, 5]` in `ItineraryLayer.LegLine`);
+    - the peek fits the result row plus Go in 212 pt.
+- **For 06.**
+  - `ItineraryLayer` with `animate={false}` draws the finished legs.
+  - `itineraryDrawLegs` gives the ride and walk coordinates for off-route distance. `walkPaths[it.id]` is cached per itinerary.
+  - `Timeline` takes `rows`. `currentLeg` can key off `legIndex`.
+  - `findSuccessor` and `resolveOpen` are exported.
+- **Build impact:** JS-only (Metro reload).
+- **Root-agent fixes after the device check.**
+  - The peek is taller than the trip peek: `itineraryDetents` uses `PEEK_CONTENT_HEIGHT + 60` (capped at 0.45), since the header, the result row and Go didn't fit in 212 pt. The trip peek is unchanged, and `frameItinerary` reads the same detents.
+  - Rapid Rail headsigns read "From KL Sentral to Titiwangsa". `railHeadsign` keeps only the destination ("towards Titiwangsa"), for both the timeline and the spoken labels.
+  - With a rail focus, `RailLayer` now drops the station squares that aren't on a focused line (`stationsInFocus`, matched by line colour). The selected station always stays. Before this, the 15% lines kept full-strength squares that crowded the itinerary map.

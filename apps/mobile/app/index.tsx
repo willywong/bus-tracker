@@ -9,9 +9,12 @@ import {
   View,
 } from 'react-native';
 import MapView, { AnimatedRegion, PROVIDER_DEFAULT, type Region } from 'react-native-maps';
+import { useReducedMotion } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BusMarker, GhostBusMarker } from '@/components/map/BusMarker';
+import { itineraryDrawLegs } from '@/components/map/itineraryGeometry';
+import { ItineraryLayer, type DrawLeg } from '@/components/map/ItineraryLayer';
 import { RailLayer } from '@/components/map/RailLayer';
 import {
   railLines,
@@ -31,9 +34,10 @@ import { useRailShapes } from '@/hooks/useRailShapes';
 import { useScheduledBusPosition } from '@/hooks/useScheduledBusPosition';
 import { useSettings, type MapLayers, type MapType } from '@/hooks/useSettings';
 import { useTransitNetwork } from '@/hooks/useTransitNetwork';
+import { useOpenItinerary, usePlanner } from '@/state/PlannerContext';
 import { useRide } from '@/state/RideContext';
 import { useTrip } from '@/state/TripContext';
-import { hex, pick, sheetDetents } from '@/theme/design';
+import { hex, itineraryDetents, pick, sheetDetents } from '@/theme/design';
 import { haptics } from '@/utils/haptics';
 import {
   nearbyRailStations,
@@ -61,6 +65,8 @@ const NO_POSITIONS: VehiclePosition[] = [];
 const NO_RAIL_STATIONS: RailStationMark[] = [];
 /** The station sheet's resting detent (`_layout.tsx`): a focused station is framed above it. */
 const STATION_SHEET_DETENT = 0.5;
+/** An opened itinerary draws on once the camera settles on it, or after this long. */
+const DRAW_START_MAX_MS = 400;
 
 type Coord = { latitude: number; longitude: number };
 
@@ -89,6 +95,16 @@ export default function MapScreen() {
     () => (rideDest ? { lat: rideDest.lat, lng: rideDest.lng, name: rideDest.name } : null),
     [rideDest?.lat, rideDest?.lng, rideDest?.name],
   );
+  // An itinerary open in its sheet (plan 15/05) takes the map over from the
+  // trip: its legs are drawn, and the trip's route, buses and shimmer hide
+  // so two ink lines never mean different things.
+  const planner = usePlanner();
+  const openIt = useOpenItinerary();
+  const itOpen = openIt != null;
+  const itOpenRef = useRef(itOpen);
+  itOpenRef.current = itOpen;
+  const reduceMotion = useReducedMotion();
+
   const route = trip.route;
   const polyline = useMemo(
     () =>
@@ -101,9 +117,15 @@ export default function MapScreen() {
   const sheetHeight =
     (windowHeight - insets.top) * sheetDetents(windowHeight, insets.top)[Math.min(trip.detent, 1)] +
     (trip.detent === 0 ? insets.bottom : 0);
+  // The itinerary sheet over it, by the same rule.
+  const itDetent = planner.itineraryDetent;
+  const itSheetHeight =
+    (windowHeight - insets.top) * itineraryDetents(windowHeight, insets.top)[Math.min(itDetent, 1)] +
+    (itDetent === 0 ? insets.bottom : 0);
+  const coveredHeight = itOpen ? itSheetHeight : sheetHeight;
   const legalLabelInsets = useMemo(
-    () => ({ top: 0, right: 16, bottom: sheetHeight + 8, left: 16 }),
-    [sheetHeight],
+    () => ({ top: 0, right: 16, bottom: coveredHeight + 8, left: 16 }),
+    [coveredHeight],
   );
 
   // --- Rail stations within a short walk of your stop ------------------------
@@ -131,7 +153,7 @@ export default function MapScreen() {
     railZoomBand(zoomFromRegion(KL_REGION.longitudeDelta, windowWidth)),
   );
   const railDim = zoomBand === 0;
-  // An open station or line sheet (plan 13/05), later the itinerary (15/05).
+  // An open station, line or itinerary sheet (plans 13/05, 15/05).
   const focus = trip.railFocus;
   const railFocus = useMemo(
     () => mapRailFocus(focus, railLineDraws.map((l) => l.routeId)),
@@ -158,6 +180,41 @@ export default function MapScreen() {
     [router],
   );
 
+  // --- The open itinerary's legs (plan 15/05) --------------------------------
+  // Rail legs follow the stored line shapes; a bus leg on the tracked route
+  // follows its road shape; walks follow Apple's path once it's loaded. The
+  // legs only move with the itinerary's id (its stops), the network and
+  // those sources: a retime's new object with the same id draws the same.
+  const itNet = planner.run.network;
+  const itWalks = openIt ? planner.walkPaths[openIt.id] : undefined;
+  const tripCode = route?.routeCode;
+  const tripLine = route?.polyline;
+  const busShapes = useMemo(
+    () => (tripCode && tripLine && tripLine.length >= 2 ? new Map([[tripCode, tripLine]]) : undefined),
+    [tripCode, tripLine],
+  );
+  const openItRef = useRef(openIt);
+  openItRef.current = openIt;
+  const itId = openIt?.id ?? null;
+  const itLegs = useMemo<DrawLeg[]>(() => {
+    const it = openItRef.current;
+    if (!it || !itNet) return [];
+    return itineraryDrawLegs(it, { routeIds: itNet.routes.id, railShapes, busShapes, walkPaths: itWalks });
+    // `itId` stands for the itinerary's stops; the ref carries the object.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itId, itNet, railShapes, busShapes, itWalks]);
+  // A walk's path arriving later remounts that walk alone (ItineraryLayer),
+  // so only the rides' geometry is part of the key.
+  const drawKey = `${itId}|${itLegs.map((l) => (l.kind === 'walk' ? 'w' : l.coords.length)).join(',')}`;
+  const itCoords = useMemo(() => itLegs.flatMap((l) => l.coords), [itLegs]);
+  const legsRef = useRef(itLegs);
+  legsRef.current = itLegs;
+  const [drawStart, setDrawStart] = useState(false);
+  const [itDrawn, setItDrawn] = useState(false);
+  const onItDrawn = useCallback(() => setItDrawn(true), []);
+  /** Set from opening until the camera first settles: that starts the draw. */
+  const awaitingDraw = useRef(false);
+
   // --- Live bus markers ----------------------------------------------------
   // Drawn in the lane, with the arrow along the road (see snapPositions).
   const feedPositions = route ? trip.bus.positions : NO_POSITIONS;
@@ -169,13 +226,15 @@ export default function MapScreen() {
   const markers = useGlidingMarkers(positions, trip.routeCode);
   // My buses off: stop every glide first and unmount the markers on the next
   // render. Unmounting one mid-animation trips Fabric (see useGlidingMarkers).
-  const [busMarkersShown, setBusMarkersShown] = useState(layers.myBuses);
+  // An open itinerary hides them the same way.
+  const busesOn = layers.myBuses && !itOpen;
+  const [busMarkersShown, setBusMarkersShown] = useState(busesOn);
   useEffect(() => {
-    if (!layers.myBuses) for (const m of markers) stopAnimation(m.region);
-    setBusMarkersShown(layers.myBuses);
+    if (!busesOn) for (const m of markers) stopAnimation(m.region);
+    setBusMarkersShown(busesOn);
     // Only on the toggle; `markers` is this render's list.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layers.myBuses]);
+  }, [busesOn]);
   const primaryVehicleId =
     trip.eta.primaryArrival?.kind === 'live'
       ? trip.eta.primaryArrival.live?.vehicleId ?? null
@@ -219,6 +278,10 @@ export default function MapScreen() {
     cameraMoving.current = false;
     setCameraSettled(true);
     setCameraTick((t) => t + 1);
+    if (awaitingDraw.current) {
+      awaitingDraw.current = false;
+      setDrawStart(true);
+    }
     // Same band: React bails out, nothing re-renders for the rail layer.
     setZoomBand(railZoomBand(zoomFromRegion(region.longitudeDelta, windowWidth)));
     if (!holdPeek) return;
@@ -337,7 +400,8 @@ export default function MapScreen() {
   // pending timer just reschedules it.
   const framedKey = useRef<string | null>(null);
   useEffect(() => {
-    if (!route) return;
+    // An open itinerary owns the camera; closing it re-frames the trip.
+    if (!route || itOpenRef.current) return;
     const key = `${route.routeCode}|${route.stopId}`;
     if (framedKey.current === key) return;
     const t = setTimeout(() => {
@@ -351,7 +415,7 @@ export default function MapScreen() {
   // Re-frame when the tracked bus or the sheet height changes — unless the
   // user has taken over the camera.
   useEffect(() => {
-    if (userPanned) return;
+    if (userPanned || itOpenRef.current) return;
     frameRef.current(true);
   }, [primaryVehicleId, trip.detent, userPanned]);
 
@@ -360,25 +424,112 @@ export default function MapScreen() {
   useEffect(() => {
     if (lastSelection.current === selectionKey) return;
     lastSelection.current = selectionKey;
+    if (itOpenRef.current) return;
     setUserPanned(false);
     frameRef.current(true);
   }, [selectionKey]);
 
   // Opening, switching or closing a station or line re-frames too; closing
-  // goes back to the trip.
+  // goes back to the trip, or to the itinerary's legs when one is open
+  // (its own focus has no point).
   const focusKey = focus?.stationId ?? focus?.routeIds.join() ?? null;
   const lastFocus = useRef(focusKey);
+  const lastHadPoint = useRef(focusPoint != null);
   useEffect(() => {
     if (lastFocus.current === focusKey) return;
     lastFocus.current = focusKey;
+    const hadPoint = lastHadPoint.current;
+    lastHadPoint.current = focusPoint != null;
+    if (itOpenRef.current && !focusPoint) {
+      // The itinerary's own claim is framed by its opening; a station
+      // closing over it goes back to the legs.
+      if (!hadPoint) return;
+      setUserPanned(false);
+      frameItRef.current(true);
+      return;
+    }
     setUserPanned(false);
     frameRef.current(true);
+    // `focusPoint` changes with `focusKey`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusKey]);
+
+  // --- Itinerary camera (plan 15/05) ----------------------------------------
+  // Fits the legs (or one leg) in the map left above the itinerary sheet.
+  const frameItinerary = useCallback(
+    (coords: readonly Coord[], animated: boolean) => {
+      const map = mapRef.current;
+      if (!map || coords.length === 0) return;
+      let target = coords as Coord[];
+      if (target.length === 1) {
+        const c = target[0];
+        target = [
+          { latitude: c.latitude - SINGLE_POINT_SPAN, longitude: c.longitude - SINGLE_POINT_SPAN },
+          { latitude: c.latitude + SINGLE_POINT_SPAN, longitude: c.longitude + SINGLE_POINT_SPAN },
+        ];
+      }
+      map.fitToCoordinates(target, {
+        edgePadding: { top: insets.top + 80, right: 56, bottom: itSheetHeight + 32, left: 56 },
+        animated,
+      });
+    },
+    [insets.top, itSheetHeight],
+  );
+  const frameItRef = useRef((animated: boolean) => frameItinerary(itCoords, animated));
+  frameItRef.current = (animated: boolean) => frameItinerary(itCoords, animated);
+  const frameLegRef = useRef(frameItinerary);
+  frameLegRef.current = frameItinerary;
+  const userPannedRef = useRef(userPanned);
+  userPannedRef.current = userPanned;
+
+  // 1. Opening fits all the legs; 2. the draw starts once the camera first
+  // settles, or after 400 ms. Closing goes back to the trip.
+  useEffect(() => {
+    if (!itOpen) return;
+    setUserPanned(false);
+    setItDrawn(false);
+    setDrawStart(false);
+    awaitingDraw.current = true;
+    frameItRef.current(true);
+    const t = setTimeout(() => {
+      awaitingDraw.current = false;
+      setDrawStart(true);
+    }, DRAW_START_MAX_MS);
+    return () => {
+      clearTimeout(t);
+      awaitingDraw.current = false;
+      // Reset now, so the next itinerary's first frame doesn't show it drawn.
+      setItDrawn(false);
+      setDrawStart(false);
+      setUserPanned(false);
+      frameRef.current(true);
+    };
+  }, [itOpen]);
+
+  // 3. The sheet changing detent re-fits, unless the map was moved by hand.
+  useEffect(() => {
+    if (!itOpenRef.current || userPannedRef.current) return;
+    frameItRef.current(true);
+  }, [itDetent]);
+
+  // 4. A leg tapped in the timeline fits that leg, every tap.
+  const focusNonce = planner.focusLeg?.nonce ?? null;
+  const focusIndex = planner.focusLeg?.index ?? null;
+  useEffect(() => {
+    if (focusNonce == null || focusIndex == null || !itOpenRef.current) return;
+    const leg = legsRef.current[focusIndex];
+    if (!leg) return;
+    setUserPanned(false);
+    frameLegRef.current(leg.coords, true);
+    // The nonce stands for the tap; the index comes with it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusNonce]);
 
   const recenter = useCallback(() => {
     haptics.light();
     setUserPanned(false);
-    frameRef.current(true);
+    if (itOpenRef.current) frameItRef.current(true);
+    else frameRef.current(true);
   }, []);
 
   // Stable callback over the latest model so the toolbar doesn't rebuild on
@@ -465,7 +616,7 @@ export default function MapScreen() {
             onStationPress={openStation}
           />
         ) : null}
-        {route && layers.myBuses ? (
+        {route && layers.myBuses && !itOpen ? (
           <RouteLayer
             key={`${route.routeCode}|${route.stopId}|${railKey}`}
             polyline={polyline}
@@ -483,7 +634,7 @@ export default function MapScreen() {
             onUserStopPress={clearSelection}
           />
         ) : null}
-        {route && layers.myBuses && ghost.coord && positions.length === 0 ? (
+        {route && layers.myBuses && !itOpen && ghost.coord && positions.length === 0 ? (
           <GhostBusMarker
             coordinate={{ latitude: ghost.coord.lat, longitude: ghost.coord.lng }}
             color={ink}
@@ -516,8 +667,23 @@ export default function MapScreen() {
             />
           );
         })}
+        {/* Last child: the legs are re-added on top whenever rail is (see railKey). */}
+        {openIt && itLegs.length > 0 ? (
+          <ItineraryLayer
+            key={`${drawKey}|${railKey}`}
+            legs={itLegs}
+            drawKey={drawKey}
+            ink={ink}
+            paper={mapPaper}
+            casing={casing}
+            reduceMotion={reduceMotion}
+            animate={!itDrawn}
+            start={drawStart}
+            onDrawn={onItDrawn}
+          />
+        ) : null}
       </MapView>
-      {route && layers.myBuses ? (
+      {route && layers.myBuses && !itOpen ? (
         <RouteShimmer
           mapRef={mapRef}
           path={aheadPath}

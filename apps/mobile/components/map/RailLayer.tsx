@@ -1,9 +1,10 @@
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Marker, Polyline } from 'react-native-maps';
 
 import {
   railAlpha,
+  stationsInFocus,
   type RailLineDraw,
   type RailStationDraw,
 } from '@/components/map/railModel';
@@ -55,6 +56,7 @@ export const RailLayer = memo(function RailLayer({
   selectedStationId = null,
   onStationPress,
 }: RailLayerProps) {
+  const shown = useMemo(() => new Set(stationsInFocus(stations, lines, focus)), [stations, lines, focus]);
   return (
     <>
       {lines.map((line) => {
@@ -81,6 +83,7 @@ export const RailLayer = memo(function RailLayer({
       {stations.map((s) => {
         const selected = s.id === selectedStationId;
         if (!showAllStations && !s.interchange && !selected) return null;
+        if (!selected && !shown.has(s)) return null;
         const dots = Math.max(1, s.colors.length);
         return (
           <Marker

@@ -116,6 +116,7 @@ export function DetailHeader({
   strip,
   peekContent,
   onBack,
+  backLabel = 'Back to your trip',
 }: {
   title: string;
   subtitle: string | null;
@@ -124,6 +125,8 @@ export function DetailHeader({
   /** Peek only: a PeekCard under the title, in place of the strip. */
   peekContent?: ReactNode;
   onBack: () => void;
+  /** VoiceOver label of the back button. */
+  backLabel?: string;
 }) {
   const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
   return (
@@ -137,7 +140,7 @@ export function DetailHeader({
               buttonBorderShape('circle'),
               controlSize('large'),
               tint(pick(hex.ink, scheme)),
-              accessibilityLabel('Back to your trip'),
+              accessibilityLabel(backLabel),
             ]}
           >
             <SwiftImage systemName="chevron.left" size={17} />
