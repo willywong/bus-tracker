@@ -22,7 +22,7 @@ Every feature below runs **on the phone, with no BusBuddy server**, using only t
 
 ## 2. Recommended order
 
-**Status:** Phases 1, 2 and 4 are built (marked ✅ below); Phase 3 is next. Where the code lives:
+**Status:** Phases 1, 2, 4 and 5 are built (marked ✅ below). Phase 3 is still open, and the [follow-ups](#follow-ups-after-phase-5) after Phase 5 are the other candidates. Where the code lives (paths under `apps/mobile/` unless they say otherwise):
 
 | Area | Code |
 | --- | --- |
@@ -35,6 +35,13 @@ Every feature below runs **on the phone, with no BusBuddy server**, using only t
 | Arrive-at-stop geofence | `services/arrival/geofence.ts` |
 | Rain nudges | `services/weather/` |
 | Rail connections | `packages/shared/src/utils/rail.ts`, `components/trip/Connections.tsx` |
+| Rail layer, station and line sheets, rail map | `components/rail/` (the schematic map in `components/rail/diagram/`), `components/map/RailLayer.tsx` |
+| Journey engine (RAPTOR, live re-timing) | `packages/shared/src/transit/` |
+| Place search, walking paths, Look Around, map snapshots | `modules/transit-maps` (native) |
+| "Where to?" search and results | `components/plan/`, `state/PlannerContext.tsx`, `services/planner/` |
+| Itinerary detail and map legs | `components/itinerary/`, `components/map/ItineraryLayer.tsx` |
+| Go mode | `components/ride/journey.ts`, `state/RideContext.tsx` |
+| Saved places, Home/Work shortcuts, widget home line | `services/places/`, `services/quickActions.ts`, `widgets/nextBusTimeline.ts` |
 
 Effort: S = a day or two, M = about a week, L = more. All items use only GTFS static and vehicle positions unless noted.
 
@@ -74,6 +81,30 @@ Effort: S = a day or two, M = about a week, L = more. All items use only GTFS st
 | 19 | ✅ **Rain and flood nudges:** "Rain warning for Petaling — leave 5 min early." | M | MET `/weather/warning` (Malay text, district-level). Separate rate-limit bucket. |
 | 20 | ✅ **Gaps and bunching:** "Next two buses 2 min apart, then a 40 min gap". Plus personal reliability history from your own polling. | M | Bunching note built. Personal reliability history is not built yet. |
 | 21 | ✅ **Rail connections:** "MRT Phileo Damansara 120 m from this stop" with line colours. | M | Distance join with `rapid-rail-kl` GTFS. |
+
+### Phase 5 — Getting there ("Where to?")
+Built in plan phases 12–15; the spec is [`transit-and-planner.md`](./transit-and-planner.md). Place search and walking paths use Apple MapKit on the phone, with no keys.
+
+| # | Feature | Effort | Notes |
+| --- | --- | --- | --- |
+| 22 | ✅ **Train tracker:** rail lines on the map in their official colours, under the bus route, with station squares. A Layers menu toggles My buses, Rail lines and Satellite. | M | `rapid-rail-kl` and KTM Komuter, compiled on the phone into one network per service day. Rail has no live positions. |
+| 23 | ✅ **Station and line sheets:** a departure board per line and direction ("every 3 min"), nearby buses and walking interchanges; a whole-line strip map with estimated trains. | M | Trains on the strip map are dashed and captioned as timetable spacing. Deep links: `t816://station?station=…`, `t816://line?line=…&dir=…`. |
+| 24 | ✅ **Schematic rail map:** a hand-drawn octilinear KL map (8 lines plus KTM Komuter), pinch and pan; tap a station to open it. VoiceOver gets a list instead. | L | Layers → Rail map. Adds `react-native-svg` (native). |
+| 25 | ✅ **Multi-leg journey planning:** "Where to?" in the peek, up to five door-to-door options across walking, buses, rail and KTM, then an itinerary with a timeline and its legs drawn on the map. | L | Range RAPTOR on the phone, at most 4 rides. Bus legs re-time from live positions ("Updated · was 9:12"); rail always says "every N min" or "about". |
+| 26 | ✅ **Saved places:** Home, Work and up to 6 pins, edited in Settings → Places; Home and Work as circles beside Where to? and as quick actions; the medium widget shows "Home by 18:14 · leave in 6:00". | M | The widget can't plan, so its home line is the app's last plan, written as timeline entries. It is never live and disappears at its leave time. |
+| 27 | ✅ **Go mode:** follow a journey leg by leg in the trip sheet and the Live Activity ("Leg 2 of 4"), with leave, change and get-off alerts and an "Off route? Re-plan from here" button. | M–L | Extends on-board mode. Rail progress runs on the timetable and says "about". Re-planning is never automatic. |
+
+### Follow-ups after Phase 5
+| Follow-up | Why it waits |
+| --- | --- |
+| **Arrive by** | Needs a reverse RAPTOR. The When menu shows it as "Soon". |
+| **Fares** | Not in any feed, so it needs a hand-kept fare table. |
+| **Holiday calendar for rail and `rapid-bus-kl`** | Their feeds have no `calendar_dates`, so holidays aren't modelled; only the feeder feed has them. |
+| **KTM live** | Only if KTMB's realtime feed proves useful for Komuter. |
+| **Decode KTMB realtime in daytime** | Sources disagree on whether it carries ETS only or Komuter too, and the 12/00 decode ran overnight (one ETS train). Re-decode between 07:00 and 22:00 on a weekday and decide. |
+| **Background re-planning of the widget's home line** | Running `plan()` in the background task means a 3 MB network decode inside its time budget. |
+| **A separate "Go home" widget** | A new widget kind is a native change (`app.json` → `expo-widgets`). |
+| **Restore Go after the app is killed** | Today a killed app ends the journey; the next launch only clears its leftover Live Activity. |
 
 ## 3. Deliberately not doing (now)
 - **Crowding or seat availability:** not in the feed.

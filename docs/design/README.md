@@ -132,6 +132,18 @@
 >   peek the body fades in and rises 10pt while the strip and compact number
 >   fade out (240ms, ease-out); into peek it reverses, faster (140ms). The
 >   strip sits over the body's top edge, so nothing reflows mid-fade.
+> - **"Where to?" plans the whole trip** (phases 12–15, spec in
+>   [`transit-and-planner.md`](./transit-and-planner.md)). A glass "Where
+>   to?" capsule tops the trip peek, with Home and Work circles once set. It
+>   opens `plan`: stations and stops first (offline), then Apple places, then
+>   up to five results, each a row of leg chips, a journey bar and one
+>   Live/Scheduled status line that re-times from live bus positions
+>   ("Updated · was 9:12"). A result replaces it with `itinerary`: a timeline
+>   at peek / 0.5 / 1 while the legs draw on the map in order, walks dotted.
+>   **Go** follows that journey in the trip sheet: the current leg, change
+>   and get-off alerts, and the Live Activity's "Leg 2 of 4". Rail is never
+>   live; it reads "every N min" or "about". Rail lines share the map in
+>   their colours, with `station`, `line` and `network` sheets (§2).
 >
 > Sections below describe v2; where they mention glass sheets, blue accent,
 > filled badges or the 88pt rounded bold hero, v3 above wins.
@@ -239,11 +251,17 @@ them (`services/realtimePlan.ts`).
 Root Stack (no tabs)
 ├─ index      Map canvas (full bleed, Apple Maps muted style)
 │   ├─ toolbar left : Route menu  "T816 ▾"  → favourites · Add Route… · Edit…
-│   └─ toolbar right: Recenter · More ▾ (Map style, Share ETA, Settings)
+│   └─ toolbar right: Layers ▾ (My buses, Rail lines, Rail map, Satellite) · Recenter · More ▾ (Share Arrival, Settings)
 ├─ trip       Persistent form sheet over the map (cannot be dismissed)
-│   ├─ peek   (18%)  route badge · stop name · compact ETA
+│   ├─ peek   (18%)  "Where to?" capsule (+ Home · Work) · route badge · stop name · compact ETA
 │   ├─ glance (50%)  hero countdown · status · primary action
-│   └─ large  (100%) + approach timeline · today's timetable · Lock Screen toggle · about
+│   ├─ large  (100%) + approach timeline · today's timetable · Lock Screen toggle · about
+│   └─ Go     a journey in progress replaces the body: current leg · timeline · End
+├─ plan       Form sheet: search (stations, stops, places) → up to 5 results
+├─ itinerary  Form sheet (peek / 0.5 / 1): timeline + legs drawn on the map · Go
+├─ station    Form sheet (0.5 / 1): departure board · nearby buses · interchanges
+├─ line       Form sheet (0.6 / 1): whole-line strip map with estimated trains
+├─ network    Form sheet: schematic rail map (Layers → Rail map)
 ├─ add-route  Form sheet: search → pick boarding stop → saved
 └─ settings   Form sheet: favourites · walking · display · about
 ```
@@ -393,3 +411,11 @@ The sandbox has no iOS simulator. These need a device or simulator pass:
 - the iOS 27 Liquid Glass transparency slider at both ends
 - Dynamic Type at accessibility sizes
 - Reduce Motion and Reduce Transparency
+
+## 7. Motion
+The planner and rail moments (itinerary draw-on, estimated trains, rolling
+countdowns, photos, the result stagger, re-timing, the route loader and Go)
+are listed with their values in
+[`transit-and-planner.md` §7](./transit-and-planner.md#7-motion-and-imagery).
+They use the §4 tokens and haptics, and the same rule: under Reduce Motion
+everything becomes a crossfade, the legs draw at once and trains stand still.
