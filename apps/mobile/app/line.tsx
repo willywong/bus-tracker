@@ -29,7 +29,9 @@ import {
   stripHeader,
   stripModel,
 } from '@/components/rail/stripModel';
+import type { RailFocus } from '@/components/rail/railFocus';
 import { formatClockHHMM } from '@/components/tracker/logic';
+import { useRailFocus } from '@/hooks/useRailFocus';
 import { useTransitNetwork } from '@/hooks/useTransitNetwork';
 import { useTrip } from '@/state/TripContext';
 import { color, MARGIN, space, type } from '@/theme/design';
@@ -65,6 +67,14 @@ export default function LineScreen() {
   }, [network, routeIndex, dirParam, trip.now]);
   const ktm = network != null && routeIndex >= 0 && isKtmRoute(network, routeIndex);
   const header = useMemo(() => (model ? stripHeader(model, ktm, formatClockHHMM) : null), [model, ktm]);
+
+  // While this sheet is focused the map shows this line at full strength.
+  const focusRouteId = model?.routeId ?? null;
+  const railFocus = useMemo<RailFocus | null>(
+    () => (focusRouteId ? { stationId: null, routeIds: [focusRouteId], point: null } : null),
+    [focusRouteId],
+  );
+  useRailFocus(railFocus);
 
   // Bead centres: measured once the rows lay out (Dynamic Type), else the default row height.
   const [measured, setMeasured] = useState<{ pattern: number; ys: number[] } | null>(null);

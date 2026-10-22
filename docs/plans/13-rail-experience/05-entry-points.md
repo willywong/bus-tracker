@@ -81,3 +81,42 @@ Every place a station appears opens it: Connections rows, map station squares, d
 - Entry contract for phase 15: push `/station?station=<slug>` or `/line?line=<routeId>&dir=0|1`; deep links `t816://station/<id>` and `t816://line/<routeId>/<dir>`.
 - `TripContext.railFocus` is the one place map focus lives; 15/05's itinerary view sets it with its rail legs' route ids.
 - Phase 13's required scope ends here. 06 is optional.
+
+## Implementation notes
+
+- **Focus API (for 15/05).** `RailFocus` lives in `components/rail/railFocus.ts` (pure, tested) and is re-exported as a type from `state/TripContext.tsx`.
+  - `TripContext` exposes `railFocus: RailFocus | null` and `setRailFocus(owner: string, f: RailFocus | null)`. This differs from the sketch's `setRailFocus(f)`. Focus is a stack of claims, one per owner, and the newest claim wins. `null` releases only that owner's claim.
+  - **Why owners.** React Navigation runs the new screen's focus effect and the old screen's blur cleanup in either order. With a single `set(null)` on blur, a station opened over a line could end unfocused, and so could a line once a station over it closes. The `railFocus.test.ts` order test covers both cases.
+  - **Screens call `useRailFocus(focus)`** (`hooks/useRailFocus.ts`). It claims under `useId()` from a `useFocusEffect` and releases on blur or unmount. It re-claims only when `railFocusKey(focus)` changes, not when a new object arrives every 15 s.
+  - **15/05:** call `useRailFocus({ stationId: null, routeIds: railLegRouteIds, point: null })` in `itinerary`, and don't touch `TripContext` directly.
+  - `railFocus` isn't cleared on a route or stop change (step 10), unlike `selection`.
+- **Station** focuses its `model.lines[].routeId`s (deduped, non-null) and its lat/lng. **Line** focuses `[model.routeId]` with `point: null`. A missing station or line claims nothing.
+- **Map.** `index.tsx` passes `mapRailFocus(railFocus, drawnRouteIds)` to `RailLayer`, keeping only the focused ids that are drawn.
+  - The task file doesn't cover the case where none match. Without a rail network the bundled lines are keyed by `RailLine.code` (13/02), and the stations' network ids match nothing. The focus is then null, so every line stays at full strength instead of dropping to 15%.
+  - `RailLayer` gains `selectedStationId`. That square is drawn in solid ink with a paper border, at `zIndex` 2 and `displayPriority` 'required', and shows below zoom 12 too. Its label gets ", selected".
+  - **Framing.**
+    - `frameTrip` frames `focus.point` plus your stop, with bottom padding `(windowHeight − insets.top) · 0.5 + 32`.
+    - It no longer needs a route when a point is set, so a cold deep link with no favourites still frames the station.
+    - A line focus (`point: null`) keeps the trip framing. The task specifies no line-geometry framing.
+    - The re-frame effect is keyed on `stationId ?? routeIds.join()`.
+- **Map station taps use `router.navigate`, not `dangerouslySingular`.** This deviates from step 6.
+  - In expo-router 58 a singular `station` id is the route name. Its PUSH/NAVIGATE does `findLast`, which would pull a station from under an open `line` sheet to the top of the stack. That's a native modal reorder, e.g. station → badge → line → row → station.
+  - `navigate` gets what step 6 asks for without that. With a station sheet on top, NAVIGATE to the same route name updates its params in place (base `StackRouter`). Otherwise it pushes.
+  - Connections rows and line rows keep `push`.
+- **Trip sheet under deep links.** `containsRoute` and `NavStateLike` moved from `index.tsx` to `components/trip/sheetStack.ts`, alongside `shouldPresentTrip(nav)`. The trip sheet waits behind `station`, `line` or `network`. Every other route behaves as before.
+- **Deep links.** `components/rail/deepLink.ts` `railDeepLink(path)` handles three forms: `[scheme://]station/<id>`, `[scheme://]line/<routeId>/<0|1>`, and a leading `/` or a trailing `/`. Ids are decoded and re-encoded, so `rail%3AKJ` stays as it is and `rail:KJ` becomes `rail%3AKJ`. It returns null for:
+  - query forms;
+  - bare `t816://`;
+  - extra segments;
+  - bad dirs;
+  - malformed `%`.
+
+  `app/+native-intent.tsx` exports `redirectSystemPath`. Unknown slugs still map; the sheet says "Station not found".
+- **Step 9 (quick action) skipped**, as the step allows: 15/02 landed first. Adding the item would also change 15/02's "never more than four" contract (`min(4, n + 1)`) and compete with 15/07's Home/Work for the slots. `services/quickActions.ts` and `hooks/useQuickActions.ts` are untouched.
+- **Connections.** `onOpenStation?` wraps each row in `RowButton` (hint "Shows departures") and adds a 13 pt `chevron.right` in `color.tertiaryLabel`. Without the prop the rows are unchanged. `app/trip.tsx` and `StopDetailSheet` both push `/station`, with no haptic.
+- **`/station` cast removed** in `index.tsx`, along with the unused `Href` import.
+- **Tests:**
+  - `components/rail/__tests__/deepLink.test.ts` (4, as named);
+  - `components/trip/__tests__/sheetStack.test.ts` (3 named, plus 1 for an unready navigator);
+  - `components/rail/__tests__/railFocus.test.ts` (5: claim/release, either effect order, no-op identity, key, map focus).
+- **Build impact:** JS-only (Metro reload). `+native-intent.tsx` is JS. There are no app.json, plugin or native module changes.

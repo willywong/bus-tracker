@@ -1,4 +1,4 @@
-import { Stack, useRootNavigationState, useRouter, type Href } from 'expo-router';
+import { Stack, useRootNavigationState, useRouter } from 'expo-router';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Easing,
@@ -24,6 +24,8 @@ import {
 import { RouteLayer, type RailStationMark } from '@/components/map/RouteLayer';
 import { RouteShimmer } from '@/components/map/RouteShimmer';
 import { splitRoute } from '@/components/map/routeSplit';
+import { mapRailFocus } from '@/components/rail/railFocus';
+import { shouldPresentTrip, type NavStateLike } from '@/components/trip/sheetStack';
 import { useLocationPermission } from '@/hooks/useLocationPermission';
 import { useRailShapes } from '@/hooks/useRailShapes';
 import { useScheduledBusPosition } from '@/hooks/useScheduledBusPosition';
@@ -57,8 +59,8 @@ const SINGLE_POINT_SPAN = 0.0025;
 const EMPTY_STOPS = new Map<string, { lat: number; lng: number }>();
 const NO_POSITIONS: VehiclePosition[] = [];
 const NO_RAIL_STATIONS: RailStationMark[] = [];
-/** Lines the rail layer keeps at full strength; null until 13/05 and 15/05 set one. */
-const NO_RAIL_FOCUS: readonly string[] | null = null;
+/** The station sheet's resting detent (`_layout.tsx`): a focused station is framed above it. */
+const STATION_SHEET_DETENT = 0.5;
 
 type Coord = { latitude: number; longitude: number };
 
@@ -129,7 +131,13 @@ export default function MapScreen() {
     railZoomBand(zoomFromRegion(KL_REGION.longitudeDelta, windowWidth)),
   );
   const railDim = zoomBand === 0;
-  const railFocus = NO_RAIL_FOCUS;
+  // An open station or line sheet (plan 13/05), later the itinerary (15/05).
+  const focus = trip.railFocus;
+  const railFocus = useMemo(
+    () => mapRailFocus(focus, railLineDraws.map((l) => l.routeId)),
+    [focus, railLineDraws],
+  );
+  const selectedStationId = focus?.stationId ?? null;
   // Apple Maps stacks overlays in add order and ignores Polyline.zIndex.
   // Whenever the rail lines restyle or change, RailLayer and RouteLayer both
   // remount (RailLayer first), so the bus route is re-added on top of rail.
@@ -141,11 +149,12 @@ export default function MapScreen() {
   const railKey = layers.rail
     ? `${railDim}|${railFocus?.join(',') ?? ''}|${layers.rail}|${railLinesSig}`
     : 'rail-off';
+  // `navigate`, not `push`: with a station sheet on top, another square
+  // updates that sheet's params in place instead of stacking a second one.
+  // Otherwise it pushes. (Not `dangerouslySingular` on the screen: that
+  // would pull a station out from under an open line sheet to the top.)
   const openStation = useCallback(
-    (stationId: string) => {
-      // `/station` arrives in 13/03; typed routes don't know it yet.
-      router.push({ pathname: '/station', params: { station: stationId } } as unknown as Href);
-    },
+    (stationId: string) => router.navigate({ pathname: '/station', params: { station: stationId } }),
     [router],
   );
 
@@ -263,19 +272,25 @@ export default function MapScreen() {
 
   // --- Camera ---------------------------------------------------------------
   // Frames your stop + the bus heading to it (or the selected stop or bus)
-  // in the area left visible above the sheet and below the toolbar.
+  // in the area left visible above the sheet and below the toolbar. An open
+  // station frames the station and your stop above its 0.5 sheet instead.
+  const focusPoint = focus?.point ?? null;
   const frameTrip = useCallback(
     (animated: boolean) => {
       const map = mapRef.current;
-      if (!map || !route) return;
+      if (!map || (!route && !focusPoint)) return;
       const coords: Coord[] = [];
-      if (route.userStop) {
+      if (route?.userStop) {
         coords.push({
           latitude: route.userStop.stop_lat,
           longitude: route.userStop.stop_lon,
         });
       }
-      if (selectedPoint) {
+      let bottom = sheetHeight + 32;
+      if (focusPoint) {
+        coords.push({ latitude: focusPoint.lat, longitude: focusPoint.lng });
+        bottom = (windowHeight - insets.top) * STATION_SHEET_DETENT + 32;
+      } else if (selectedPoint) {
         coords.push({ latitude: selectedPoint.lat, longitude: selectedPoint.lng });
       } else if (primaryPosition) {
         coords.push({ latitude: primaryPosition.lat, longitude: primaryPosition.lng });
@@ -296,13 +311,23 @@ export default function MapScreen() {
         edgePadding: {
           top: insets.top + 80,
           right: 56,
-          bottom: sheetHeight + 32,
+          bottom,
           left: 56,
         },
         animated,
       });
     },
-    [route, primaryPosition, selectedPoint, ghost.coord, polyline, insets.top, sheetHeight],
+    [
+      route,
+      focusPoint,
+      primaryPosition,
+      selectedPoint,
+      ghost.coord,
+      polyline,
+      insets.top,
+      sheetHeight,
+      windowHeight,
+    ],
   );
   const frameRef = useRef(frameTrip);
   frameRef.current = frameTrip;
@@ -338,6 +363,17 @@ export default function MapScreen() {
     setUserPanned(false);
     frameRef.current(true);
   }, [selectionKey]);
+
+  // Opening, switching or closing a station or line re-frames too; closing
+  // goes back to the trip.
+  const focusKey = focus?.stationId ?? focus?.routeIds.join() ?? null;
+  const lastFocus = useRef(focusKey);
+  useEffect(() => {
+    if (lastFocus.current === focusKey) return;
+    lastFocus.current = focusKey;
+    setUserPanned(false);
+    frameRef.current(true);
+  }, [focusKey]);
 
   const recenter = useCallback(() => {
     haptics.light();
@@ -425,6 +461,7 @@ export default function MapScreen() {
             showAllStations={zoomBand === 2}
             paper={mapPaper}
             ink={ink}
+            selectedStationId={selectedStationId}
             onStationPress={openStation}
           />
         ) : null}
@@ -617,26 +654,21 @@ const MapToolbar = memo(function MapToolbar({
   );
 });
 
-type NavStateLike = { routes?: { name: string; state?: NavStateLike }[] } | undefined;
-
-function containsRoute(state: NavStateLike, name: string): boolean {
-  if (!state?.routes) return false;
-  return state.routes.some((r) => r.name === name || containsRoute(r.state, name));
-}
-
 /**
  * Presents the persistent trip sheet whenever it isn't on the stack — on
- * launch, and again if anything (e.g. Android back) ever pops it.
+ * launch, and again if anything (e.g. Android back) ever pops it. It waits
+ * while a station or line sheet is open (a cold `t816://station/…`), and
+ * comes back once they close.
  */
 function usePresentTripSheet() {
   const router = useRouter();
   const nav = useRootNavigationState();
   const ready = nav?.key != null;
-  const hasTrip = containsRoute(nav as NavStateLike, 'trip');
+  const present = shouldPresentTrip(nav as NavStateLike);
   useEffect(() => {
-    if (!ready || hasTrip) return;
+    if (!ready || !present) return;
     router.push('/trip');
-  }, [ready, hasTrip, router]);
+  }, [ready, present, router]);
 }
 
 interface GlidingMarker {

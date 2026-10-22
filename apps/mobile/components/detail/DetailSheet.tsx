@@ -33,7 +33,9 @@ interface DetailSheetProps {
  */
 export function StopDetailSheet({ stopId, peek, onBack }: DetailSheetProps & { stopId: string }) {
   const trip = useTrip();
+  const router = useRouter();
   const { model, stop, departures, otherRoutes } = useStopDetail(stopId);
+  const openStation = (station: string) => router.push({ pathname: '/station', params: { station } });
   const point = useMemo(
     () => (stop ? { lat: stop.stop_lat, lng: stop.stop_lon } : null),
     [stop],
@@ -99,7 +101,7 @@ export function StopDetailSheet({ stopId, peek, onBack }: DetailSheetProps & { s
 
         {point && hasRail ? (
           <Section title="Rail nearby">
-            <Connections stop={point} />
+            <Connections stop={point} onOpenStation={openStation} />
           </Section>
         ) : null}
 

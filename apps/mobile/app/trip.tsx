@@ -214,6 +214,7 @@ export default function TripSheet() {
       pathname: '/departure',
       params: { tripId: d.tripId, at: String(d.departureEpochMs) },
     });
+  const openStation = (station: string) => router.push({ pathname: '/station', params: { station } });
 
   if (model.state === 'empty') {
     return (
@@ -409,7 +410,7 @@ export default function TripSheet() {
 
         {stopPoint && hasRail ? (
           <Section title="Rail nearby">
-            <Connections stop={stopPoint} />
+            <Connections stop={stopPoint} onOpenStation={openStation} />
           </Section>
         ) : null}
 

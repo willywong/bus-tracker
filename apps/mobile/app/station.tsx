@@ -7,8 +7,10 @@ import { LineBadge } from '@/components/rail/LineBadge';
 import { StationBoard } from '@/components/rail/StationBoard';
 import { StationPhoto } from '@/components/rail/StationPhoto';
 import { InterchangeRows, NearbyRows, type TripLive } from '@/components/rail/StationRows';
+import type { RailFocus } from '@/components/rail/railFocus';
 import { buildStationSheet } from '@/components/rail/stationModel';
 import { Section } from '@/components/trip/SheetBody';
+import { useRailFocus } from '@/hooks/useRailFocus';
 import { useTransitNetwork } from '@/hooks/useTransitNetwork';
 import { useTrip } from '@/state/TripContext';
 import { color, MARGIN, space, type } from '@/theme/design';
@@ -40,6 +42,20 @@ export default function StationScreen() {
       }),
     [network, health, stationId, trip.now, trip.routeCode, trip.stopId],
   );
+
+  // While this sheet is focused the map shows the station's lines and frames it.
+  const railFocus = useMemo<RailFocus | null>(
+    () =>
+      model
+        ? {
+            stationId: model.station.id,
+            routeIds: [...new Set(model.lines.flatMap((l) => (l.routeId ? [l.routeId] : [])))],
+            point: { lat: model.station.lat, lng: model.station.lng },
+          }
+        : null,
+    [model],
+  );
+  useRailFocus(railFocus);
 
   const openLine = useCallback(
     (routeId: string, dir: 0 | 1) => {

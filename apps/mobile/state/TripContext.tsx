@@ -36,6 +36,14 @@ import { useStaticGtfs } from '@/hooks/useStaticGtfs';
 import { useRainNudge, useTripSideEffects } from '@/hooks/useTripSideEffects';
 import { useWalkTimer, type UseWalkTimerResult } from '@/hooks/useWalkTimer';
 import { sheetNavDirection } from '@/components/trip/sheetTransition';
+import {
+  claimRailFocus,
+  currentRailFocus,
+  NO_RAIL_CLAIMS,
+  releaseRailFocus,
+  type RailFocus,
+  type RailFocusClaims,
+} from '@/components/rail/railFocus';
 import { SHEET_INITIAL_DETENT, type DetentIndex } from '@/theme/design';
 import { devNow } from '@/utils/devClock';
 import { ensureNotificationPermission } from '@/services/reminders/notifications';
@@ -90,7 +98,20 @@ export interface TripContextValue {
   /** A stop or bus picked on the map or in the sheet; the sheet shows its detail. */
   selection: MapSelection | null;
   select: (s: MapSelection | null) => void;
+  /**
+   * What the map focuses while a rail sheet is open (plan 13/05). Separate
+   * from `selection`: stations are their own sheet, and the focus survives
+   * a route or stop change because the open sheet owns it.
+   */
+  railFocus: RailFocus | null;
+  /**
+   * Claims (or, with null, releases) the focus for `owner`. The newest claim
+   * wins; screens use `useRailFocus`, which claims while focused.
+   */
+  setRailFocus: (owner: string, f: RailFocus | null) => void;
 }
+
+export type { RailFocus } from '@/components/rail/railFocus';
 
 /** What the trip sheet is showing instead of the trip, when anything. */
 export type MapSelection = { kind: 'stop'; stopId: string } | { kind: 'bus'; vehicleId: string };
@@ -138,6 +159,12 @@ export function TripProvider({ children }: { children: ReactNode }) {
     selectionRef.current = null;
     setSelection(null);
   }, [routeCode, stopId]);
+  // Not cleared on a route or stop change: the open rail sheet owns it.
+  const [railClaims, setRailClaims] = useState<RailFocusClaims>(NO_RAIL_CLAIMS);
+  const setRailFocus = useCallback((owner: string, f: RailFocus | null) => {
+    setRailClaims((c) => (f ? claimRailFocus(c, owner, f) : releaseRailFocus(c, owner)));
+  }, []);
+  const railFocus = useMemo(() => currentRailFocus(railClaims), [railClaims]);
   const [isFollowing, setIsFollowing] = useState(false);
   // A notification tap can switch route *and* follow; remember which route.
   const pendingFollow = useRef<string | null>(null);
@@ -353,6 +380,8 @@ export function TripProvider({ children }: { children: ReactNode }) {
       setHoldPeek,
       selection,
       select,
+      railFocus,
+      setRailFocus,
     }),
     [
       hasFavorites,
@@ -381,6 +410,8 @@ export function TripProvider({ children }: { children: ReactNode }) {
       holdPeek,
       selection,
       select,
+      railFocus,
+      setRailFocus,
     ],
   );
 

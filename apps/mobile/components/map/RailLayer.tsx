@@ -21,6 +21,8 @@ interface RailLayerProps {
   paper: string;
   /** Station square outline. */
   ink: string;
+  /** The open station: solid ink, always shown, above the other squares. */
+  selectedStationId?: string | null;
   onStationPress?: (stationId: string) => void;
 }
 
@@ -50,6 +52,7 @@ export const RailLayer = memo(function RailLayer({
   showAllStations,
   paper,
   ink,
+  selectedStationId = null,
   onStationPress,
 }: RailLayerProps) {
   return (
@@ -76,17 +79,18 @@ export const RailLayer = memo(function RailLayer({
         ];
       })}
       {stations.map((s) => {
-        if (!showAllStations && !s.interchange) return null;
+        const selected = s.id === selectedStationId;
+        if (!showAllStations && !s.interchange && !selected) return null;
         const dots = Math.max(1, s.colors.length);
         return (
           <Marker
             key={s.id}
             coordinate={{ latitude: s.lat, longitude: s.lng }}
             flat
-            zIndex={0}
-            displayPriority={s.interchange ? 'high' : 'low'}
+            zIndex={selected ? 2 : 0}
+            displayPriority={selected ? 'required' : s.interchange ? 'high' : 'low'}
             onPress={onStationPress ? () => onStationPress(s.id) : undefined}
-            accessibilityLabel={s.label}
+            accessibilityLabel={selected ? `${s.label}, selected` : s.label}
           >
             <View
               collapsable={false}
@@ -94,8 +98,9 @@ export const RailLayer = memo(function RailLayer({
                 styles.square,
                 {
                   width: RAIL + (dots - 1) * RAIL_PER_DOT,
-                  borderColor: ink,
-                  backgroundColor: paper,
+                  // Selected: solid ink like the selected stop (RouteLayer).
+                  borderColor: selected ? paper : ink,
+                  backgroundColor: selected ? ink : paper,
                 },
               ]}
             >
