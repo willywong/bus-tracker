@@ -2,6 +2,8 @@
  * Plan 14/00 step 3: times the range query (`rangeRaptor` + `rankCandidates`,
  * plan 14/02, via `rankedRange`) on the fixture network for the five golden
  * queries (see raptor-queries.ts), then prints each query's ranked options.
+ * Access, egress and the walk-only option are 14/03's (`queryEnds`, timed
+ * apart as `ends ms`).
  *
  *   pnpm --filter @bus-tracker/shared exec tsx scripts/bench-raptor.ts [--window 2400|1200] [--step 120] [--rides 4]
  *
@@ -21,6 +23,7 @@ import {
   networkBytes,
   percentiles,
   prepareQueries,
+  queryEnds,
   rankedRange,
   readFixtureFeeds,
   type RankedResult,
@@ -60,15 +63,22 @@ console.log(`window ${opts.windowSec} s, step ${opts.stepSec} s, ${opts.maxRides
 const queries = prepareQueries(full, noRail);
 globalThis.gc?.();
 const heapBefore = process.memoryUsage().heapUsed;
-console.log("query                 | access | egress | arrive | pareto | ranked | runs | rounds | p50 ms | p95 ms | max ms");
+console.log("query                 | access | egress | ends ms | arrive | pareto | ranked | runs | rounds | p50 ms | p95 ms | max ms");
 const results: RankedResult[] = [];
 for (const q of queries) {
-  for (let i = 0; i < WARMUP; i++) rankedRange(q.net, q.access, q.egress, q.t0, opts);
+  const qOpts = { ...opts, walk: q.walk, same: q.same };
+  const endSamples: number[] = [];
+  for (let i = 0; i < WARMUP + RUNS; i++) {
+    const s = performance.now();
+    queryEnds(q.net, q.query, q.t0);
+    if (i >= WARMUP) endSamples.push(performance.now() - s);
+  }
+  for (let i = 0; i < WARMUP; i++) rankedRange(q.net, q.access, q.egress, q.t0, qOpts);
   const samples: number[] = [];
-  let result = rankedRange(q.net, q.access, q.egress, q.t0, opts);
+  let result = rankedRange(q.net, q.access, q.egress, q.t0, qOpts);
   for (let i = 0; i < RUNS; i++) {
     const s = performance.now();
-    result = rankedRange(q.net, q.access, q.egress, q.t0, opts);
+    result = rankedRange(q.net, q.access, q.egress, q.t0, qOpts);
     samples.push(performance.now() - s);
   }
   results.push(result);
@@ -78,6 +88,7 @@ for (const q of queries) {
       q.query.name.padEnd(21),
       String(q.access.length).padStart(6),
       String(q.egress.length).padStart(6),
+      percentiles(endSamples).p50.toFixed(2).padStart(7),
       clock(result.ranked[0]?.cand.arrive ?? Infinity).padStart(6),
       String(result.journeys.length).padStart(6),
       String(result.ranked.length).padStart(6),

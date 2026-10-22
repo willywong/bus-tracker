@@ -10,3 +10,8 @@ export * from "./boarding.js";
 export * from "./workspace.js";
 export * from "./range.js";
 export * from "./rank.js";
+export * from "./plan.js";
+export * from "./walk.js";
+export * from "./lookup.js";
+export * from "./modes.js";
+export * from "./access.js";

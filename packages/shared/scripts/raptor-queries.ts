@@ -1,29 +1,30 @@
 /**
  * Plan 14/00: the five golden queries (plan 14/06) and timing helpers shared
  * by the Node bench (bench-raptor.ts) and the throwaway device harness
- * (apps/mobile/app/dev-planner.tsx). Access and egress are every stop within
- * 1,000 m, nearest 25, walked at 80 m/min × 1.25 (spec §4.1). Since 14/02 the
- * bench times {@link rankedRange} (`rangeRaptor` + `rankCandidates`); the
- * device harness still times {@link rangeArrival}, the 14/01 earliest-arrival
- * stand-in, until 14/04's `planSync`.
+ * (apps/mobile/app/dev-planner.tsx). Since 14/03 access and egress are the
+ * engine's `accessStops` (≤ 25 stops within 1,000 m, coverage-pruned, walked
+ * at 80 m/min × 1.25, spec §4.1), and the walk-only option is ranked too.
+ * Since 14/02 the bench times {@link rankedRange} (`rangeRaptor` +
+ * `rankCandidates`); the device harness still times {@link rangeArrival}, the
+ * 14/01 earliest-arrival stand-in, until 14/04's `planSync`.
  */
-import { compileNetworkSync, stopsNear, type CompileFeeds } from "../src/transit/compile.js";
+import { accessStops, egressStops } from "../src/transit/access.js";
+import { compileNetworkSync, type CompileFeeds } from "../src/transit/compile.js";
 import { readFeed, type NormalisedFeed } from "../src/transit/feeds.js";
 import { FEED_IDS, type FeedId, type TransitNetwork } from "../src/transit/network.js";
 import { INF, MAX_RIDES, runRounds, startDeparture, type StopTime } from "../src/transit/raptor.js";
 import { RANGE_STEP_SEC, RANGE_WINDOW_SEC, rangeRaptor, type RawJourney } from "../src/transit/range.js";
-import { rankCandidates, summarize, type Ranked } from "../src/transit/rank.js";
-import { DETOUR_FACTOR } from "../src/transit/transfers.js";
+import { patternMask } from "../src/transit/modes.js";
+import type { Place } from "../src/transit/plan.js";
+import { rankCandidates, summarize, type Candidate, type Ranked } from "../src/transit/rank.js";
+import { sameSpot, walkOnlyCandidate } from "../src/transit/walk.js";
 import { resetWorkspace, workspaceFor } from "../src/transit/workspace.js";
 import { secondsToClockHHMM, toMalaysiaParts } from "../src/utils/gtfs-time.js";
-import { haversineMeters } from "../src/utils/outlier.js";
 import { WALKING_METERS_PER_MINUTE } from "../src/utils/rail.js";
 
 export const SERVICE_DATE = "20261028";
 /** 2026-10-28 08:00 MYT. */
 export const AT_0800 = Date.UTC(2026, 9, 28, 0, 0);
-export const ACCESS_RADIUS_M = 1000;
-export const ACCESS_CAP = 25;
 
 /** Fixture zip per feed, in `__fixtures__/2026-10-23/`. */
 export const FIXTURE_ZIPS: Record<FeedId, string> = {
@@ -73,18 +74,17 @@ export function compileFixtures(feeds: readonly NormalisedFeed[], exclude: reado
   return compileNetworkSync(out, SERVICE_DATE, { builtAt: 0 });
 }
 
-/** Stops within 1,000 m of a point, nearest {@link ACCESS_CAP}, with their walk. */
-export function accessStops(
-  net: TransitNetwork,
-  at: { lat: number; lng: number },
-  walkMetersPerMin = WALKING_METERS_PER_MINUTE,
-): StopTime[] {
-  const out: StopTime[] = [];
-  for (const stop of stopsNear(net, at.lat, at.lng, ACCESS_RADIUS_M)) {
-    const meters = haversineMeters(at, { lat: net.stops.lat[stop], lng: net.stops.lon[stop] });
-    out.push({ stop, meters, seconds: Math.ceil((meters * DETOUR_FACTOR) / (walkMetersPerMin / 60)) });
-  }
-  return out.sort((a, b) => a.meters - b.meters || a.stop - b.stop).slice(0, ACCESS_CAP);
+/** A golden end as a coordinate {@link Place}. */
+const placeOf = (name: string, at: { lat: number; lng: number }): Place => ({ kind: "place", name, lat: at.lat, lng: at.lng });
+
+/** 14/03's access, egress and walk-only option for one golden, every pattern allowed, 80 m/min. */
+export function queryEnds(net: TransitNetwork, query: BenchQuery, t0: number): Pick<PreparedQuery, "access" | "egress" | "walk" | "same"> {
+  const from = placeOf(query.name, query.from);
+  const to = placeOf(query.name, query.to);
+  const o = { walkMetersPerMin: WALKING_METERS_PER_MINUTE, allowed: patternMask(net) };
+  const access = accessStops(net, from, o);
+  const egress = egressStops(net, to, o);
+  return { access, egress, walk: walkOnlyCandidate(from, to, t0, WALKING_METERS_PER_MINUTE), same: sameSpot(access, egress, { from, to }) };
 }
 
 export interface PreparedQuery {
@@ -92,6 +92,10 @@ export interface PreparedQuery {
   net: TransitNetwork;
   access: StopTime[];
   egress: StopTime[];
+  /** The walk-only option, or `null` from 2 km walked. */
+  walk: Candidate | null;
+  /** Both ends one spot (14/03 step 6): walk-only, no RAPTOR. */
+  same: boolean;
   /** Departure, seconds after the service day's midnight. */
   t0: number;
 }
@@ -102,7 +106,8 @@ export function prepareQueries(full: TransitNetwork, noRail: TransitNetwork): Pr
     const net = query.exclude?.includes("rail") ? noRail : full;
     const parts = toMalaysiaParts(new Date(query.departAt));
     if (parts.ymd !== net.meta.serviceDate) throw new Error(`${query.name}: departs on ${parts.ymd}, not ${net.meta.serviceDate}`);
-    return { query, net, access: accessStops(net, query.from), egress: accessStops(net, query.to), t0: parts.secSinceMidnight };
+    const t0 = parts.secSinceMidnight;
+    return { query, net, ...queryEnds(net, query, t0), t0 };
   });
 }
 
@@ -154,8 +159,6 @@ export interface RangeResult {
   runs: number;
 }
 
-const allPatterns = new WeakMap<TransitNetwork, Uint8Array>();
-
 /**
  * The benchmark's query until 14/02's `plan()`: `runRounds` at `t0 +
  * windowSec`, then every `stepSec` earlier down to `t0`, keeping labels
@@ -172,8 +175,7 @@ export function* rangeArrivalSteps(
   const windowSec = opts.windowSec ?? 2400;
   const stepSec = Math.max(1, opts.stepSec ?? 120);
   const maxRides = Math.min(opts.maxRides ?? MAX_RIDES, MAX_RIDES);
-  let allowed = allPatterns.get(net);
-  if (!allowed) allPatterns.set(net, (allowed = new Uint8Array(net.patterns.count).fill(1)));
+  const allowed = patternMask(net);
   const ws = workspaceFor(net);
   resetWorkspace(ws);
   const input = { egress, maxRides, allowed, walkMetersPerMin: WALKING_METERS_PER_MINUTE };
@@ -217,22 +219,30 @@ export interface RankedResult {
   runs: number;
 }
 
+export interface RankedOptions extends RangeOptions {
+  /** 14/03's walk-only option, ranked with the journeys. */
+  walk?: Candidate | null;
+  /** Both ends one spot: skip RAPTOR, rank the walk alone. */
+  same?: boolean;
+}
+
 /**
  * Plan 14/02's query: `rangeRaptor` over the window, then `summarize` and
- * `rankCandidates`, every pattern allowed, 80 m/min. Yields wherever
- * `rangeRaptor` does (drive it with `runSteps`).
+ * `rankCandidates` with the walk-only option (14/03), every pattern allowed,
+ * 80 m/min. Yields wherever `rangeRaptor` does (drive it with `runSteps`).
  */
 export function* rankedRangeSteps(
   net: TransitNetwork,
   access: readonly StopTime[],
   egress: readonly StopTime[],
   t0: number,
-  opts: RangeOptions = {},
+  opts: RankedOptions = {},
 ): Generator<void, RankedResult, void> {
   const windowSec = Math.max(0, opts.windowSec ?? RANGE_WINDOW_SEC);
   const stepSec = Math.max(1, opts.stepSec ?? RANGE_STEP_SEC);
-  let allowed = allPatterns.get(net);
-  if (!allowed) allPatterns.set(net, (allowed = new Uint8Array(net.patterns.count).fill(1)));
+  const cands: Candidate[] = opts.walk ? [opts.walk] : [];
+  if (opts.same) return { journeys: [], ranked: rankCandidates(cands, t0), rounds: 0, runs: 0 };
+  const allowed = patternMask(net);
   const steps = rangeRaptor(net, { access, egress, t0, windowSec, stepSec, maxRides: opts.maxRides, allowed, walkMetersPerMin: WALKING_METERS_PER_MINUTE });
   let yields = 0;
   let journeys: RawJourney[];
@@ -246,10 +256,7 @@ export function* rankedRangeSteps(
     yield;
   }
   const runs = Math.floor(windowSec / stepSec) + 1;
-  const ranked = rankCandidates(
-    journeys.map((j) => summarize(net, j, t0)),
-    t0,
-  );
+  const ranked = rankCandidates([...journeys.map((j) => summarize(net, j, t0)), ...cands], t0);
   // rangeRaptor yields once per round and once per run.
   return { journeys, ranked, rounds: yields - runs, runs };
 }
@@ -260,7 +267,7 @@ export function rankedRange(
   access: readonly StopTime[],
   egress: readonly StopTime[],
   t0: number,
-  opts?: RangeOptions,
+  opts?: RankedOptions,
 ): RankedResult {
   const steps = rankedRangeSteps(net, access, egress, t0, opts);
   for (;;) {
