@@ -2,7 +2,7 @@ import { RAIL_STATIONS } from "../data/rail-stations.js";
 import { haversineMeters } from "./outlier.js";
 
 /** Rail mode as shown to riders. Derived from the feed's route `category`. */
-export type RailMode = "LRT" | "MRT" | "Monorail" | "BRT";
+export type RailMode = "LRT" | "MRT" | "Monorail" | "BRT" | "KTM";
 
 /** One rail line serving a station, with its official branding. */
 export interface RailLine {

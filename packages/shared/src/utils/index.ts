@@ -43,6 +43,7 @@ export {
   type RouteSearchIndex,
   type SerializedRouteSearchIndex,
 } from "./search-routes.js";
+export { runSteps } from "./steps.js";
 export {
   orderStopsByTrip,
   pickRepresentativeTrip,

@@ -4,6 +4,11 @@ export interface GtfsRoute {
   route_id: RouteId | string;
   route_short_name: string;
   route_long_name?: string;
+  /** GTFS route_type (0 = tram/light rail, 1 = subway, 2 = rail, 3 = bus). */
+  route_type?: number;
+  /** Line colour as the feed spells it: 6 hex digits, no `#`. */
+  route_color?: string;
+  route_text_color?: string;
 }
 
 export interface GtfsStop {
@@ -13,6 +18,10 @@ export interface GtfsStop {
   stop_lon: number;
   /** 0/blank = no info, 1 = accessible, 2 = not accessible (GTFS spec). */
   wheelchair_boarding?: 0 | 1 | 2;
+  /** 0/blank = stop or platform, 1 = station (GTFS spec). */
+  location_type?: number;
+  /** stop_id of the station this stop belongs to, when the feed says. */
+  parent_station?: string;
 }
 
 export interface GtfsTrip {

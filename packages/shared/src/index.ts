@@ -1,5 +1,6 @@
 export * from "./types/index.js";
 export * from "./utils/index.js";
+export * from "./transit/index.js";
 
 export { TRAFFIC_SIGNALS } from "./data/traffic-signals.js";
 export { RAIL_LINES, RAIL_STATIONS } from "./data/rail-stations.js";

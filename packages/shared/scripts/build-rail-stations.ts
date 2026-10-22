@@ -25,6 +25,7 @@ import { strFromU8, unzipSync } from "fflate";
 import { parseCsv } from "../src/utils/gtfs-parser.js";
 import { haversineMeters } from "../src/utils/outlier.js";
 import type { RailLine, RailMode } from "../src/utils/rail.js";
+import { nameKey, slug, stripSponsor, titleCase } from "../src/transit/names.js";
 
 const FEED_URL =
   "https://api.data.gov.my/gtfs-static/prasarana?category=rapid-rail-kl";
@@ -62,23 +63,7 @@ const MODE_BY_CATEGORY: Record<string, RailMode> = {
   MR: "Monorail",
   BRT: "BRT",
 };
-const MODE_ORDER: RailMode[] = ["LRT", "MRT", "Monorail", "BRT"];
-
-// Naming-rights suffixes dropped from display names ("KL SENTRAL - REDONE").
-const SPONSOR_SUFFIXES = new Set([
-  "UOB",
-  "REDONE",
-  "BANK RAKYAT",
-  "CBP COOPBANK PERTAMA",
-]);
-const UPPERCASE_WORDS = new Set([
-  "KL", "KLCC", "PWTC", "USJ", "SS", "IOI", "UPM", "SA", "TTDI", "TRX", "BRT",
-  "LRT", "MRT", "UOB",
-]);
-const SPECIAL_WORDS: Record<string, string> = {
-  UITM: "UiTM",
-  SUNMED: "SunMed",
-};
+const MODE_ORDER: RailMode[] = ["LRT", "MRT", "Monorail", "BRT", "KTM"];
 
 interface FeedStop {
   stopId: string;
@@ -106,41 +91,6 @@ function luminance(color: string): number {
 function contrast(a: string, b: string): number {
   const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
   return (hi + 0.05) / (lo + 0.05);
-}
-
-function stripSponsor(name: string): string {
-  const clean = name.replace(/\s+/g, " ").trim();
-  const m = /^(.*?)\s+-\s+(.+)$/.exec(clean);
-  if (m && SPONSOR_SUFFIXES.has(m[2].toUpperCase())) return m[1];
-  return clean;
-}
-
-function titleWord(w: string): string {
-  if (w === "") return w;
-  const up = w.toUpperCase();
-  if (w !== up) return w; // already mixed case in the feed ("SunU")
-  if (SPECIAL_WORDS[up]) return SPECIAL_WORDS[up];
-  if (UPPERCASE_WORDS.has(up) || /^[A-Z]+\d+$/.test(up)) return up;
-  return up.charAt(0) + up.slice(1).toLowerCase();
-}
-
-function titleCase(name: string): string {
-  return name
-    .split(" ")
-    .map((word) => word.split("-").map(titleWord).join("-"))
-    .join(" ");
-}
-
-/** Merge key: case, spacing and punctuation insensitive ("USJ7" == "USJ 7"). */
-function nameKey(name: string): string {
-  return stripSponsor(name).toLowerCase().replace(/[^a-z0-9]/g, "");
-}
-
-function slug(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
 }
 
 /** Newest file timestamp inside the zip (from the central directory). */

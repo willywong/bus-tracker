@@ -125,3 +125,11 @@ Verified feed quirks (2026-10-23), and what the code already does about them:
 - KTM is already cut to Komuter in the bbox.
 - `runSteps`, `unzipSteps` and `drain` are exported from `packages/shared/src/utils/steps.ts`.
 - `titleCase` and friends live in `packages/shared/src/transit/names.ts`; the rail-stations script imports them.
+
+## Implementation notes
+- **KTM line match uses `route_short_name`, not `route_long_name`.** The KTMB fixture has `Seremban Line` / `Port Klang Line` in `route_short_name`. Its `route_long_name` is `KTM Batu Caves - Pulau Sebang/Tampin`. So `longName` = `'KTM Komuter ' + route_short_name`, e.g. `KTM Komuter Seremban Line`.
+- **`validFrom` / `validUntil` count only services that kept trips use** (spec §3.1: "across active services"). Otherwise ETS/intercity rows could mask an expired Komuter calendar. The fixture values are unchanged: rail 20190101–20261231, KTM 20261106, bus-kl 20270331.
+- **Rail shapes are not swapped in the fixture.** The header is `lon,lat`, but each value sits under its own header. `fixShapePoint` is therefore a defensive no-op on these fixtures, and a synthetic test covers the swap.
+- **Rail line lookup is `code === prefix || code.endsWith(' ' + prefix)`.** This is "ends with" on whole words, so a one-letter prefix cannot match the wrong line.
+- **Timed trips are collected during the `stop_times` scan, not in a second pass.** This keeps the longest synchronous step at about 6 ms on Node for the feeder. `namespaceParsedGtfs` now also namespaces the new `parent_station` field.
+- **Regenerating `rail-stations.ts` from the 2026-10-23 fixture is byte-identical to the pre-move script's output.** It differs from the committed file only in the header and the line constants: the feed dropped the mode prefix from the line names, and SA is now `#FF00FF`. The file was reverted, as instructed.

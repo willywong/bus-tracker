@@ -47,7 +47,9 @@ export interface BusCategoryInfo {
   staticUrls: readonly string[];
 }
 
-const API = "https://api.data.gov.my";
+/** data.gov.my API host, shared by every static and realtime feed URL. */
+export const DATA_GOV_MY_API = "https://api.data.gov.my";
+const API = DATA_GOV_MY_API;
 const S3 = "https://openapi-malaysia-transport.s3.ap-southeast-1.amazonaws.com/prasarana";
 
 export const BUS_CATEGORY_INFO: Record<BusCategory, BusCategoryInfo> = {
@@ -179,7 +181,10 @@ export function namespaceParsedGtfs(parsed: ParsedGtfs, category: BusCategory): 
   const ns = (id: string) => namespaceId(category, id);
   const nsOpt = (id: string | undefined) => namespaceId(category, id);
   for (const r of parsed.routes) r.route_id = ns(String(r.route_id));
-  for (const s of parsed.stops) s.stop_id = ns(s.stop_id);
+  for (const s of parsed.stops) {
+    s.stop_id = ns(s.stop_id);
+    s.parent_station = nsOpt(s.parent_station);
+  }
   for (const t of parsed.trips) {
     t.route_id = ns(t.route_id);
     t.service_id = ns(t.service_id);

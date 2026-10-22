@@ -257,6 +257,9 @@ export function parseGtfsZip(
     route_id: r.route_id,
     route_short_name: r.route_short_name,
     route_long_name: r.route_long_name || undefined,
+    route_type: r.route_type ? num(r.route_type) : undefined,
+    route_color: r.route_color || undefined,
+    route_text_color: r.route_text_color || undefined,
   }));
   if (opts.keepRoute) routes = routes.filter(opts.keepRoute);
   const keptRouteIds = opts.keepRoute ? new Set(routes.map((r) => String(r.route_id))) : null;
@@ -274,6 +277,8 @@ export function parseGtfsZip(
           : r.wheelchair_boarding === "0"
             ? 0
             : undefined,
+    location_type: r.location_type ? num(r.location_type) : undefined,
+    parent_station: r.parent_station || undefined,
   }));
 
   let trips: GtfsTrip[] = read("trips.txt").map((r) => ({

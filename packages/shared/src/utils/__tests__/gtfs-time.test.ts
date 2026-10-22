@@ -53,3 +53,8 @@ test("toMalaysiaParts midnight offset aligns with Asia/Kuala_Lumpur", () => {
   assert.equal(parts.secSinceMidnight, 1800);
   assert.equal(parts.midnightUtcMs, Date.parse("2026-04-20T16:00:00Z"));
 });
+
+test("gtfsTimeToSeconds parses unpadded hours", () => {
+  assert.equal(gtfsTimeToSeconds("6:00:00"), 21600);
+  assert.equal(gtfsTimeToSeconds("9:05:30"), 9 * 3600 + 5 * 60 + 30);
+});

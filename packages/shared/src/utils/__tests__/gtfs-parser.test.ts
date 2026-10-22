@@ -134,3 +134,51 @@ test("parseGtfsZip with keepRoute keeps only that route's trips, stop_times and 
   // Stops stay whole; the bundle cut picks the ones it needs.
   assert.equal(p.stops.length, 2);
 });
+
+test("parseGtfsZip reads route_type and colours when present", () => {
+  const zip = zipSync({
+    "routes.txt": strToU8(
+      "route_id,route_short_name,route_long_name,route_type,route_color,route_text_color\n" +
+        "KJ,KJL,Kelana Jaya Line,1,D50032,FFFFFF\n" +
+        "BRT,BRT,Sunway Line,0,,\n",
+    ),
+  });
+  const p = parseGtfsZip(zip);
+  assert.equal(p.routes[0].route_type, 1);
+  assert.equal(p.routes[0].route_color, "D50032");
+  assert.equal(p.routes[0].route_text_color, "FFFFFF");
+  assert.equal(p.routes[1].route_type, 0, "0 is a real route_type (tram/light rail)");
+  assert.equal(p.routes[1].route_color, undefined);
+  assert.equal(p.routes[1].route_text_color, undefined);
+});
+
+test("parseGtfsZip leaves optional route/stop fields undefined when absent", () => {
+  const p = parseGtfsZip(makeFixture());
+  for (const r of p.routes) {
+    assert.equal(r.route_type, undefined);
+    assert.equal(r.route_color, undefined);
+    assert.equal(r.route_text_color, undefined);
+  }
+  for (const s of p.stops) {
+    assert.equal(s.location_type, undefined);
+    assert.equal(s.parent_station, undefined);
+  }
+});
+
+test("parseGtfsZip reads location_type and parent_station", () => {
+  const zip = zipSync({
+    "stops.txt": strToU8(
+      "stop_id,stop_name,stop_lat,stop_lon,location_type,parent_station\n" +
+        "PS,Pasar Seni,3.14,101.69,1,\n" +
+        "KJ14,Pasar Seni,3.14,101.69,0,PS\n" +
+        "X1,Blank,3.14,101.69,,\n",
+    ),
+  });
+  const p = parseGtfsZip(zip);
+  assert.equal(p.stops[0].location_type, 1);
+  assert.equal(p.stops[0].parent_station, undefined);
+  assert.equal(p.stops[1].location_type, 0);
+  assert.equal(p.stops[1].parent_station, "PS");
+  assert.equal(p.stops[2].location_type, undefined);
+  assert.equal(p.stops[2].parent_station, undefined);
+});
