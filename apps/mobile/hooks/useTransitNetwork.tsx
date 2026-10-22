@@ -167,7 +167,11 @@ export function TransitNetworkProvider({
         // From here: the wait for the database belongs to app start-up.
         stopFrameGaps = watchFrameGaps();
         const result = await refreshTransitNetwork(deps);
-        const net = await load();
+        // Keep the network object when today's blob wasn't rebuilt: a new one
+        // re-renders every consumer and drops their per-network caches.
+        const today = serviceDatesFor(deps.now())[0];
+        const net =
+          current && loadedDate === today && !result.rebuilt.includes(today) ? current : await load();
         await updateHealth();
         const next: TransitNetworkStatus = net ? (result.offline ? "offline" : "ready") : "error";
         log(
