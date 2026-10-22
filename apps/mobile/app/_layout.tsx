@@ -11,6 +11,7 @@ import { useRealtimeRoutes } from '@/hooks/useRealtimeRoutes';
 import { useQuickActions } from '@/hooks/useQuickActions';
 import { SettingsProvider, useSettings } from '@/hooks/useSettings';
 import { StaticGtfsProvider } from '@/hooks/useStaticGtfs';
+import { TransitNetworkProvider } from '@/hooks/useTransitNetwork';
 import { PlannerProvider } from '@/state/PlannerContext';
 import { RideProvider } from '@/state/RideContext';
 import { TripProvider } from '@/state/TripContext';
@@ -20,6 +21,8 @@ import { configureNotifications } from '@/services/reminders/notifications';
 // headless launch (commute re-plan, arrival geofence).
 import '@/services/reminders/backgroundRefresh';
 import '@/services/arrival/geofence';
+// Static GTFS zips download through expo/fetch (no base64 body decode in JS).
+import '@/services/staticFetch';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -45,16 +48,18 @@ export default function RootLayout() {
   return (
     <SettingsProvider>
       <StaticGtfsProvider>
-        <RealtimeRoutesRunner />
-        <PushRegistrationProvider>
-          <TripProvider>
-            <PlannerProvider>
-              <RideProvider>
-                <AppStack />
-              </RideProvider>
-            </PlannerProvider>
-          </TripProvider>
-        </PushRegistrationProvider>
+        <TransitNetworkProvider>
+          <RealtimeRoutesRunner />
+          <PushRegistrationProvider>
+            <TripProvider>
+              <PlannerProvider>
+                <RideProvider>
+                  <AppStack />
+                </RideProvider>
+              </PlannerProvider>
+            </TripProvider>
+          </PushRegistrationProvider>
+        </TransitNetworkProvider>
       </StaticGtfsProvider>
     </SettingsProvider>
   );

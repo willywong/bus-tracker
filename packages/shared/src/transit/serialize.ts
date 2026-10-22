@@ -38,6 +38,13 @@ type Kind = (typeof KIND)[keyof typeof KIND];
 const HEADER_BYTES = 12;
 const ENTRY_BYTES = 16;
 const SEP = "\u0000";
+/** Strings encoded per step of {@link encodeNetworkSteps}. */
+const ENCODE_STRINGS_PER_YIELD = 4096;
+/**
+ * UTF-8 bytes decoded per step of {@link decodeNetworkSteps}. Hermes has no
+ * `TextDecoder`, so fflate decodes in JS: tens of ms for a whole section.
+ */
+const DECODE_TEXT_BYTES_PER_YIELD = 32 * 1024;
 
 /**
  * Every section, in blob order: `[tag, path, kind]`. `grid.*` paths other
@@ -139,10 +146,11 @@ function setPath(root: Record<string, unknown>, path: string, value: unknown): v
 const align8 = (n: number): number => (n + 7) & ~7;
 
 /** A string section's bytes: count, offsets, then the NUL-joined UTF-8 text. */
-function encodeStrings(tag: string, list: readonly string[]): Uint8Array {
+function* encodeStrings(tag: string, list: readonly string[]): Generator<void, Uint8Array, void> {
   const parts: Uint8Array[] = [];
   let textLen = 0;
   for (let i = 0; i < list.length; i++) {
+    if ((i + 1) % ENCODE_STRINGS_PER_YIELD === 0) yield;
     const s = list[i] ?? "";
     if (s.includes(SEP)) throw new Error(`encodeNetwork: ${tag.trim()}[${i}] contains NUL`);
     const u = strToU8(s);
@@ -163,7 +171,11 @@ function encodeStrings(tag: string, list: readonly string[]): Uint8Array {
   return out;
 }
 
-function decodeStrings(tag: string, bytes: Uint8Array): string[] {
+/**
+ * A string section's strings. The text is decoded a run of whole strings at a
+ * time (the offsets mark where each starts), yielding between runs.
+ */
+function* decodeStrings(tag: string, bytes: Uint8Array): Generator<void, string[], void> {
   if (bytes.byteLength < 4) throw new NetworkFormatError(`${tag}: string section too short`);
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const count = dv.getUint32(0, true);
@@ -175,13 +187,28 @@ function decodeStrings(tag: string, bytes: Uint8Array): string[] {
     if (textLen !== 0) throw new NetworkFormatError(`${tag}: text in an empty string section`);
     return [];
   }
-  const list = strFromU8(bytes.subarray(head)).split(SEP);
-  if (list.length !== count) throw new NetworkFormatError(`${tag}: expected ${count} strings, got ${list.length}`);
+  const text = bytes.subarray(head);
+  const offset = (i: number) => dv.getUint32(4 * (i + 1), true);
+  const list: string[] = [];
+  for (let i = 0; i < count; ) {
+    // A run of strings [i, j) spanning about DECODE_TEXT_BYTES_PER_YIELD.
+    const from = offset(i);
+    let j = i + 1;
+    while (j < count && offset(j) - from < DECODE_TEXT_BYTES_PER_YIELD) j++;
+    // Each string but the last is followed by its NUL separator.
+    const to = j === count ? textLen : offset(j) - 1;
+    if (from > to || to > textLen) throw new NetworkFormatError(`${tag}: string offsets out of order`);
+    const run = strFromU8(text.subarray(from, to)).split(SEP);
+    if (run.length !== j - i) throw new NetworkFormatError(`${tag}: expected ${count} strings, got a run of ${run.length} for ${j - i}`);
+    for (const str of run) list.push(str);
+    i = j;
+    if (i < count) yield;
+  }
   return list;
 }
 
 /** One section's payload, unaligned. Typed arrays are byte views, not copies. */
-function sectionBytes(tag: string, kind: Kind, value: unknown): Uint8Array {
+function* sectionBytes(tag: string, kind: Kind, value: unknown): Generator<void, Uint8Array, void> {
   switch (kind) {
     case KIND.i32:
     case KIND.f32:
@@ -192,7 +219,7 @@ function sectionBytes(tag: string, kind: Kind, value: unknown): Uint8Array {
       return new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
     }
     case KIND.str:
-      return encodeStrings(tag, value as string[]);
+      return yield* encodeStrings(tag, value as string[]);
     case KIND.json:
       return strToU8(JSON.stringify(value));
   }
@@ -204,8 +231,21 @@ function sectionBytes(tag: string, kind: Kind, value: unknown): Uint8Array {
  * Throws if any string contains NUL.
  */
 export function encodeNetwork(net: TransitNetwork): Uint8Array {
+  return drainSteps(encodeNetworkSteps(net));
+}
+
+/**
+ * {@link encodeNetwork} as a generator that yields between sections and
+ * every few thousand strings (drive it with `runSteps`).
+ */
+export function* encodeNetworkSteps(net: TransitNetwork): Generator<void, Uint8Array, void> {
   const root = { ...net, grid: gridColumns(net.grid) } as unknown as Record<string, unknown>;
-  const payloads = SECTIONS.map(([tag, path, kind]) => sectionBytes(tag, kind, getPath(root, path)));
+  yield;
+  const payloads: Uint8Array[] = [];
+  for (const [tag, path, kind] of SECTIONS) {
+    payloads.push(yield* sectionBytes(tag, kind, getPath(root, path)));
+    yield;
+  }
 
   let size = align8(HEADER_BYTES + SECTIONS.length * ENTRY_BYTES);
   const offsets = payloads.map((p) => {
@@ -232,13 +272,20 @@ export function encodeNetwork(net: TransitNetwork): Uint8Array {
   return out;
 }
 
-/**
- * Reads a blob written by {@link encodeNetwork}. Typed arrays (and grid
- * cells) are views over `bytes`' buffer, so don't reuse that buffer
- * afterwards. An unaligned view is copied once first. Throws
- * {@link NetworkFormatError} on anything malformed or of another version.
- */
-export function decodeNetwork(bytes: Uint8Array): TransitNetwork {
+function drainSteps<T>(steps: Generator<void, T, void>): T {
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
+}
+
+interface SectionTable {
+  bytes: Uint8Array;
+  table: Map<string, { kind: number; off: number; len: number }>;
+}
+
+/** Checks the header and reads the section table. Throws {@link NetworkFormatError}. */
+function readTable(bytes: Uint8Array): SectionTable {
   if (bytes.byteOffset % 8 !== 0) bytes = bytes.slice();
   const fail = (msg: string): never => {
     throw new NetworkFormatError(msg);
@@ -262,6 +309,52 @@ export function decodeNetwork(bytes: Uint8Array): TransitNetwork {
     if (table.has(tag)) fail(`${tag}: duplicate section`);
     table.set(tag, { kind: bytes[e + 4], off, len });
   }
+  return { bytes, table };
+}
+
+function readJson(tag: string, bytes: Uint8Array, s: { off: number; len: number }): unknown {
+  try {
+    return JSON.parse(strFromU8(bytes.subarray(s.off, s.off + s.len)));
+  } catch {
+    throw new NetworkFormatError(`${tag}: bad JSON`);
+  }
+}
+
+/**
+ * Just a blob's `meta` (service date, feed hashes, …), without decoding the
+ * rest: enough to tell whether it needs rebuilding. Throws
+ * {@link NetworkFormatError} like {@link decodeNetwork}.
+ */
+export function readNetworkMeta(bytes: Uint8Array): TransitNetwork["meta"] {
+  const { bytes: b, table } = readTable(bytes);
+  const s = table.get("META");
+  if (!s || s.kind !== KIND.json) throw new NetworkFormatError("META: missing section");
+  const meta = readJson("META", b, s) as TransitNetwork["meta"] | null;
+  if (!meta || typeof meta !== "object" || meta.version !== NETWORK_VERSION) {
+    throw new NetworkFormatError(`network version ${meta?.version}, expected ${NETWORK_VERSION}`);
+  }
+  return meta;
+}
+
+/**
+ * Reads a blob written by {@link encodeNetwork}. Typed arrays (and grid
+ * cells) are views over `bytes`' buffer, so don't reuse that buffer
+ * afterwards. An unaligned view is copied once first. Throws
+ * {@link NetworkFormatError} on anything malformed or of another version.
+ */
+export function decodeNetwork(bytes: Uint8Array): TransitNetwork {
+  return drainSteps(decodeNetworkSteps(bytes));
+}
+
+/**
+ * {@link decodeNetwork} as a generator that yields between sections and
+ * every few tens of KB of string text (drive it with `runSteps`).
+ */
+export function* decodeNetworkSteps(input: Uint8Array): Generator<void, TransitNetwork, void> {
+  const { bytes, table } = readTable(input);
+  const fail = (msg: string): never => {
+    throw new NetworkFormatError(msg);
+  };
 
   const root: Record<string, unknown> = {};
   for (const [tag, path, kind] of SECTIONS) {
@@ -279,14 +372,11 @@ export function decodeNetwork(bytes: Uint8Array): TransitNetwork {
         value = new Uint8Array(bytes.buffer, at, s.len);
         break;
       case KIND.str:
-        value = decodeStrings(tag, bytes.subarray(s.off, s.off + s.len));
+        value = yield* decodeStrings(tag, bytes.subarray(s.off, s.off + s.len));
+        yield;
         break;
       case KIND.json:
-        try {
-          value = JSON.parse(strFromU8(bytes.subarray(s.off, s.off + s.len)));
-        } catch {
-          fail(`${tag}: bad JSON`);
-        }
+        value = readJson(tag, bytes, s);
         break;
     }
     setPath(root, path, value);

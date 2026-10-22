@@ -9,7 +9,7 @@ import type {
   GtfsStopTime,
   GtfsTrip,
 } from "../types/gtfs.js";
-import { namespaceParsedGtfs, routeCodeOf } from "../utils/categories.js";
+import { routeCodeOf } from "../utils/categories.js";
 import { scanCsvColumnsSteps, type ParsedGtfs } from "../utils/gtfs-parser.js";
 import { drain, unzipSteps } from "../utils/steps.js";
 import { displayStopName } from "./names.js";
@@ -168,22 +168,37 @@ export function* readFeedSteps(
   // data.gov.my withholds the stop_times of some trips (~2% of bus-kl); a
   // trip without them can't be routed.
   const timed = new Set<string>();
+  // stop_times is most of a feed's rows, and its ids and times repeat: each
+  // row shares one copy of each string instead of holding four of its own.
+  // That keeps the live heap small enough that the GC pauses stay short
+  // while the next feed is read (a full collection over bus-kl's unshared
+  // strings took ~90 ms on Hermes).
+  const pool = new Map<string, string>();
+  const intern = (s: string) => {
+    const got = pool.get(s);
+    if (got !== undefined) return got;
+    pool.set(s, s);
+    return s;
+  };
   yield* scan(
     "stop_times.txt",
     ["trip_id", "stop_id", "stop_sequence", "arrival_time", "departure_time"],
     (r, [trip, stop, seq, arr, dep]) => {
-      const tripId = cell(r, trip);
+      const tripId = intern(cell(r, trip));
       if (feed === "ktm" && !tripIds.has(tripId)) return;
       timed.add(tripId);
+      const arrival = cell(r, arr);
+      const departure = cell(r, dep);
       stopTimes.push({
         trip_id: tripId,
-        stop_id: cell(r, stop),
+        stop_id: intern(cell(r, stop)),
         stop_sequence: num(cell(r, seq)),
-        arrival_time: cell(r, arr) || undefined,
-        departure_time: cell(r, dep) || undefined,
+        arrival_time: arrival ? intern(arrival) : undefined,
+        departure_time: departure ? intern(departure) : undefined,
       });
     },
   );
+  pool.clear();
 
   const shapes: GtfsShapePoint[] = [];
   if (opts.shapes) {
@@ -266,8 +281,10 @@ export function* readFeedSteps(
     const id = String(r.route_id);
     routeMeta.set(namespaceFeedId(feed, id), routeMetaFor(feed, r, railPrefix?.get(id)));
   }
+  yield;
   const stopNames = new Map<string, string>();
   for (const s of stops) stopNames.set(namespaceFeedId(feed, s.stop_id), displayStopName(feed, s.stop_name));
+  yield;
   const { validFrom, validUntil } = validity(calendar, calendarDates, trips);
   yield;
 
@@ -284,9 +301,8 @@ export function* readFeedSteps(
     transfers: [],
     frequencies,
   };
-  const category = FEED_INFO[feed].category;
-  if (feed === "bus-kl" && category) namespaceParsedGtfs(parsed, category);
-  else namespaceParsedFeed(parsed, feed);
+  // bus-kl's prefix is its bus category's, so this matches namespaceParsedGtfs.
+  yield* namespaceParsedFeedSteps(parsed, feed);
 
   return { feed, parsed, routeMeta, stopNames, validFrom, validUntil };
 }
@@ -300,31 +316,59 @@ export function readFeed(zip: Uint8Array, feed: FeedId, opts?: ReadFeedOptions):
   }
 }
 
+/** Rows namespaced per step of {@link namespaceParsedFeedSteps}. */
+const NAMESPACE_ROWS_PER_YIELD = 8192;
+
 /**
- * Namespaces every id in `parsed` for a rail or KTM `feed` **in place** and
- * returns it: {@link namespaceParsedGtfs} with the feed prefixes from
- * `FEED_INFO`. No-op for a feed whose ids stay raw (the feeder).
+ * Namespaces every id in `parsed` for `feed` **in place** and returns it:
+ * {@link namespaceParsedGtfs} with the feed prefixes from `FEED_INFO`. No-op
+ * for a feed whose ids stay raw (the feeder).
  */
 export function namespaceParsedFeed(parsed: ParsedGtfs, feed: FeedId): ParsedGtfs {
+  const steps = namespaceParsedFeedSteps(parsed, feed);
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
+}
+
+/**
+ * {@link namespaceParsedFeed} as a generator that yields every few thousand
+ * rows: bus-kl has over 100k stop_times, too many to rename in one step.
+ */
+export function* namespaceParsedFeedSteps(parsed: ParsedGtfs, feed: FeedId): Generator<void, ParsedGtfs, void> {
   if (!FEED_INFO[feed].idPrefix) return parsed;
-  const ns = (id: string) => namespaceFeedId(feed, id);
+  // One namespaced copy per id, shared by every row that names it.
+  const renamed = new Map<string, string>();
+  const ns = (id: string) => {
+    let out = renamed.get(id);
+    if (out === undefined) renamed.set(id, (out = namespaceFeedId(feed, id)));
+    return out;
+  };
   const nsOpt = (id: string | undefined) => (id === undefined ? id : ns(id));
+  let work = 0;
   for (const r of parsed.routes) r.route_id = ns(String(r.route_id));
   for (const s of parsed.stops) {
+    if (++work % NAMESPACE_ROWS_PER_YIELD === 0) yield;
     s.stop_id = ns(s.stop_id);
     s.parent_station = nsOpt(s.parent_station);
   }
   for (const t of parsed.trips) {
+    if (++work % NAMESPACE_ROWS_PER_YIELD === 0) yield;
     t.route_id = ns(t.route_id);
     t.service_id = ns(t.service_id);
     t.trip_id = ns(t.trip_id);
     t.shape_id = nsOpt(t.shape_id);
   }
   for (const st of parsed.stopTimes) {
+    if (++work % NAMESPACE_ROWS_PER_YIELD === 0) yield;
     st.trip_id = ns(st.trip_id);
     st.stop_id = ns(st.stop_id);
   }
-  for (const p of parsed.shapes) p.shape_id = ns(p.shape_id);
+  for (const p of parsed.shapes) {
+    if (++work % NAMESPACE_ROWS_PER_YIELD === 0) yield;
+    p.shape_id = ns(p.shape_id);
+  }
   for (const c of parsed.calendar) c.service_id = ns(c.service_id);
   for (const c of parsed.calendarDates) c.service_id = ns(c.service_id);
   for (const a of parsed.fareAttributes) a.fare_id = ns(a.fare_id);

@@ -9,6 +9,8 @@ import {
   resetGtfsFeedCacheForTests,
   searchFeedRoutes,
   setSearchIndexStore,
+  setStaticFetch,
+  setStaticLimiter,
   type SearchIndexStore,
 } from "../gtfsFeed";
 
@@ -141,8 +143,15 @@ function serve(url: string): Response {
   return new Response("not found", { status: 404 });
 }
 
-beforeEach(() => {
+/** Fresh caches. Request pacing has its own tests (staticLimiter.test.ts), so nothing waits here. */
+function reset(): void {
   resetGtfsFeedCacheForTests();
+  setStaticLimiter({ acquire: async () => {} });
+  setStaticFetch((url) => fetch(url));
+}
+
+beforeEach(() => {
+  reset();
   calls = [];
   globalThis.fetch = (async (url: string) => {
     calls.push(String(url));
@@ -301,7 +310,7 @@ test("saved indexes answer a search with no download at all", async () => {
   assert.equal(rows.size, 4);
 
   // A relaunch: memory gone, the saved indexes remain.
-  resetGtfsFeedCacheForTests();
+  reset();
   setSearchIndexStore(store);
   calls = [];
   const hits = await searchFeedRoutes("Phileo");
@@ -317,7 +326,7 @@ test("a stale saved index answers at once and is rebuilt behind", async () => {
   const old = Date.now() - 13 * 60 * 60 * 1000;
   for (const [c, row] of rows) rows.set(c, { ...row, fetchedAt: old });
 
-  resetGtfsFeedCacheForTests();
+  reset();
   setSearchIndexStore(store);
   calls = [];
   const hits = await searchFeedRoutes("400");
@@ -332,4 +341,14 @@ test("partial results arrive before the last feed is in", async () => {
   const hits = await searchFeedRoutes("400", undefined, (p) => partials.push(p.map((h) => h.code)));
   assert.ok(partials.length >= 1 && partials.length <= 3);
   assert.equal(hits[0]?.code, "400");
+});
+
+test("static zips go through the injected static fetch", async () => {
+  const seen: string[] = [];
+  setStaticFetch(async (url) => {
+    seen.push(url);
+    return serve(url);
+  });
+  await getRouteBundle("T816");
+  assert.deepEqual(seen, ["https://api.data.gov.my/gtfs-static/prasarana?category=rapid-bus-mrtfeeder"]);
 });

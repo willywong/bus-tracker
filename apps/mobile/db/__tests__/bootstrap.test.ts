@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
 import { strToU8, zipSync } from "fflate";
 
-import { resetGtfsFeedCacheForTests } from "@/services/gtfsFeed";
+import { resetGtfsFeedCacheForTests, setStaticLimiter } from "@/services/gtfsFeed";
 import { bootstrapStaticGtfs, pruneRoute, resetBootstrapCacheForTests } from "../bootstrap";
 import { migrate } from "../database";
 import { getRoutePolyline, getStopsByIds } from "../queries";
@@ -67,6 +67,8 @@ let downloads: string[] = [];
 
 beforeEach(() => {
   resetGtfsFeedCacheForTests();
+  // Request pacing has its own tests (staticLimiter.test.ts); nothing waits here.
+  setStaticLimiter({ acquire: async () => {} });
   resetBootstrapCacheForTests();
   downloads = [];
   t789Shape = "SH2";

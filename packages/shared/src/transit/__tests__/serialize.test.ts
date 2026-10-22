@@ -7,10 +7,13 @@ import { readFeed, type NormalisedFeed } from "../feeds.js";
 import { FEED_IDS, NETWORK_VERSION, type FeedId, type TransitNetwork } from "../network.js";
 import {
   decodeNetwork,
+  decodeNetworkSteps,
   encodeNetwork,
+  encodeNetworkSteps,
   NETWORK_FORMAT_VERSION,
   NETWORK_MAGIC,
   NetworkFormatError,
+  readNetworkMeta,
 } from "../serialize.js";
 
 const WED = "20261028";
@@ -265,4 +268,57 @@ test("fixture network for 20261028 round-trips and is < 6 MB", () => {
 
 test("encode is deterministic", () => {
   assert.deepEqual(encodeNetwork(compileFixtures()), encodeNetwork(compileFixtures()));
+});
+
+/** Drains `steps`, counting its yields and its longest step. */
+function drainCounted<T>(steps: Generator<void, T, void>): { value: T; yields: number; longestMs: number } {
+  let yields = 0;
+  let longestMs = 0;
+  for (;;) {
+    const t = performance.now();
+    const step = steps.next();
+    longestMs = Math.max(longestMs, performance.now() - t);
+    if (step.done) return { value: step.value, yields, longestMs };
+    yields++;
+  }
+}
+
+test("stepped encode/decode match the one-shot functions and yield along the way", () => {
+  const net = compileFixtures();
+  const bytes = encodeNetwork(net);
+  const enc = drainCounted(encodeNetworkSteps(net));
+  assert.deepEqual(enc.value, bytes);
+  assert.ok(enc.yields >= 48, `${enc.yields} encode yields`);
+  const dec = drainCounted(decodeNetworkSteps(bytes));
+  assert.deepEqual(plain(dec.value), plain(net));
+  // Every string section yields at least once, and long ones (trip keys) many times.
+  assert.ok(dec.yields > 20, `${dec.yields} decode yields`);
+  console.log(
+    `encode ${enc.yields} steps (longest ${enc.longestMs.toFixed(1)} ms), ` +
+      `decode ${dec.yields} steps (longest ${dec.longestMs.toFixed(1)} ms)`,
+  );
+});
+
+test("readNetworkMeta reads only the meta, and rejects what decode rejects", () => {
+  const net = synthetic();
+  const bytes = encodeNetwork(net);
+  assert.deepEqual(readNetworkMeta(bytes), net.meta);
+  const bad = bytes.slice();
+  bad[0] = 0x58;
+  assert.throws(() => readNetworkMeta(bad), NetworkFormatError);
+  assert.throws(() => readNetworkMeta(bytes.subarray(0, 8)), NetworkFormatError);
+});
+
+test("a string run with a bad offset is rejected", () => {
+  const net = synthetic();
+  const bytes = encodeNetwork(net);
+  // SID: the first string section. Point its second string's offset past the text.
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let sid = -1;
+  for (let e = 12; e < 12 + 16 * dv.getUint16(6, true); e += 16) {
+    if (String.fromCharCode(bytes[e], bytes[e + 1], bytes[e + 2], bytes[e + 3]) === "SID ") sid = dv.getUint32(e + 8, true);
+  }
+  assert.ok(sid > 0 && dv.getUint32(sid, true) >= 2);
+  dv.setUint32(sid + 8, 0xffff, true);
+  assert.throws(() => decodeNetwork(bytes), NetworkFormatError);
 });

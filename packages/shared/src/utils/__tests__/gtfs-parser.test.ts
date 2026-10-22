@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { strToU8, zipSync } from "fflate";
-import { forEachCsvRow, parseGtfsZip, scanCsvColumns, scanCsvColumnsSteps } from "../gtfs-parser.js";
+import {
+  forEachCsvRow,
+  parseGtfsZip,
+  parseGtfsZipSteps,
+  scanCsvColumns,
+  scanCsvColumnsSteps,
+} from "../gtfs-parser.js";
 
 function makeFixture(): Uint8Array {
   return zipSync({
@@ -181,4 +187,26 @@ test("parseGtfsZip reads location_type and parent_station", () => {
   assert.equal(p.stops[1].parent_station, "PS");
   assert.equal(p.stops[2].location_type, undefined);
   assert.equal(p.stops[2].parent_station, undefined);
+});
+
+test("parseGtfsZipSteps yields as it goes and ends with parseGtfsZip's result", () => {
+  // Enough stop_times to span several 16 KB zip steps and 64 KB scan steps.
+  let stopTimes = "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n";
+  for (let i = 0; i < 20_000; i++) stopTimes += `T816-1,08:${String(i % 60).padStart(2, "0")}:00,08:00:00,${1000000 + i},${i + 1}\n`;
+  const zip = zipSync({
+    "routes.txt": strToU8("route_id,route_short_name\nT816,T816\n"),
+    "stops.txt": strToU8("stop_id,stop_name,stop_lat,stop_lon\n1000328,Hotel,3.1,101.6\n"),
+    "trips.txt": strToU8("route_id,service_id,trip_id\nT816,WK,T816-1\n"),
+    "stop_times.txt": strToU8(stopTimes),
+  });
+  const steps = parseGtfsZipSteps(zip);
+  let yields = 0;
+  let step = steps.next();
+  while (!step.done) {
+    yields++;
+    step = steps.next();
+  }
+  assert.ok(yields > 5, `${yields} yields`);
+  assert.deepEqual(step.value, parseGtfsZip(zip));
+  assert.equal(step.value.stopTimes.length, 20_000);
 });

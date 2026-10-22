@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 export const DDL = [
   `CREATE TABLE IF NOT EXISTS routes (
@@ -100,6 +100,29 @@ export const DDL = [
   `CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY NOT NULL,
     value TEXT NOT NULL
+  );`,
+  // The compiled transit network, one encoded blob per service date
+  // (today + tomorrow). A row is only replaced once a new build completes.
+  `CREATE TABLE IF NOT EXISTS network_blobs (
+    service_date TEXT PRIMARY KEY NOT NULL,
+    version INTEGER NOT NULL,
+    built_at INTEGER NOT NULL,
+    data BLOB NOT NULL
+  );`,
+  // The last download of each network feed. The zip itself is kept so
+  // tomorrow's network can be rebuilt offline.
+  `CREATE TABLE IF NOT EXISTS feed_meta (
+    feed_id TEXT PRIMARY KEY NOT NULL,
+    hash TEXT NOT NULL,
+    fetched_at INTEGER NOT NULL,
+    valid_from TEXT NOT NULL,
+    valid_until TEXT NOT NULL,
+    zip BLOB NOT NULL
+  );`,
+  // When each recent static GTFS request to data.gov.my went out, for the
+  // 3-per-minute limiter (rows older than the window are pruned as it goes).
+  `CREATE TABLE IF NOT EXISTS static_requests (
+    at INTEGER NOT NULL
   );`,
 ] as const;
 

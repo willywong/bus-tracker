@@ -167,3 +167,75 @@ On launch and daily:
 - `useTransitNetwork()` returns `{ network, health: null, status }`. The network persists in `network_blobs` for today and tomorrow, and the feed zips plus validity live in `feed_meta`.
 - `refreshTransitNetwork` takes injected `now`, so task 07 can test health with a fake clock.
 - The dev harness is gone.
+
+## Implementation notes
+- **Step 6 was deferred.** `apps/mobile/app/dev-network.tsx`, its Settings row and its `_layout.tsx` entry are still in place, and the "06 re-check" run has not been done. Other phase lanes were editing `_layout.tsx` and `settings.tsx` at the same time. The root agent re-checks on the iOS Simulator and removes every temporary dev screen at the end of the phase. Until then, the handoff line "The dev harness is gone" does not hold.
+- **Slices are 12 ms, not 8.** Task 00 carried `sliceMs` = 12 forward for the network build, and `NETWORK_SLICE_MS = 12` in `services/transitNetwork.ts` is used for every `readFeedSteps` and `compileNetwork` run.
+- **`InteractionManager` is gone in RN 0.88**, so there is no `Libraries/Interaction`. The provider uses `requestIdleCallback`, which RN 0.88 defines, with a 5 s timeout. A `setTimeout` fallback covers runtimes without it.
+- **`staticLimiter` is swapped with `setStaticLimiter()`.** An ES module `let` can't be reassigned by importers. `resetGtfsFeedCacheForTests()` installs a fresh real limiter. `gtfsFeed.test.ts` and `bootstrap.test.ts` then install a no-wait limiter, because several of their tests make 4 or more static requests and would otherwise wait 60 s in real time. Pacing is covered by `staticLimiter.test.ts`.
+- **429s surface as `StaticHttpError`** (`status`, raw `retryAfter`). `fetchZip` now throws it, with the same `GTFS static <status>` message as before. That lets `downloadTransitFeeds` see a 429 from the bus feeds that go through `getZip`. The retry passes `spare: true` down through `getZip` → `fetchZip` → `staticLimiter.acquire`. `computeNextPollDelay` uses `consecutiveFailures: 1`, since there is only one retry.
+- **Additions to the specified API:**
+  - `touchFeed(db, feed, fetchedAt)` in `db/networkStore.ts` handles the "hash unchanged, only bump `fetched_at`" case.
+  - `refreshTransitNetwork` returns `{ rebuilt, failedFeeds, failedDates, offline }`. A compile that throws is reported in `failedDates`, not `failedFeeds`, because it isn't a feed. `offline` is true when downloads were due and every one failed; the provider maps that to `status: 'offline'` when a blob loaded. The `'error'` status covers "nothing loads".
+  - `NetworkDeps.log?` is an optional progress logger. The provider passes `[transit-network] …` console lines; tests leave it silent.
+- **A feed read during the download step is reused for the compile**, so a changed feed is parsed once per refresh rather than once per date. Feeds that need no download are read from their stored zip only when a date needs rebuilding.
+- **A rebuild is decided per date** by the blob being missing, `version !== NETWORK_FORMAT_VERSION`, failing to decode (`NetworkFormatError`), or any `meta.feeds[f].hash` differing from `feed_meta`. A stored zip that no longer reads is left out of that build and reported in `failedFeeds`.
+- **`health` is typed `null`** until task 07 adds `NetworkHealth`. Every feed compiles with `included: true` until then, so expired-feed exclusion (success criterion 6) is still task 07's job.
+- **Dev only: `EXPO_PUBLIC_GTFS_STATIC_BASE`** (read only when `__DEV__`) sends data.gov.my static requests to another origin with the same path and query, e.g. a local server for the fixture zips. Those requests still take limiter slots. Dev builds also log every static request as `[gtfs] static GET <UTC time> <url>`, so the ≤ 3 per 60 s pacing can be read from the log.
+- **Node run on the 2026-10-23 fixtures for 20261028.** These are informational and not part of the tests:
+  - reads: rail 6 ms, bus-kl 80 ms, feeder 112 ms, KTM 3 ms;
+  - each date compiles in about 80 ms;
+  - the blob is 3.51 MB, with 6,421 stops and 308 patterns, which matches tasks 03–05.
+- **Fix after the first Simulator run (slices of 55–156 ms, some up to 416 ms).** Every heavy stage now runs through `runSteps` at 12 ms:
+  - **Downloads use `expo/fetch`.** React Native's `Response.arrayBuffer()` reads the body as base64 (`FileReader.readAsDataURL`) and decodes it with `toByteArray` in JS, all in one task. For a 2 MB zip that meant a 2.7 MB string plus its garbage. `services/staticFetch.ts` installs `expo/fetch` through `setStaticFetch()`; its `arrayBuffer()` is native, from `ExpoFetchModule.swift`, which is already in the Expo 58 pod. The change is JS-only. The import lives in `_layout.tsx`. Tests keep using the global `fetch`.
+  - **Hashing is sliced.** `fnv1a32HexSteps` yields every 64 KB. Hashing 2 MB takes 32–42 ms in one go on JIT-less Node, and Hermes is slower still.
+  - **readFeedSteps' tail yields.** It now yields after the route meta, the stop names and the validity. Namespacing runs as `namespaceParsedFeedSteps`, which yields every 8,192 rows. bus-kl now uses it too: its prefix equals its bus category's, so the result matches `namespaceParsedGtfs`.
+  - **Compile uses `yieldEvery: 512`** instead of the 2,048 default. On device, compile runs about 5× slower than on JIT-less Node.
+  - **Encode and decode are stepped.** `encodeNetworkSteps` and `decodeNetworkSteps` yield between sections. Hermes has `TextEncoder` but no `TextDecoder`, so fflate decodes strings in JS. String sections are therefore decoded in runs of about 32 KB, aligned on the stored string offsets. `readNetworkMeta` parses only the META section, so `rebuildReason` no longer decodes whole blobs.
+- **Nothing is read twice.** A changed feed is parsed once and reused by both dates' compiles. The feeder read is heavy by design: 14 MB of stop_times becomes about 300k row objects, as task 00's harness also built. Measured on JIT-less Node without `TextDecoder`, the read takes 1.3 s busy, close to the Simulator's 1.1 s.
+- **Slice timing is now exact.** Before, a gap over 0.25 ms between steps marked a new slice. If the runtime resumed a `setTimeout(0)` faster than that, back-to-back slices merged into one reported "slice". Now a microtask queued during a slice marks where it ends. Dev builds also log `longest frame gap` on the `refresh done` line, from a `requestAnimationFrame` loop, the same measure task 00 used.
+- **Device-proxy run on the 2026-10-23 fixtures**, JIT-less Node without `TextDecoder`, two refreshes:
+  - every stage's longest slice is 12–20 ms;
+  - the longest event-loop gap is 32 ms, which includes node:sqlite's synchronous blob writes; expo-sqlite's async API does not block the JS thread.
+- **Fix after the second Simulator run.** That run reported 4 static GETs in 6.5 s, a feeder read with a 117 ms slice, and a 902 ms frame gap.
+  - **The 4 GETs came from two JS runtimes, each with its own limiter.** Metro logged two `refresh start` runs, 54 s apart, and both later logged `refresh done`. The first runtime survived a dev reload.
+    - Runtime A sent rail, feeder and bus-kl at 19:28:56.72. Its own limiter held ktm until 19:29:56.73, exactly 60 s later.
+    - Runtime B started with an empty in-memory limiter. It sent rail, bus-kl and feeder at 19:29:50, and its ktm went at 19:30:50.26.
+    - Each limiter was correct alone. The same gap appears whenever the app relaunches within a minute.
+  - **Limiter grants now persist** in a SQLite `static_requests` table (`db/staticRequestLog.ts`, installed by `services/staticFetch.ts`).
+    - A single `INSERT … SELECT … WHERE (SELECT COUNT(*) …) < limit` statement claims a slot atomically across connections. A failed claim waits for the oldest recorded request to leave the window.
+    - If the log can't be read, the limiter falls back to its in-memory grants with a warning.
+    - The table is created by the v8 DDL (`IF NOT EXISTS`), so a database already at v8 gains it on its next open.
+  - **The ≥ 16 s spacing was missing and now exists.** `downloadTransitFeeds` keeps each of its own requests at least `TRANSIT_FEED_SPACING_MS` = 16 s after the previous response. Measuring from the response is conservative, since the limiter may hold a request first.
+    - A bus feed served from search's cached or in-flight zip sends no request and does not wait.
+    - With an empty window, a refresh sends rail, bus-kl, feeder and ktm at 0, 16, 32 and 60 s.
+  - **The feeder's long slice was an old-generation GC pause.** It was not an unsliced step. A JSI host on the pod's own `hermesvm.framework` (Static Hermes 260318099.0.4, Release, Hades concurrent) reproduced it when reading the fixtures in refresh order with bus-kl's result still live: the longest feeder slice was 105 ms, and one 97 ms step spent 90 ms in GC. Adding 400k live objects to stand in for the app heap pushed it to 160 ms.
+    - The cause was every stop_times row holding its own copies of its trip id, stop id and two times; Hermes has no substring sharing. Namespacing then built a fresh prefixed string per row.
+    - `readFeedSteps` now interns stop_times strings, and `namespaceParsedFeedSteps` renames each distinct id once.
+    - In that host, the feeder's longest slice is now 19.7 ms, or 24.8 ms with the 400k extra live objects. Total GC time fell from 126 ms to 20 ms and the heap from 84 MB to 55 MB.
+    - The row shape is unchanged, so `compile.ts` is untouched. Measurement scripts were temporary and not added to the repo.
+  - **The 902 ms frame gap was runtime A's.** Its refresh ran from 19:28:56 to 19:29:59 and spanned runtime B's start-up. Runtime B's own refresh measured 201 ms, which equals its feeder slice.
+    - The frame-gap watch now starts after `refresh start`, so waiting for the database is no longer counted.
+    - Dev builds log every gap over 100 ms as it happens (`frame gap N ms at +T ms`). Each gap then lands between the stage lines it fell in.
+  - **The pod's Hermes does define `TextDecoder`.** That corrects the bullet above. The stepped string decode is kept, since it costs nothing.
+- **Fix after the third Simulator run.** A cold launch showed gaps of 895, 813, 563 and 807 ms in the first 3.3 s after `refresh start`, before any network read.
+  - **They came from start-up work this task didn't add: the static-GTFS bootstrap of the saved favourites.**
+    - `useStaticGtfs` → `bootstrapStaticGtfs` → `getRouteBundle` parsed a whole feed zip per route in one synchronous `parseGtfsZip` call: `unzipSync` of every file including shapes, `strFromU8` of a 14 MB stop_times.txt, then a scan.
+    - On the pod's Hermes, that was 738 ms for the feeder and 495 ms for bus-kl.
+    - The run's order fits:
+      - the feeder GET went out at refresh start beside rail;
+      - two feeder gaps followed, one per favourite;
+      - then the bus-kl GET, once a route wasn't found in the feeder;
+      - then two bus-kl gaps.
+    - The favourites survive a reinstall in SecureStore, so a clean install still bootstraps them.
+  - **`parseGtfsZip` now drains a new `parseGtfsZipSteps` generator.** It inflates only the GTFS files, 16 KB of zip per step, and scans stops, trips, stop_times and shapes 64 KB per step.
+    - Output is identical (JSON-equal) to the committed parser on all four fixture zips, with and without `keepRoute`.
+    - `getRouteBundle` runs it through `runSteps` at 12 ms, stopping at the next step on abort. Measured in the Hermes host with 400k extra live objects, the longest slice is 17–21 ms.
+    - The refresh did not need to be deferred: the start-up work no longer blocks frames.
+  - **TEMPORARY dev markers.** `services/devStages.ts` logs `[transit-network] stage <name> +T ms` on the frame-gap clock, which starts at refresh start. The markers cover:
+    - each download's response and body;
+    - each search-index step: zip ready, built, serialized, saved;
+    - each route bundle step: from, parsed, cut;
+    - each refresh stage: stored feeds loaded, downloads done, hashed, read, saved, compiled, encoded, saved.
+
+    Remove them with the dev harnesses at the end of the phase.

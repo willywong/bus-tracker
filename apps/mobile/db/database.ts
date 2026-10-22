@@ -93,6 +93,13 @@ export async function migrate(db: Db): Promise<void> {
       "DELETE FROM stops WHERE NOT EXISTS (SELECT 1 FROM stop_times st WHERE st.stop_id = stops.stop_id);",
     );
   }
+
+  if (current < 8) {
+    // v7 -> v8: network_blobs + feed_meta for the transit network, and
+    // static_requests for the static-request limiter. The DDL
+    // `IF NOT EXISTS` already created them and there is nothing to backfill;
+    // the route bundle stays valid.
+  }
 }
 
 async function addColumnIfMissing(

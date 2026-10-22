@@ -1,4 +1,5 @@
-import { DecodeUTF8, strFromU8, unzipSync } from "fflate";
+import { DecodeUTF8, strFromU8 } from "fflate";
+import { drain, unzipSteps } from "./steps.js";
 import type {
   GtfsCalendar,
   GtfsCalendarDate,
@@ -229,28 +230,81 @@ export interface ParseGtfsOptions {
   keepRoute?: (route: GtfsRoute) => boolean;
 }
 
+/** The files {@link parseGtfsZipSteps} reads; nothing else in the zip is inflated. */
+const GTFS_FILES = new Set([
+  "routes.txt",
+  "stops.txt",
+  "trips.txt",
+  "stop_times.txt",
+  "shapes.txt",
+  "calendar.txt",
+  "calendar_dates.txt",
+  "fare_attributes.txt",
+  "fare_rules.txt",
+  "transfers.txt",
+  "frequencies.txt",
+]);
+
+/** `chunks` as one array. */
+function concat(chunks: readonly Uint8Array[]): Uint8Array {
+  if (chunks.length === 1) return chunks[0];
+  let n = 0;
+  for (const c of chunks) n += c.length;
+  const out = new Uint8Array(n);
+  let at = 0;
+  for (const c of chunks) {
+    out.set(c, at);
+    at += c.length;
+  }
+  return out;
+}
+
+/** A trimmed field, or undefined when the column is absent (as `parseCsv` gives it). */
+function opt(row: string[], i: number): string | undefined {
+  return i < 0 ? undefined : (row[i] ?? "").trim();
+}
+
+/** Parses a whole feed zip in one go: {@link parseGtfsZipSteps} drained. */
 export function parseGtfsZip(
   buffer: ArrayBuffer | Uint8Array,
   opts: ParseGtfsOptions = {},
 ): ParsedGtfs {
+  const steps = parseGtfsZipSteps(buffer, opts);
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
+}
+
+/**
+ * {@link parseGtfsZip} as a generator that yields every few ms (drive it
+ * with `runSteps`): only the GTFS files are inflated, 16 KB of zip per step,
+ * and the row files are decoded and scanned 64 KB per step, so a 14 MB
+ * stop_times.txt never becomes one string or one long task.
+ */
+export function* parseGtfsZipSteps(
+  buffer: ArrayBuffer | Uint8Array,
+  opts: ParseGtfsOptions = {},
+): Generator<void, ParsedGtfs, void> {
   const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
-  const files = unzipSync(bytes);
+  const files = yield* unzipSteps(bytes, GTFS_FILES);
+  /** A small file, whole. */
   const read = (name: string): Array<Record<string, string>> => {
-    const f = files[name];
-    if (!f) return [];
-    return parseCsv(strFromU8(f));
+    const chunks = files.get(name);
+    if (!chunks) return [];
+    files.delete(name);
+    return parseCsv(strFromU8(concat(chunks)));
   };
-  // The two big files are scanned a line at a time, columns mapped directly,
-  // and their bytes released as soon as they're read.
+  // The row files are scanned a line at a time, columns mapped directly,
+  // and their bytes released as they're read.
   const scan = (
     name: string,
     columns: readonly string[],
     onRow: (row: string[], col: readonly number[]) => void,
-  ): void => {
-    const f = files[name];
-    if (!f) return;
-    delete files[name];
-    scanCsvColumns(strFromU8(f), columns, onRow);
+  ): Generator<void, void, void> => {
+    const chunks = files.get(name);
+    files.delete(name);
+    return scanCsvColumnsSteps(drain(chunks ?? []), columns, onRow);
   };
 
   let routes: GtfsRoute[] = read("routes.txt").map((r) => ({
@@ -264,40 +318,50 @@ export function parseGtfsZip(
   if (opts.keepRoute) routes = routes.filter(opts.keepRoute);
   const keptRouteIds = opts.keepRoute ? new Set(routes.map((r) => String(r.route_id))) : null;
 
-  const stops: GtfsStop[] = read("stops.txt").map((r) => ({
-    stop_id: r.stop_id,
-    stop_name: r.stop_name,
-    stop_lat: num(r.stop_lat),
-    stop_lon: num(r.stop_lon),
-    wheelchair_boarding:
-      r.wheelchair_boarding === "1"
-        ? 1
-        : r.wheelchair_boarding === "2"
-          ? 2
-          : r.wheelchair_boarding === "0"
-            ? 0
-            : undefined,
-    location_type: r.location_type ? num(r.location_type) : undefined,
-    parent_station: r.parent_station || undefined,
-  }));
+  const stops: GtfsStop[] = [];
+  yield* scan(
+    "stops.txt",
+    ["stop_id", "stop_name", "stop_lat", "stop_lon", "wheelchair_boarding", "location_type", "parent_station"],
+    (r, [id, name, lat, lon, wheel, loc, parent]) => {
+      const w = opt(r, wheel);
+      const locationType = opt(r, loc);
+      stops.push({
+        stop_id: opt(r, id) as string,
+        stop_name: opt(r, name) as string,
+        stop_lat: num(opt(r, lat)),
+        stop_lon: num(opt(r, lon)),
+        wheelchair_boarding: w === "1" ? 1 : w === "2" ? 2 : w === "0" ? 0 : undefined,
+        location_type: locationType ? num(locationType) : undefined,
+        parent_station: opt(r, parent) || undefined,
+      });
+    },
+  );
 
-  let trips: GtfsTrip[] = read("trips.txt").map((r) => ({
-    route_id: r.route_id,
-    service_id: r.service_id,
-    trip_id: r.trip_id,
-    shape_id: r.shape_id || undefined,
-    direction_id:
-      r.direction_id === "1" ? 1 : r.direction_id === "0" ? 0 : undefined,
-    trip_headsign: r.trip_headsign || undefined,
-  }));
-  if (keptRouteIds) trips = trips.filter((t) => keptRouteIds.has(t.route_id));
+  let trips: GtfsTrip[] = [];
+  yield* scan(
+    "trips.txt",
+    ["route_id", "service_id", "trip_id", "shape_id", "direction_id", "trip_headsign"],
+    (r, [route, service, id, shape, dir, headsign]) => {
+      const routeId = opt(r, route) as string;
+      if (keptRouteIds && !keptRouteIds.has(routeId)) return;
+      const d = opt(r, dir);
+      trips.push({
+        route_id: routeId,
+        service_id: opt(r, service) as string,
+        trip_id: opt(r, id) as string,
+        shape_id: opt(r, shape) || undefined,
+        direction_id: d === "1" ? 1 : d === "0" ? 0 : undefined,
+        trip_headsign: opt(r, headsign) || undefined,
+      });
+    },
+  );
   const keptTripIds = keptRouteIds ? new Set(trips.map((t) => t.trip_id)) : null;
   const keptShapeIds = keptRouteIds
     ? new Set(trips.map((t) => t.shape_id).filter((id): id is string => !!id))
     : null;
 
   const stopTimes: GtfsStopTime[] = [];
-  scan(
+  yield* scan(
     "stop_times.txt",
     ["trip_id", "stop_id", "stop_sequence", "arrival_time", "departure_time"],
     (r, [trip, stop, seq, arr, dep]) => {
@@ -314,7 +378,7 @@ export function parseGtfsZip(
   );
 
   const shapes: GtfsShapePoint[] = [];
-  scan(
+  yield* scan(
     "shapes.txt",
     ["shape_id", "shape_pt_lat", "shape_pt_lon", "shape_pt_sequence"],
     (r, [id, lat, lon, seq]) => {
@@ -342,6 +406,7 @@ export function parseGtfsZip(
     end_date: r.end_date,
   }));
 
+  yield;
   const calendarDates: GtfsCalendarDate[] = [];
   for (const r of read("calendar_dates.txt")) {
     const t =
@@ -354,6 +419,7 @@ export function parseGtfsZip(
     });
   }
 
+  yield;
   const fareAttributes: GtfsFareAttribute[] = read("fare_attributes.txt").map(
     (r) => ({
       fare_id: r.fare_id,
@@ -380,6 +446,7 @@ export function parseGtfsZip(
     contains_id: r.contains_id || undefined,
   }));
 
+  yield;
   const transfers: GtfsTransfer[] = [];
   for (const r of read("transfers.txt")) {
     const t = num(r.transfer_type);
@@ -396,6 +463,7 @@ export function parseGtfsZip(
     transfers.push(entry);
   }
 
+  yield;
   const frequencies: GtfsFrequency[] = [];
   for (const r of read("frequencies.txt")) {
     const headway = num(r.headway_secs);

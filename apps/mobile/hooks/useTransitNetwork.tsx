@@ -1,0 +1,225 @@
+import {
+  createContext,
+  createElement,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+import { AppState, type AppStateStatus } from "react-native";
+import { runSteps, type TransitNetwork } from "@bus-tracker/shared";
+import { openDb } from "@/db/database";
+import { startDevStages } from "@/services/devStages";
+import { downloadTransitFeeds } from "@/services/gtfsFeed";
+import {
+  loadTodayNetwork,
+  refreshTransitNetwork,
+  serviceDatesFor,
+  type NetworkDeps,
+} from "@/services/transitNetwork";
+
+export type TransitNetworkStatus = "loading" | "ready" | "refreshing" | "offline" | "error";
+
+export interface TransitNetworkState {
+  /** Today's compiled network (service day from 04:00 MYT), or null before the first build. */
+  network: TransitNetwork | null;
+  /** Per-feed health. Filled by feed health (plan 12/07); always null until then. */
+  health: null;
+  status: TransitNetworkStatus;
+}
+
+/** How long the first refresh waits for an idle moment before running anyway. */
+const IDLE_TIMEOUT_MS = 5_000;
+/** Dev: a frame gap during a refresh longer than this is logged as it happens. */
+const FRAME_GAP_LOG_MS = 100;
+
+const TransitNetworkContext = createContext<TransitNetworkState | null>(null);
+
+function log(msg: string): void {
+  console.log(`[transit-network] ${msg}`);
+}
+
+/**
+ * Runs `fn` once the JS thread is idle. RN 0.88 defines `requestIdleCallback`
+ * (and no longer ships `InteractionManager`); a timer covers any runtime
+ * without it.
+ */
+function whenIdle(fn: () => void): () => void {
+  if (typeof requestIdleCallback === "function") {
+    const handle = requestIdleCallback(() => fn(), { timeout: IDLE_TIMEOUT_MS });
+    return () => cancelIdleCallback(handle);
+  }
+  const handle = setTimeout(fn, IDLE_TIMEOUT_MS);
+  return () => clearTimeout(handle);
+}
+
+/**
+ * Dev builds: starts timing the gaps between animation frames, the longest
+ * the UI froze (task 00's measure). The returned function stops and returns
+ * the longest gap in ms (0 in release builds).
+ */
+function watchFrameGaps(): () => number {
+  if (!__DEV__ || typeof requestAnimationFrame !== "function") return () => 0;
+  let running = true;
+  const start = startDevStages();
+  let last = start;
+  let longest = 0;
+  const frame = () => {
+    const t = performance.now();
+    // Backgrounded, frames stop altogether; that isn't a stall.
+    if (AppState.currentState === "active") {
+      const gap = t - last;
+      longest = Math.max(longest, gap);
+      // Logged as it happens, so it lands between the stage lines it fell in.
+      if (gap > FRAME_GAP_LOG_MS) {
+        log(`frame gap ${Math.round(gap)} ms at +${Math.round(last - start)} ms`);
+      }
+    }
+    last = t;
+    if (running) requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+  return () => {
+    running = false;
+    return longest;
+  };
+}
+
+/**
+ * Serves the whole transit network app-wide. On mount it loads today's
+ * stored network (so it works offline after one successful build), then
+ * refreshes feeds and blobs in idle time and swaps the new network in. When
+ * the app comes back on a new service day it switches to that day's blob
+ * (built the day before as "tomorrow") and refreshes again.
+ */
+export function TransitNetworkProvider({
+  children,
+}: {
+  children: ReactNode;
+}): ReturnType<typeof createElement> {
+  const [network, setNetwork] = useState<TransitNetwork | null>(null);
+  const [status, setStatus] = useState<TransitNetworkStatus>("loading");
+
+  useEffect(() => {
+    let cancelled = false;
+    let current: TransitNetwork | null = null;
+    let loadedDate: string | null = null;
+    let running = false;
+    let again = false;
+    let cancelIdle: (() => void) | null = null;
+    const depsPromise: Promise<NetworkDeps> = openDb().then((db) => ({
+      db,
+      now: Date.now,
+      download: downloadTransitFeeds,
+      runSteps,
+      log,
+    }));
+
+    async function load(): Promise<TransitNetwork | null> {
+      const deps = await depsPromise;
+      const date = serviceDatesFor(deps.now())[0];
+      const net = await loadTodayNetwork(deps);
+      if (!cancelled) {
+        loadedDate = date;
+        current = net;
+        setNetwork(net);
+      }
+      return net;
+    }
+
+    async function refresh(): Promise<void> {
+      // One refresh at a time; a request during one runs once it's done.
+      if (running) {
+        again = true;
+        return;
+      }
+      running = true;
+      if (current) setStatus("refreshing");
+      const startedAt = Date.now();
+      let stopFrameGaps = () => 0;
+      try {
+        const deps = await depsPromise;
+        log("refresh start");
+        // From here: the wait for the database belongs to app start-up.
+        stopFrameGaps = watchFrameGaps();
+        const result = await refreshTransitNetwork(deps);
+        const net = await load();
+        const next: TransitNetworkStatus = net ? (result.offline ? "offline" : "ready") : "error";
+        log(
+          `refresh done in ${Date.now() - startedAt} ms: rebuilt [${result.rebuilt.join(", ")}]` +
+            (result.failedFeeds.length > 0 ? `, failed feeds [${result.failedFeeds.join(", ")}]` : "") +
+            (result.failedDates.length > 0 ? `, failed builds [${result.failedDates.join(", ")}]` : "") +
+            ` → ${next}${net ? ` (${net.meta.serviceDate}, ${net.stops.count} stops)` : ""}` +
+            (__DEV__ ? `, longest frame gap ${Math.round(stopFrameGaps())} ms` : ""),
+        );
+        if (!cancelled) setStatus(next);
+      } catch (err) {
+        console.warn("[transit-network] refresh failed", err);
+        if (!cancelled) setStatus(current ? "offline" : "error");
+      } finally {
+        stopFrameGaps();
+        running = false;
+        if (again && !cancelled) {
+          again = false;
+          void refresh();
+        }
+      }
+    }
+
+    function scheduleRefresh(): void {
+      cancelIdle?.();
+      cancelIdle = whenIdle(() => {
+        cancelIdle = null;
+        void refresh();
+      });
+    }
+
+    void (async () => {
+      try {
+        const net = await load();
+        if (net && !cancelled) setStatus("ready");
+        log(net ? `loaded ${net.meta.serviceDate} (built ${new Date(net.meta.builtAt).toISOString()})` : "no stored network for today");
+      } catch (err) {
+        console.warn("[transit-network] load failed", err);
+      }
+      if (!cancelled) scheduleRefresh();
+    })();
+
+    // A new service day (04:00 MYT) since the last load: switch to its blob
+    // at once, then refresh feeds and build the next "tomorrow".
+    const sub = AppState.addEventListener("change", (state: AppStateStatus) => {
+      if (state !== "active" || loadedDate === null) return;
+      const today = serviceDatesFor(Date.now())[0];
+      if (today === loadedDate) return;
+      log(`new service day ${today} (was ${loadedDate})`);
+      void load()
+        .then((net) => {
+          if (!cancelled && !running) setStatus(net ? "ready" : "loading");
+        })
+        .catch((err) => console.warn("[transit-network] load failed", err));
+      scheduleRefresh();
+    });
+
+    return () => {
+      cancelled = true;
+      cancelIdle?.();
+      sub.remove();
+    };
+  }, []);
+
+  const value = useMemo<TransitNetworkState>(
+    () => ({ network, health: null, status }),
+    [network, status],
+  );
+
+  return createElement(TransitNetworkContext.Provider, { value }, children);
+}
+
+export function useTransitNetwork(): TransitNetworkState {
+  const ctx = useContext(TransitNetworkContext);
+  if (!ctx) {
+    throw new Error("useTransitNetwork must be used within <TransitNetworkProvider>");
+  }
+  return ctx;
+}

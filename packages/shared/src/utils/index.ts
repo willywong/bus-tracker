@@ -1,6 +1,6 @@
 export const SHARED_PKG_VERSION = "0.1.0" as const;
 
-export { parseCsv, parseCsvTable, parseGtfsZip, type ParseGtfsOptions } from "./gtfs-parser.js";
+export { parseCsv, parseCsvTable, parseGtfsZip, parseGtfsZipSteps, type ParseGtfsOptions } from "./gtfs-parser.js";
 export type { CsvTable, ParsedGtfs } from "./gtfs-parser.js";
 export {
   BARE_KEY_CATEGORIES,
