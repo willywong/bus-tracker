@@ -17,3 +17,6 @@ export * from "./walk.js";
 export * from "./lookup.js";
 export * from "./modes.js";
 export * from "./access.js";
+export * from "./time.js";
+export * from "./ids.js";
+export * from "./reconstruct.js";

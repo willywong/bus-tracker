@@ -1,24 +1,23 @@
 /**
  * Plan 14/00: the five golden queries (plan 14/06) and timing helpers shared
  * by the Node bench (bench-raptor.ts) and the throwaway device harness
- * (apps/mobile/app/dev-planner.tsx). Since 14/03 access and egress are the
- * engine's `accessStops` (≤ 25 stops within 1,000 m, coverage-pruned, walked
- * at 80 m/min × 1.25, spec §4.1), and the walk-only option is ranked too.
- * Since 14/02 the bench times {@link rankedRange} (`rangeRaptor` +
- * `rankCandidates`); the device harness still times {@link rangeArrival}, the
- * 14/01 earliest-arrival stand-in, until 14/04's `planSync`.
+ * (apps/mobile/app/dev-planner.tsx). Since 14/04 both time `planSync` /
+ * `plan()` end to end on {@link PreparedQuery.plan}; the bench also times
+ * {@link rankedRange} (`rangeRaptor` + `rankCandidates` on precomputed
+ * access and egress, 14/02–03) to show the engine's share and to try other
+ * windows.
  */
 import { accessStops, egressStops } from "../src/transit/access.js";
 import { compileNetworkSync, type CompileFeeds } from "../src/transit/compile.js";
 import { readFeed, type NormalisedFeed } from "../src/transit/feeds.js";
 import { FEED_IDS, type FeedId, type TransitNetwork } from "../src/transit/network.js";
-import { INF, MAX_RIDES, runRounds, startDeparture, type StopTime } from "../src/transit/raptor.js";
+import { INF, type StopTime } from "../src/transit/raptor.js";
 import { RANGE_STEP_SEC, RANGE_WINDOW_SEC, rangeRaptor, type RawJourney } from "../src/transit/range.js";
 import { patternMask } from "../src/transit/modes.js";
-import type { Place } from "../src/transit/plan.js";
+import type { Place, PlanQuery } from "../src/transit/plan.js";
 import { rankCandidates, summarize, type Candidate, type Ranked } from "../src/transit/rank.js";
 import { sameSpot, walkOnlyCandidate } from "../src/transit/walk.js";
-import { resetWorkspace, workspaceFor } from "../src/transit/workspace.js";
+import { workspaceFor } from "../src/transit/workspace.js";
 import { secondsToClockHHMM, toMalaysiaParts } from "../src/utils/gtfs-time.js";
 import { WALKING_METERS_PER_MINUTE } from "../src/utils/rail.js";
 
@@ -87,6 +86,16 @@ export function queryEnds(net: TransitNetwork, query: BenchQuery, t0: number): P
   return { access, egress, walk: walkOnlyCandidate(from, to, t0, WALKING_METERS_PER_MINUTE), same: sameSpot(access, egress, { from, to }) };
 }
 
+/** A golden as a `plan()` query (coordinate places, 80 m/min). */
+export function planQueryOf(query: BenchQuery): PlanQuery {
+  return {
+    from: placeOf(query.name, query.from),
+    to: placeOf(query.name, query.to),
+    departAt: query.departAt,
+    walkMetersPerMin: WALKING_METERS_PER_MINUTE,
+  };
+}
+
 export interface PreparedQuery {
   query: BenchQuery;
   net: TransitNetwork;
@@ -98,6 +107,8 @@ export interface PreparedQuery {
   same: boolean;
   /** Departure, seconds after the service day's midnight. */
   t0: number;
+  /** The golden as a `plan()` query: coordinate places, 80 m/min, defaults otherwise. */
+  plan: PlanQuery;
 }
 
 /** Access, egress and `t0` for each golden, on `full` or (rail excluded) `noRail`. */
@@ -107,7 +118,7 @@ export function prepareQueries(full: TransitNetwork, noRail: TransitNetwork): Pr
     const parts = toMalaysiaParts(new Date(query.departAt));
     if (parts.ymd !== net.meta.serviceDate) throw new Error(`${query.name}: departs on ${parts.ymd}, not ${net.meta.serviceDate}`);
     const t0 = parts.secSinceMidnight;
-    return { query, net, ...queryEnds(net, query, t0), t0 };
+    return { query, net, ...queryEnds(net, query, t0), t0, plan: planQueryOf(query) };
   });
 }
 
@@ -146,66 +157,8 @@ export interface RangeOptions {
   windowSec?: number;
   /** Gap between range departures (default 120 s). */
   stepSec?: number;
-  /** Rounds, one per ride (default and cap {@link MAX_RIDES}). */
+  /** Rounds, one per ride (default and cap `MAX_RIDES`). */
   maxRides?: number;
-}
-
-export interface RangeResult {
-  /** Best egress arrival over the range, seconds after service-day midnight; `INF` if none. */
-  arrive: number;
-  /** Rounds scanned, summed over every range departure. */
-  rounds: number;
-  /** Range departures run. */
-  runs: number;
-}
-
-/**
- * The benchmark's query until 14/02's `plan()`: `runRounds` at `t0 +
- * windowSec`, then every `stepSec` earlier down to `t0`, keeping labels
- * between departures (rRAPTOR), every pattern allowed, 80 m/min. Yields after
- * each round (drive it with `runSteps`).
- */
-export function* rangeArrivalSteps(
-  net: TransitNetwork,
-  access: readonly StopTime[],
-  egress: readonly StopTime[],
-  t0: number,
-  opts: RangeOptions = {},
-): Generator<void, RangeResult, void> {
-  const windowSec = opts.windowSec ?? 2400;
-  const stepSec = Math.max(1, opts.stepSec ?? 120);
-  const maxRides = Math.min(opts.maxRides ?? MAX_RIDES, MAX_RIDES);
-  const allowed = patternMask(net);
-  const ws = workspaceFor(net);
-  resetWorkspace(ws);
-  const input = { egress, maxRides, allowed, walkMetersPerMin: WALKING_METERS_PER_MINUTE };
-  let rounds = 0;
-  let runs = 0;
-  for (let dep = t0 + windowSec; dep >= t0; dep -= stepSec) {
-    runs++;
-    startDeparture(ws, access, dep);
-    const steps = runRounds(net, ws, input);
-    while (!steps.next().done) {
-      rounds++;
-      yield;
-    }
-  }
-  return { arrive: ws.destBest[maxRides], rounds, runs };
-}
-
-/** {@link rangeArrivalSteps} drained in one go: the JS time of one query. */
-export function rangeArrival(
-  net: TransitNetwork,
-  access: readonly StopTime[],
-  egress: readonly StopTime[],
-  t0: number,
-  opts?: RangeOptions,
-): RangeResult {
-  const steps = rangeArrivalSteps(net, access, egress, t0, opts);
-  for (;;) {
-    const step = steps.next();
-    if (step.done) return step.value;
-  }
 }
 
 export interface RankedResult {

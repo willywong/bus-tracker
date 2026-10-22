@@ -1,20 +1,24 @@
 /**
- * Plan 14/00 step 3: times the range query (`rangeRaptor` + `rankCandidates`,
- * plan 14/02, via `rankedRange`) on the fixture network for the five golden
- * queries (see raptor-queries.ts), then prints each query's ranked options.
- * Access, egress and the walk-only option are 14/03's (`queryEnds`, timed
- * apart as `ends ms`).
+ * Plan 14/00 step 3: times `planSync` (plan 14/04: access and egress, range
+ * RAPTOR, ranking and itinerary reconstruction) end to end on the fixture
+ * network for the five golden queries (see raptor-queries.ts), then prints
+ * each query's itineraries. For comparison it also times `rankedRange` (the
+ * range and ranking alone on precomputed access and egress, 14/02) at
+ * `--window`, and `queryEnds` (14/03) as `ends ms`.
  *
  *   pnpm --filter @bus-tracker/shared exec tsx scripts/bench-raptor.ts [--window 2400|1200] [--step 120] [--rides 4]
  *
- * Add `--expose-gc` after `tsx` to collect the feed-parse garbage before the
- * timed runs; without it a GC pause can land in one query's max (~10 ms).
+ * `planSync` always uses `PLAN_WINDOW_SEC` and the 2-min step; `--window` and
+ * `--step` only change the `rankedRange` columns. Add `--expose-gc` after
+ * `tsx` to collect the feed-parse garbage before the timed runs; without it a
+ * GC pause can land in one query's max (~10 ms).
  */
 import { readFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 
 import { FEED_IDS, type FeedId, type TransitNetwork } from "../src/transit/network.js";
-import type { RawLeg } from "../src/transit/raptor.js";
+import { PLAN_WINDOW_SEC, planSync, type Leg, type LegPoint, type PlanResult } from "../src/transit/plan.js";
+import { toServiceSeconds } from "../src/transit/time.js";
 import {
   clock,
   compileFixtures,
@@ -63,9 +67,13 @@ console.log(`window ${opts.windowSec} s, step ${opts.stepSec} s, ${opts.maxRides
 const queries = prepareQueries(full, noRail);
 globalThis.gc?.();
 const heapBefore = process.memoryUsage().heapUsed;
-console.log("query                 | access | egress | ends ms | arrive | pareto | ranked | runs | rounds | p50 ms | p95 ms | max ms");
-const results: RankedResult[] = [];
+console.log(`plan window ${PLAN_WINDOW_SEC} s; range columns at window ${opts.windowSec} s`);
+console.log(
+  "query                 | access | egress | ends ms | arrive | pareto | its | runs | rounds | plan p50 | plan p95 | plan max | range p50 | range p95",
+);
+const results: PlanResult[] = [];
 for (const q of queries) {
+  const plan = { ...q.plan, maxRides: opts.maxRides };
   const qOpts = { ...opts, walk: q.walk, same: q.same };
   const endSamples: number[] = [];
   for (let i = 0; i < WARMUP + RUNS; i++) {
@@ -73,55 +81,65 @@ for (const q of queries) {
     queryEnds(q.net, q.query, q.t0);
     if (i >= WARMUP) endSamples.push(performance.now() - s);
   }
-  for (let i = 0; i < WARMUP; i++) rankedRange(q.net, q.access, q.egress, q.t0, qOpts);
+  for (let i = 0; i < WARMUP; i++) planSync(q.net, plan);
   const samples: number[] = [];
-  let result = rankedRange(q.net, q.access, q.egress, q.t0, qOpts);
+  let result = planSync(q.net, plan);
   for (let i = 0; i < RUNS; i++) {
     const s = performance.now();
-    result = rankedRange(q.net, q.access, q.egress, q.t0, qOpts);
+    result = planSync(q.net, plan);
     samples.push(performance.now() - s);
   }
   results.push(result);
+  for (let i = 0; i < WARMUP; i++) rankedRange(q.net, q.access, q.egress, q.t0, qOpts);
+  const rangeSamples: number[] = [];
+  let ranked: RankedResult = rankedRange(q.net, q.access, q.egress, q.t0, qOpts);
+  for (let i = 0; i < RUNS; i++) {
+    const s = performance.now();
+    ranked = rankedRange(q.net, q.access, q.egress, q.t0, qOpts);
+    rangeSamples.push(performance.now() - s);
+  }
   const p = percentiles(samples);
+  const r = percentiles(rangeSamples);
+  const first = result.itineraries[0];
   console.log(
     [
       q.query.name.padEnd(21),
       String(q.access.length).padStart(6),
       String(q.egress.length).padStart(6),
       percentiles(endSamples).p50.toFixed(2).padStart(7),
-      clock(result.ranked[0]?.cand.arrive ?? Infinity).padStart(6),
-      String(result.journeys.length).padStart(6),
-      String(result.ranked.length).padStart(6),
-      String(result.runs).padStart(4),
-      String(result.rounds).padStart(6),
-      p.p50.toFixed(2).padStart(6),
-      p.p95.toFixed(2).padStart(6),
-      p.max.toFixed(2).padStart(6),
+      clock(first ? toServiceSeconds(q.net, first.arriveAt) : Infinity).padStart(6),
+      String(ranked.journeys.length).padStart(6),
+      String(result.itineraries.length).padStart(3),
+      String(ranked.runs).padStart(4),
+      String(ranked.rounds).padStart(6),
+      p.p50.toFixed(2).padStart(8),
+      p.p95.toFixed(2).padStart(8),
+      p.max.toFixed(2).padStart(8),
+      r.p50.toFixed(2).padStart(9),
+      r.p95.toFixed(2).padStart(9),
     ].join(" | "),
   );
 }
 const heapAfter = process.memoryUsage().heapUsed;
 console.log(`heapUsed before ${mb(heapBefore)}, after ${mb(heapAfter)}`);
 
-/** One leg as text: `walk 240 m`, `T816 Hotel → MRT 08:07`, `walk 90 s`. */
-function legText(net: TransitNetwork, l: RawLeg): string {
-  if (l.kind === "access") return `walk ${l.meters} m`;
-  if (l.kind === "walk") return `walk ${l.seconds} s`;
-  const P = net.patterns;
-  const slot = P.stopStart[l.pattern];
-  const name = (pos: number) => net.stops.name[P.stops[slot + pos]];
-  const how = l.trip >= 0 ? clock(l.boardTime) : `~${clock(l.boardTime)}`;
-  return `${net.routes.label[P.route[l.pattern]]} ${name(l.boardPos)} ${how} → ${name(l.alightPos)}`;
+/** One leg as text: `walk 240 m 4 min`, `T816 HOTEL LISA 08:07 → … 08:20 (12 stops)`, `~` for a headway time. */
+function legText(net: TransitNetwork, l: Leg): string {
+  const hm = (p: LegPoint) => clock(toServiceSeconds(net, p.time));
+  if (l.kind === "walk") return `walk ${l.meters} m ${Math.round(l.seconds / 60)} min`;
+  const how = l.timing.kind === "headway" ? "~" : "";
+  return `${l.label} ${l.from.name} ${how}${hm(l.from)} → ${l.to.name} ${how}${hm(l.to)} (${l.via.length + 1} stops)`;
 }
 
 for (const [i, q] of queries.entries()) {
-  console.log(`\n${q.query.name}: ${results[i].journeys.length} Pareto journeys, ranked:`);
-  for (const r of results[i].ranked) {
-    const c = r.cand;
-    const legs = c.raw ? c.raw.legs.map((l) => legText(q.net, l)).join(" · ") : "walk";
+  const res = results[i];
+  console.log(`\n${q.query.name}: ${res.itineraries.length} itineraries, excludedFeeds ${JSON.stringify(res.excludedFeeds)}`);
+  for (const it of res.itineraries) {
+    const at = (ms: number) => clock(toServiceSeconds(q.net, ms));
     console.log(
-      `  ${clock(c.leave)}→${clock(c.arrive)} ${c.rides} rides, walk ${c.walkMeters} m, wait ${Math.round(c.firstWaitSec / 60)} min, ` +
-        `score ${r.score.toFixed(1)}${r.tags.length ? ` [${r.tags.join(", ")}]` : ""}\n    ${legs}`,
+      `  ${it.id} ${at(it.departAt)}→${at(it.arriveAt)} ${it.rides} rides, walk ${it.walkMeters} m` +
+        `${it.tags.length ? ` [${it.tags.join(", ")}]` : ""}${it.warnings.length ? ` !${it.warnings.join(", ")}` : ""}\n` +
+        `    ${it.legs.map((l) => legText(q.net, l)).join(" · ")}`,
     );
   }
 }

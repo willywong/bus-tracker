@@ -1,15 +1,15 @@
 /**
- * Throwaway (plan 14/00 step 4; deleted in 14/06): times the RAPTOR core
- * (14/01, as `rangeArrival`) on the device. Fetches the four fixture zips
- * from a fixture server on the dev machine (`python3 -m http.server 8787` in
+ * Throwaway (plan 14/00 step 4; deleted in 14/06): times `plan()` (14/04,
+ * end to end) on the device. Fetches the four fixture zips from a fixture
+ * server on the dev machine (`python3 -m http.server 8787` in
  * packages/shared/src/transit/__fixtures__/2026-10-23), compiles them for
  * 20261028 (with and without rail), then runs the five golden queries:
- * 2 warm-ups and 20 timed sync runs per window (40 and 20 min), a sliced pass
- * (8 ms slices), and the Hermes heap around one query. Dev builds or
- * EXPO_PUBLIC_DEV_TOOLS=1 only. `t816://dev-planner?auto=3` runs three times on
- * open and logs to Metro with a `[dev-planner]` prefix.
+ * 2 warm-ups and 20 timed `planSync` runs (the 40-min `PLAN_WINDOW_SEC`), a
+ * sliced pass (8 ms slices), and the Hermes heap around one query. Dev builds
+ * or EXPO_PUBLIC_DEV_TOOLS=1 only. `t816://dev-planner?auto=3` runs three
+ * times on open and logs to Metro with a `[dev-planner]` prefix.
  */
-import { FEED_IDS, INF, type FeedId } from '@bus-tracker/shared';
+import { FEED_IDS, plan, PLAN_WINDOW_SEC, planSync, toServiceSeconds, type FeedId, type PlanResult } from '@bus-tracker/shared';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
@@ -23,8 +23,6 @@ import {
   networkBytes,
   percentiles,
   prepareQueries,
-  rangeArrival,
-  rangeArrivalSteps,
   readFixtureFeeds,
   type PreparedQuery,
 } from '../../../packages/shared/scripts/raptor-queries';
@@ -35,7 +33,6 @@ const WARMUP = 2;
 const RUNS = 20;
 const SLICED_RUNS = 5;
 const SLICE_MS = 8;
-const WINDOWS = [2400, 1200] as const;
 
 type Zips = Record<FeedId, Uint8Array>;
 
@@ -78,36 +75,39 @@ function build(zips: Zips, log: (s: string) => void): PreparedQuery[] {
   return prepareQueries(full, noRail);
 }
 
+/** `HH:MM` of the fastest itinerary's arrival, or `—`. */
+function arrival(q: PreparedQuery, r: PlanResult): string {
+  const first = r.itineraries[0];
+  return first ? clock(toServiceSeconds(q.net, first.arriveAt)) : clock(Infinity);
+}
+
 async function runOnce(queries: PreparedQuery[], run: number, log: (s: string) => void): Promise<void> {
   log(`— run ${run} —`);
-  for (const windowSec of WINDOWS) {
-    log(`sync, ${windowSec / 60}-min window: query | arrive | rounds | p50 | p95 | max (ms)`);
-    for (const q of queries) {
-      const opts = { windowSec };
-      for (let i = 0; i < WARMUP; i++) rangeArrival(q.net, q.access, q.egress, q.t0, opts);
-      const samples: number[] = [];
-      let r = rangeArrival(q.net, q.access, q.egress, q.t0, opts);
-      for (let i = 0; i < RUNS; i++) {
-        const s = performance.now();
-        r = rangeArrival(q.net, q.access, q.egress, q.t0, opts);
-        samples.push(performance.now() - s);
-      }
-      const p = percentiles(samples);
-      log(
-        `  ${q.query.name.padEnd(21)} | ${clock(r.arrive).padStart(5)} | ${String(r.rounds).padStart(3)} | ` +
-          `${ms(p.p50)} | ${ms(p.p95)} | ${ms(p.max)}`,
-      );
-      await pause();
+  log(`planSync, ${PLAN_WINDOW_SEC / 60}-min window: query | arrive | its | p50 | p95 | max (ms)`);
+  for (const q of queries) {
+    for (let i = 0; i < WARMUP; i++) planSync(q.net, q.plan);
+    const samples: number[] = [];
+    let r = planSync(q.net, q.plan);
+    for (let i = 0; i < RUNS; i++) {
+      const s = performance.now();
+      r = planSync(q.net, q.plan);
+      samples.push(performance.now() - s);
     }
+    const p = percentiles(samples);
+    log(
+      `  ${q.query.name.padEnd(21)} | ${arrival(q, r).padStart(5)} | ${String(r.itineraries.length).padStart(3)} | ` +
+        `${ms(p.p50)} | ${ms(p.p95)} | ${ms(p.max)}`,
+    );
+    await pause();
   }
 
-  log(`sliced (${SLICE_MS} ms slices), 40-min window, ${SLICED_RUNS} runs: query | wall p50 | busy p50 | longest slice (ms)`);
+  log(`sliced plan() (${SLICE_MS} ms slices), ${SLICED_RUNS} runs: query | wall p50 | busy p50 | longest slice (ms)`);
   for (const q of queries) {
     const wall: number[] = [];
     const busy: number[] = [];
     let longest = 0;
     for (let i = 0; i < SLICED_RUNS; i++) {
-      const { stats } = await runInSlicesMeasured(rangeArrivalSteps(q.net, q.access, q.egress, q.t0), SLICE_MS);
+      const { stats } = await runInSlicesMeasured(plan(q.net, q.plan), SLICE_MS);
       wall.push(stats.wallMs);
       busy.push(stats.busyMs);
       longest = Math.max(longest, stats.longestSliceMs);
@@ -115,14 +115,14 @@ async function runOnce(queries: PreparedQuery[], run: number, log: (s: string) =
     log(`  ${q.query.name.padEnd(21)} | ${ms(percentiles(wall).p50)} | ${ms(percentiles(busy).p50)} | ${ms(longest)}`);
   }
 
-  log('hermes heap around one 40-min query: query | before | after (MB)');
+  log('hermes heap around one planSync: query | before | after (MB)');
   for (const q of queries) {
     const before = heapMB();
-    const r = rangeArrival(q.net, q.access, q.egress, q.t0);
+    const r = planSync(q.net, q.plan);
     const after = heapMB();
     log(
       `  ${q.query.name.padEnd(21)} | ${before == null ? 'n/a' : before.toFixed(2)} | ${after == null ? 'n/a' : after.toFixed(2)}` +
-        (r.arrive >= INF ? ' (no arrival)' : ''),
+        (r.itineraries.length === 0 ? ' (no itinerary)' : ''),
     );
   }
 }

@@ -115,3 +115,28 @@ Turn ranked candidates into spec-exact `Itinerary` objects with epoch-ms times, 
 ## Handoff to next step ([05-live-retiming.md](./05-live-retiming.md))
 - `plan`, `planSync` (both return `PlanResult`), the spec §4.4 types, `toLegs`, `toItinerary`, `itineraryId`, `signatureFromLegs`, `legWarnings`, `serviceDayStartMs`, `toServiceSeconds` and `toEpochMs` are exported.
 - Ride legs keep the network `route` index and stop indices in `LegPoint.stop`, so `retime()` can find the pattern and stops again. To recover `pattern`, search `stopRoutes` for the board/alight pair on a pattern of `route` with the same headsign.
+
+## Implementation notes
+- **`retime` stays a comment in `plan.ts`.** The spec §4.4 block is pasted verbatim, but the `plan` and `retime` signature lines are kept as comments. `plan` is implemented right below them. A `declare function retime` would export a name with no runtime value. A stub would clash, through `export *`, with 05's `retime.ts`. 05 adds `retime` in `retime.ts` and leaves the comment as is.
+- **A headway ride after a ride boards from `t + CHANGE_SEC`.** Step 3's formula uses `t`, but the engine boards a ride label at `arrRide + CHANGE_SEC` (01). `toLegs` therefore uses `ready = t + (rode ? CHANGE_SEC : 0)` for the window run start and for the `board ≥ ready` check, so a headway leg's time equals the engine's `boardTime`. The test "a headway ride after a ride boards CHANGE_SEC later" asserts this.
+- **Engine-bug drop.** `toLegs` throws `ReconstructError` (exported) when `board < ready` or a window has ended. `plan()` catches only that class and drops the candidate after ranking. Any other error is rethrown. `plan.test.ts` calls `toItinerary` strictly on every candidate that survives ranking (no top-5 cap) for 6 golden runs plus 40 seeded random queries. A one-off scratch run of 400 random queries (968 candidates) threw none.
+- **`last-service` looks across sibling patterns.** A `Leg` has no pattern, so `legWarnings` searches `stopRoutes` at `from.stop` for every pattern with the same `route` and `headsign` that reaches `to.stop` later. Loop patterns are checked at each visit. It takes the earliest `earliestBoardInto(…, board + 1)` over all of them. For trips this is the next trip, and for windows it is the window end, as step 5 says. Taking the earliest also counts a FIFO sibling's next trip, not only `trip + 1` on the same pattern. The constants are `LAST_SERVICE_GAP_SEC` (3600, strictly greater) and `LONG_WAIT_SEC` (900, strictly greater).
+- **Merged end walks can exceed the access limit.** Merging a transfer walk into the egress walk (step 3) produces a last walk of up to 1,250 m + the transfer. The longest transfer in the fixture is 498 m walked (`ktm:19000` → `rail:KJ14`, interchange). One seeded query has a last walk of 1,262 m. 06's property 5 ("last walk ≤ 1000 × 1.25 + 1") must allow for this, for example `≤ 1250 + 500`, which is what `plan.test.ts` uses.
+- **Verification grep.** `grep -c "declare function plan"` prints `2`, because `planSync` matches too. `grep -c "declare function plan(" dist/index.d.ts` prints `1`.
+- **`PLAN_WINDOW_SEC = RANGE_WINDOW_SEC`** (2400), per 00's decision. `maxWalkMeters` defaults to `ACCESS_MAX_METERS`. A pace that is not > 0 falls back to 80 m/min, so `walkMetersPerMin: 0` gives the same result as 80.
+- **Ids.** `fnv1a32` hashes UTF-16 code units, unsigned. Its reference values `""` → `0x811c9dc5` and `"a"` → `0xe40c292c` are tested. Walk-only always has the id of `"walk"`.
+- **Bench and harness.**
+  - `scripts/bench-raptor.ts` times `planSync` end to end on `PreparedQuery.plan` (new `planQueryOf`: coordinate places at 80 m/min) and prints each golden's itineraries.
+  - It still times `rankedRange` for comparison. `--window` and `--step` only affect those columns.
+  - The 01 stand-in `rangeArrival` / `rangeArrivalSteps` is removed.
+  - `apps/mobile/app/dev-planner.tsx` (JS-only) times `planSync` at the 40-min window, slices `plan()`, and measures heap around one `planSync`. The 20-min row is dropped because 00's decision is made.
+- **Bench (Node v24, `--expose-gc`, two runs, 40-min window):**
+
+  | ms | Q1 | Q2 | Q3 | Q4 | Q5 |
+  |---|---:|---:|---:|---:|---:|
+  | `planSync` p50 | 1.07–1.08 | 0.55–0.56 | 2.60–2.61 | 0.26 | 1.31–1.35 |
+  | `planSync` p95 | 1.18–1.23 | 0.67–0.68 | 2.79–2.81 | 0.28–0.30 | 1.39–1.42 |
+  | `rankedRange` p50 (same session) | 0.86–0.88 | 0.49 | 2.45–2.47 | 0.17–0.18 | 1.18–1.20 |
+  | fastest arrive / itineraries | 08:42 / 5 | 08:23 / 5 | 08:57 / 4 | 08:04 / 5 | 09:05 / 3 |
+
+  Access, egress and reconstruction add about 0.1–0.2 ms per query. The worst case, Q3 p95 at 2.8 ms, is still about 20× under the 60 ms Node target, so task 00's decision stands: JS thread, 40-min window.
