@@ -1,7 +1,7 @@
 /**
- * Throwaway (plan 14/00 step 4; deleted in 14/06): times the prototype RAPTOR
- * on the device. Fetches the four fixture zips from a fixture server on the
- * dev machine (`python3 -m http.server 8787` in
+ * Throwaway (plan 14/00 step 4; deleted in 14/06): times the RAPTOR core
+ * (14/01, as `rangeArrival`) on the device. Fetches the four fixture zips
+ * from a fixture server on the dev machine (`python3 -m http.server 8787` in
  * packages/shared/src/transit/__fixtures__/2026-10-23), compiles them for
  * 20261028 (with and without rail), then runs the five golden queries:
  * 2 warm-ups and 20 timed sync runs per window (40 and 20 min), a sliced pass
@@ -9,7 +9,7 @@
  * EXPO_PUBLIC_DEV_TOOLS=1 only. `t816://dev-planner?auto=3` runs three times on
  * open and logs to Metro with a `[dev-planner]` prefix.
  */
-import { FEED_IDS, INF, raptorProto, raptorProtoSteps, type FeedId } from '@bus-tracker/shared';
+import { FEED_IDS, INF, type FeedId } from '@bus-tracker/shared';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
@@ -23,6 +23,8 @@ import {
   networkBytes,
   percentiles,
   prepareQueries,
+  rangeArrival,
+  rangeArrivalSteps,
   readFixtureFeeds,
   type PreparedQuery,
 } from '../../../packages/shared/scripts/raptor-queries';
@@ -71,7 +73,7 @@ function build(zips: Zips, log: (s: string) => void): PreparedQuery[] {
   log(`compile without rail ${(performance.now() - t).toFixed(0)} ms`);
   log(
     `net ${full.stops.count} stops, ${full.patterns.count} patterns, typed arrays ${(networkBytes(full) / 1e6).toFixed(2)} MB, ` +
-      `engine scratch ${(engineBytes(full, 4) / 1e6).toFixed(2)} MB`,
+      `engine workspace ${(engineBytes(full) / 1e6).toFixed(2)} MB`,
   );
   return prepareQueries(full, noRail);
 }
@@ -82,12 +84,12 @@ async function runOnce(queries: PreparedQuery[], run: number, log: (s: string) =
     log(`sync, ${windowSec / 60}-min window: query | arrive | rounds | p50 | p95 | max (ms)`);
     for (const q of queries) {
       const opts = { windowSec };
-      for (let i = 0; i < WARMUP; i++) raptorProto(q.net, q.access, q.egress, q.t0, opts);
+      for (let i = 0; i < WARMUP; i++) rangeArrival(q.net, q.access, q.egress, q.t0, opts);
       const samples: number[] = [];
-      let r = raptorProto(q.net, q.access, q.egress, q.t0, opts);
+      let r = rangeArrival(q.net, q.access, q.egress, q.t0, opts);
       for (let i = 0; i < RUNS; i++) {
         const s = performance.now();
-        r = raptorProto(q.net, q.access, q.egress, q.t0, opts);
+        r = rangeArrival(q.net, q.access, q.egress, q.t0, opts);
         samples.push(performance.now() - s);
       }
       const p = percentiles(samples);
@@ -105,7 +107,7 @@ async function runOnce(queries: PreparedQuery[], run: number, log: (s: string) =
     const busy: number[] = [];
     let longest = 0;
     for (let i = 0; i < SLICED_RUNS; i++) {
-      const { stats } = await runInSlicesMeasured(raptorProtoSteps(q.net, q.access, q.egress, q.t0), SLICE_MS);
+      const { stats } = await runInSlicesMeasured(rangeArrivalSteps(q.net, q.access, q.egress, q.t0), SLICE_MS);
       wall.push(stats.wallMs);
       busy.push(stats.busyMs);
       longest = Math.max(longest, stats.longestSliceMs);
@@ -116,7 +118,7 @@ async function runOnce(queries: PreparedQuery[], run: number, log: (s: string) =
   log('hermes heap around one 40-min query: query | before | after (MB)');
   for (const q of queries) {
     const before = heapMB();
-    const r = raptorProto(q.net, q.access, q.egress, q.t0);
+    const r = rangeArrival(q.net, q.access, q.egress, q.t0);
     const after = heapMB();
     log(
       `  ${q.query.name.padEnd(21)} | ${before == null ? 'n/a' : before.toFixed(2)} | ${after == null ? 'n/a' : after.toFixed(2)}` +

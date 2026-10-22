@@ -160,3 +160,59 @@ A correct, allocation-free earliest-arrival RAPTOR with journey pointers. It run
 - `workspaceFor`, `resetWorkspace`, `runRounds`, `backtrack`, `earliestBoard(Into)`, `depAt`/`arrAt`, `CHANGE_SEC`, `MAX_RIDES` and `RawLeg` are exported from `packages/shared/src/transit/index.ts`.
 - Labels persist between `runRounds` calls until `resetWorkspace`. That is what 02's range loop relies on.
 - `raptorProto` is deleted; the bench script uses `runRounds`.
+
+## Implementation notes
+- **Two arrival labels per (k, s), not one `tau` pruned by `tauStar`.** The step 4 sketch prunes ride arrivals by `tauStar`. That is 00's bug 2: an earlier walk label drops a later ride arrival, and only a ride arrival may walk on. `CHANGE_SEC` also breaks time dominance. A ride arriving at 08:10:00 is ready to board at 08:11:00, while a walk arriving at 08:10:10 is ready at once, so keeping only the earlier arrival can miss a connection. The workspace therefore holds:
+  - `arrRide`, with its ride pointer; it is the only footpath source.
+  - `arrWalk`, with its walk pointer. Round 0 is the access label.
+  - `tau = min(arrRide, arrWalk)`, with `lbl` saying which. This is the egress label.
+
+  Boarding uses `ready = min(arrRide + CHANGE_SEC, arrWalk)`. The ride pointer records the kind of label it boarded from (`rFromLbl`), so `backtrack` follows the label actually used, not `lbl`.
+- **Per-departure pruning:** `tauStar` is replaced by `rideStar` and `readyStar`.
+  - A ride arrival is kept only if it beats `rideStar[s]`, `arrRide[k][s]` and `destBest[k]`.
+  - A walk is kept only if it beats `readyStar[s]`, the round's ready time `min(arrWalk, arrRide + CHANGE_SEC)` and `destBest[k]`.
+  - Both arrays are reset per departure, as 00's note 1 requires. Labels persist until `resetWorkspace`.
+- **Added `startDeparture(ws, access, dep)`.** It clears the per-departure pruning and marks, then writes and marks the round-0 labels. Range departures must run latest first, because a label only moves earlier.
+- **Mark flags.** The step 4 sketch takes a snapshot of `markedList`. Here `marked[s]` holds two bits instead:
+  - `1`: board from s next round, set when `readyStar` improved;
+  - `2`: walk on from its ride arrival.
+
+  Phase b marks only ride arrivals, so step 3 relaxes the list as it stands after phase b. Ride arrivals that only matter for footpaths are not queued for the next round.
+- **Loop rule.** Ride arrivals are no longer pruned by an access or walk label, so `tauStar` cannot stop a loop from recording a ride back to the stop where you boarded. The scan skips alighting at the stop where the current vehicle was boarded (`T816`'s `12000750`).
+- **Boarding.**
+  - `BoardOut`/`RideState` carry `start`, the run's start at the first stop. Without it, `depAt`/`arrAt` cannot place a window run from a `BoardOut`.
+  - `earliestBoardInto` takes an optional `tripHi`, which bounds the trip search as 00 did; it was worth about 7% of scan time.
+  - On a tie between a trip and a window, the trip wins, as specified.
+- **`destBest[k]`:**
+  - Each round lowers `destBest[j]` for every `j ≥ k`, so it is the best arrival with ≤ k rides over the departures run so far.
+  - Round 0 is never settled; the walk-only option belongs to 03.
+  - Because walks are no longer pruned by earlier rides, 00's Q4-style gap is closed for ride arrivals at stops that are both access and egress stops.
+- **`resetWorkspace` leaves the pointer arrays alone.** They are only read behind a set label, and `backtrack` checks the arrival before reading a pointer. `accMeters` is rounded to whole metres. The workspace is 1.77 MB on the fixture network.
+- **Exports:** `scaledTransferSeconds(net, j, walkMetersPerMin)` (04 needs it for walk legs), `startDeparture`, `RoundInput`, `BoardOut`, `RideState`, `Workspace`.
+- **Prototype removed:**
+  - `raptorProto`, `raptorProtoSteps`, `RaptorProtoOptions`, `RaptorProtoResult` and `raptor-proto.test.ts` are gone. Their fixture smoke test and range-equals-best-single-departure check now live in `raptor.test.ts`.
+  - The bench and the device harness (`apps/mobile/app/dev-planner.tsx`, JS-only) time `rangeArrival`/`rangeArrivalSteps` in `scripts/raptor-queries.ts`. That is a stand-in range driver over `startDeparture` + `runRounds` until 02's `plan()`.
+  - `engineBytes(net)` now sums the workspace.
+- **Tests (22 in `raptor.test.ts`):**
+  - the step 6 cases;
+  - "a ride arrival after an earlier walk label still walks on";
+  - "a walk arriving within CHANGE_SEC after a ride still boards first";
+  - persistence across departures;
+  - corrupt-label throws;
+  - a naive round-by-round oracle (no pruning, same rules) on 24 seeded random fixture queries. Per-round `destBest` must match exactly, and every backtracked journey must replay forward to its label.
+
+  Mutation checks against the suite all fail it: dropping `CHANGE_SEC`, walks from `tau`, rides pruned by walk labels, walks pruned by arrival rather than ready time, and no loop rule.
+- **Bench (Node v24, `--expose-gc`, 3 runs, dev Mac shared with another agent's test runs).** Arrivals and runs are identical to 00. Q2 scans 77 rounds against 75.
+
+  | p95 ms | Q1 | Q2 | Q3 | Q4 | Q5 |
+  |---|---:|---:|---:|---:|---:|
+  | core, 40-min | 0.86–0.90 | 0.52–0.54 | 2.56–2.69 | 0.14–0.15 | 1.04–1.07 |
+  | prototype, same session | 0.86–0.88 | 0.44–0.46 | 2.31–2.35 | 0.15–0.16 | 0.82–0.90 |
+  | core, 20-min | 0.70 | 0.31 | 1.47 | 0.09 | 0.76 |
+
+  Against 00's recorded p95 + 10%, Q1, Q2 and Q4 pass, and Q3 (+15–21%) and Q5 (+20–23%) miss.
+  - The work is nearly the same: about 7% more scanned positions, from walks kept for `CHANGE_SEC`.
+  - The rest is per-step cost: pointer writes, the per-round target bound that 02's Pareto set needs, and the workspace reset.
+  - A global bound would recover about 4% on Q5, but it is wrong for 02.
+  - The worst case is still about 2.7 ms, roughly 20× under spec §4.4's 60 ms Node target.
+- Root review (2026-10-23): the Q3/Q5 p95 regression vs the prototype (+15–23%, worst 2.7 ms on Node) is accepted. It buys correct CHANGE_SEC and walk/ride label handling, and stays ~20× under the 60 ms Node target (14/00 Hermes p95 ≤ 48 ms).

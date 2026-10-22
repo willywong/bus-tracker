@@ -2,13 +2,16 @@
  * Plan 14/00: the five golden queries (plan 14/06) and timing helpers shared
  * by the Node bench (bench-raptor.ts) and the throwaway device harness
  * (apps/mobile/app/dev-planner.tsx). Access and egress are every stop within
- * 1,000 m, nearest 25, walked at 80 m/min × 1.25 (spec §4.1).
+ * 1,000 m, nearest 25, walked at 80 m/min × 1.25 (spec §4.1). Since 14/01 the
+ * timed query is {@link rangeArrival}, an earliest-arrival range over
+ * `runRounds`.
  */
 import { compileNetworkSync, stopsNear, type CompileFeeds } from "../src/transit/compile.js";
 import { readFeed, type NormalisedFeed } from "../src/transit/feeds.js";
 import { FEED_IDS, type FeedId, type TransitNetwork } from "../src/transit/network.js";
-import { INF, type StopTime } from "../src/transit/raptor.js";
+import { INF, MAX_RIDES, runRounds, startDeparture, type StopTime } from "../src/transit/raptor.js";
 import { DETOUR_FACTOR } from "../src/transit/transfers.js";
+import { resetWorkspace, workspaceFor } from "../src/transit/workspace.js";
 import { secondsToClockHHMM, toMalaysiaParts } from "../src/utils/gtfs-time.js";
 import { haversineMeters } from "../src/utils/outlier.js";
 import { WALKING_METERS_PER_MINUTE } from "../src/utils/rail.js";
@@ -123,12 +126,81 @@ export function networkBytes(net: TransitNetwork): number {
   return bytes;
 }
 
-/** Bytes `raptorProto` allocates per call (mirrors its `State`). */
-export function engineBytes(net: TransitNetwork, maxRides: number): number {
-  const n = net.stops.count;
-  const perRound = (maxRides + 1) * n * (4 + 1 + 4); // tau, rode, rideTau
-  const perStop = n * (4 + 1 + 4 + 4 + 1 + 4); // tauStar, marked, markedList, rideStar, footMarked, footList
-  return perRound + perStop + net.patterns.count * 8; // queuePos, queueList
+/** Bytes in the network's engine workspace (allocated once per network, see `workspaceFor`). */
+export function engineBytes(net: TransitNetwork): number {
+  let bytes = 0;
+  for (const v of Object.values(workspaceFor(net))) if (ArrayBuffer.isView(v)) bytes += v.byteLength;
+  return bytes;
+}
+
+export interface RangeOptions {
+  /** Range width after `t0` (default 2400 s, the 40-min window). */
+  windowSec?: number;
+  /** Gap between range departures (default 120 s). */
+  stepSec?: number;
+  /** Rounds, one per ride (default and cap {@link MAX_RIDES}). */
+  maxRides?: number;
+}
+
+export interface RangeResult {
+  /** Best egress arrival over the range, seconds after service-day midnight; `INF` if none. */
+  arrive: number;
+  /** Rounds scanned, summed over every range departure. */
+  rounds: number;
+  /** Range departures run. */
+  runs: number;
+}
+
+const allPatterns = new WeakMap<TransitNetwork, Uint8Array>();
+
+/**
+ * The benchmark's query until 14/02's `plan()`: `runRounds` at `t0 +
+ * windowSec`, then every `stepSec` earlier down to `t0`, keeping labels
+ * between departures (rRAPTOR), every pattern allowed, 80 m/min. Yields after
+ * each round (drive it with `runSteps`).
+ */
+export function* rangeArrivalSteps(
+  net: TransitNetwork,
+  access: readonly StopTime[],
+  egress: readonly StopTime[],
+  t0: number,
+  opts: RangeOptions = {},
+): Generator<void, RangeResult, void> {
+  const windowSec = opts.windowSec ?? 2400;
+  const stepSec = Math.max(1, opts.stepSec ?? 120);
+  const maxRides = Math.min(opts.maxRides ?? MAX_RIDES, MAX_RIDES);
+  let allowed = allPatterns.get(net);
+  if (!allowed) allPatterns.set(net, (allowed = new Uint8Array(net.patterns.count).fill(1)));
+  const ws = workspaceFor(net);
+  resetWorkspace(ws);
+  const input = { egress, maxRides, allowed, walkMetersPerMin: WALKING_METERS_PER_MINUTE };
+  let rounds = 0;
+  let runs = 0;
+  for (let dep = t0 + windowSec; dep >= t0; dep -= stepSec) {
+    runs++;
+    startDeparture(ws, access, dep);
+    const steps = runRounds(net, ws, input);
+    while (!steps.next().done) {
+      rounds++;
+      yield;
+    }
+  }
+  return { arrive: ws.destBest[maxRides], rounds, runs };
+}
+
+/** {@link rangeArrivalSteps} drained in one go: the JS time of one query. */
+export function rangeArrival(
+  net: TransitNetwork,
+  access: readonly StopTime[],
+  egress: readonly StopTime[],
+  t0: number,
+  opts?: RangeOptions,
+): RangeResult {
+  const steps = rangeArrivalSteps(net, access, egress, t0, opts);
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
 }
 
 /** `HH:MM` of an arrival, or `—` when unreached. */

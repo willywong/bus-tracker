@@ -1,6 +1,7 @@
 /**
- * Plan 14/00 step 3: times `raptorProto` on the fixture network for the five
- * golden queries (see raptor-queries.ts).
+ * Plan 14/00 step 3: times the RAPTOR core (`runRounds`, plan 14/01) as an
+ * earliest-arrival range query (`rangeArrival`) on the fixture network for
+ * the five golden queries (see raptor-queries.ts).
  *
  *   pnpm --filter @bus-tracker/shared exec tsx scripts/bench-raptor.ts [--window 2400|1200] [--step 120] [--rides 4]
  *
@@ -11,7 +12,6 @@ import { readFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 
 import { FEED_IDS, type FeedId } from "../src/transit/network.js";
-import { raptorProto } from "../src/transit/raptor.js";
 import {
   clock,
   compileFixtures,
@@ -20,6 +20,7 @@ import {
   networkBytes,
   percentiles,
   prepareQueries,
+  rangeArrival,
   readFixtureFeeds,
 } from "./raptor-queries.js";
 
@@ -50,7 +51,7 @@ const noRail = compileFixtures(feeds, ["rail"]);
 console.log(`compile 20261028 without rail: ${(performance.now() - t).toFixed(0)} ms`);
 console.log(
   `network: ${full.stops.count} stops, ${full.patterns.count} patterns; typed arrays ${mb(networkBytes(full))}; ` +
-    `engine scratch per call ${mb(engineBytes(full, opts.maxRides))}`,
+    `engine workspace per network ${mb(engineBytes(full))}`,
 );
 console.log(`window ${opts.windowSec} s, step ${opts.stepSec} s, ${opts.maxRides} rides; ${WARMUP} warm-up + ${RUNS} timed runs`);
 
@@ -59,12 +60,12 @@ globalThis.gc?.();
 const heapBefore = process.memoryUsage().heapUsed;
 console.log("query                 | access | egress | arrive | runs | rounds | p50 ms | p95 ms | max ms");
 for (const q of queries) {
-  for (let i = 0; i < WARMUP; i++) raptorProto(q.net, q.access, q.egress, q.t0, opts);
+  for (let i = 0; i < WARMUP; i++) rangeArrival(q.net, q.access, q.egress, q.t0, opts);
   const samples: number[] = [];
-  let result = raptorProto(q.net, q.access, q.egress, q.t0, opts);
+  let result = rangeArrival(q.net, q.access, q.egress, q.t0, opts);
   for (let i = 0; i < RUNS; i++) {
     const s = performance.now();
-    result = raptorProto(q.net, q.access, q.egress, q.t0, opts);
+    result = rangeArrival(q.net, q.access, q.egress, q.t0, opts);
     samples.push(performance.now() - s);
   }
   const p = percentiles(samples);
