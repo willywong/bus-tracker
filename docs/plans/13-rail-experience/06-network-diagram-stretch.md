@@ -80,3 +80,43 @@ A hand-authored, octilinear schematic of KL rail (8 lines + KTM Komuter), pinch-
 
 - Phase 13 is complete. Phase 15 consumes `/station`, `/line`, `RailLayer.focus`, `TripContext.railFocus` and the `t816://station/<id>` links.
 - If built, `/network` and `klRailDiagram.ts` are available for 15's "Where to?" station results (a "Show on rail map" action). If skipped, record "schematic diagram" as a follow-up, as the phase 15 README already does.
+
+## Implementation notes
+
+- **Built, not bailed out.** `react-native-svg` 15.16.0 is in `apps/mobile/package.json` (via `npx expo install`). This is a **native change**: it needs `npx expo prebuild -p ios`, `pod install` and an Xcode build. Bump `app.json` to `1.2.0` with it, as the phase README says.
+- **Files.** Everything lives in `components/rail/diagram/`:
+  - `klRailDiagram.ts` is data only. It holds `GRID` = 24, `DIAGRAM_SIZE` (79 × 59 units, labels included), 209 stations (160 Rapid KL and 49 KTM), 10 lines and `DIAGRAM_LINKS`.
+  - `geometry.ts` is pure. It offsets bundles 6 pt apart with mitred bends, finds interchanges, and sizes the station markers.
+  - `hitTest.ts` exports `nearestStation`.
+  - `viewport.ts` holds the pure transform maths as worklets: clamp, zoom about a point, fit, and centre.
+  - `NetworkDiagram.tsx` draws the map and handles the gestures.
+  - `NetworkList.tsx` is the VoiceOver list.
+  - `NetworkSheetBody.tsx` picks the diagram or the list, and exports `useScreenReaderEnabled`.
+  - The tests are in `components/rail/__tests__/`. `klRailDiagram.test.ts` has the five named tests plus two more: no line runs over a station it doesn't call at, and links and labels. `diagramViewport.test.ts` covers the transform maths.
+- **KTM ids and order.** The ids are the network's `ktm-<slug>` ids (`compileNetwork`). The two branches are "KTM Seremban" (Batu Caves → Seremban) and "KTM Port Klang" (Serendah → Pel Klang Sel). The test compiles the 2026-10-23 rail and KTM fixtures. It checks that each branch is that route's longest pattern, forwards or reversed, and that every KTM station in the box is drawn. Rapid KL branches must equal the stop-code order exactly, and their colours must equal `RAIL_LINES`.
+- **Shared runs.** AG and SP between Sentul Timur and Chan Sow Lin, and the two KTM lines between Putra and KL Sentral, are drawn side by side rather than as one stroke. A stop on a shared run, such as Sultan Ismail, is not an interchange. Its label hides at low zoom like any other stop.
+- **Walking links (addition).** Separate KTM and Rapid KL stations at the same place are joined by a short ink-and-paper link and share one label:
+  - KL Sentral
+  - Abdullah Hukum
+  - Bandar Tasik Selatan
+  - Kajang
+  - Setia Jaya / Sunway-Setia Jaya
+  - Subang Jaya
+
+  The list's "changes" value includes linked lines.
+- **Authoring.** Coordinates and labels were placed with a scratch generator. It validated the octilinear rule, spacing and label overlaps, then rendered PNG previews in light and dark. The generator is not committed; the data file is the source of truth from now on. To change the drawing, nudge `label` offsets and keep stations where they are.
+- **Fit and home (deviation).** The sheet opens at 1× on the core: KL Sentral, Masjid Jamek, Ampang Park and Chan Sow Lin. "Fit" shows the whole network. On a phone that is about 0.2×, below the 0.6× minimum in step 5. So the pinch floor is `min(0.6, fit scale)`, which means you can pinch out to whatever Fit shows. The screen drives Fit through a `fitSignal` prop on `NetworkSheetBody`: a counter that the toolbar button bumps.
+- **Gestures.** Pinch, pan, double tap and tap all go through one `useSimultaneousGestures`. The single tap has `requireToFail: doubleTap`. Pan coasts with a clamped `withDecay`, except under Reduce Motion. Clamping keeps a quarter of the diagram on screen, or a quarter of the screen when the diagram is smaller than the screen. The header is assumed to be 56 pt (`HEADER_HEIGHT`).
+- **`gestureEnabled: false` on the `network` screen (recommended).** Without it, the formSheet's swipe-to-dismiss competes with vertical pans. Users can close the sheet with the `xmark` button instead.
+- **Risks to check on device.**
+  - **Memory.** The SVG is one 1896 × 1416 pt layer, which is about 100 MB of backing store at 3×.
+  - **Blur.** The transform scales a bitmap, so the map may look soft at 2–4×.
+  - **Fix if either is bad.** Use a viewport-sized `Svg` with a `viewBox`, re-rendered when a gesture settles.
+- **Root-agent wiring and device fixes.**
+  - Entry is the map's Layers menu ("Rail map", under "Rail lines"). The More menu the task names became the Layers menu in 13/02.
+  - `app.json` is at 1.2.0. Prebuilt and built for the Simulator; `RNSVG` is in `Podfile.lock`. `pod install` needs `LANG=en_US.UTF-8` in a non-UTF-8 shell.
+  - Two worklet crashes on the first pinch:
+    - `minScale` called `fitTransform` declared later in the file. The worklet transform doesn't hoist, so worklets now come after the worklets they call.
+    - `zoomAbout`'s default parameter `hi = MAX_SCALE` isn't captured; the default moved into the body.
+  - A pinch that started on a station also opened it, so the single tap now has `requireToFail: [doubleTap, pinch]`.
+  - Verified on the Simulator: opens at 1× on the core, Fit, a pinch anchored at the fingers, a tap on Pasar Seni opening its sheet, and interchange-only labels below 0.9×.

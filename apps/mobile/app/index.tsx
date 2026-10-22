@@ -792,6 +792,9 @@ const MapToolbar = memo(function MapToolbar({
           >
             Rail lines
           </Stack.Toolbar.MenuAction>
+          <Stack.Toolbar.MenuAction icon="map" onPress={() => router.push('/network')}>
+            Rail map
+          </Stack.Toolbar.MenuAction>
           <Stack.Toolbar.MenuAction
             icon="globe.asia.australia"
             isOn={mapType === 'satellite'}

@@ -209,6 +209,20 @@ function AppStack() {
           }}
         />
         <Stack.Screen
+          name="network"
+          options={{
+            presentation: 'formSheet',
+            sheetAllowedDetents: [1],
+            sheetGrabberVisible: true,
+            headerShown: true,
+            headerTransparent: true,
+            title: 'Rail map',
+            // Vertical pans move the diagram; the close button dismisses.
+            gestureEnabled: false,
+            contentStyle: { backgroundColor: SHEET_BACKGROUND },
+          }}
+        />
+        <Stack.Screen
           name="settings"
           options={{
             presentation: 'formSheet',
