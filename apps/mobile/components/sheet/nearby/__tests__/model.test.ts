@@ -10,7 +10,6 @@ import { fixtureNetwork } from '../../../../../../packages/shared/src/transit/__
 
 import {
   aroundYou,
-  gtfsStopId,
   MAX_PLACES,
   mergeName,
   MIN_STATIONS,
@@ -88,6 +87,13 @@ test('names that differ only in spacing merge too', () => {
   const net = fixtureNetwork();
   const names = stops(aroundYou(net, lisa(net), myt(7, 30), { clock, yourStopId: null })).map((p) => p.name);
   assert.ok(names.filter((n) => mergeName(n) === 'menaraamfirst').length <= 1, names.join(', '));
+});
+
+test('a Rapid KL tracked stop is captioned too (tracking keeps the kl: id)', () => {
+  const net = fixtureNetwork();
+  const places = aroundYou(net, lisa(net), myt(7, 30), { clock, yourStopId: LISA_KL });
+  assert.equal(stops(places).filter((p) => p.isYourStop).length, 1);
+  assert.equal(places[0].kind === 'stop' && places[0].isYourStop, true);
 });
 
 test('your live ETA shows on your stop', () => {
@@ -208,13 +214,6 @@ test('routePreview is null off the pattern or at its terminus', () => {
   assert.equal(routePreview(net, 0, 4, myt(7), { clock }), null);
   assert.equal(routePreview(net, 0, 2, myt(7), { clock }), null);
   assert.equal(routePreview(net, 99, 0, myt(7), { clock }), null);
-});
-
-test('gtfsStopId strips kl: and keeps feeder raw', () => {
-  assert.equal(gtfsStopId('kl:1005840'), '1005840');
-  assert.equal(gtfsStopId('12000759'), '12000759');
-  assert.equal(gtfsStopId('rail:KJ15'), 'KJ15');
-  assert.equal(gtfsStopId('ktm:19100'), '19100');
 });
 
 test('placeName drops the stop code and feeder marker, never the whole name', () => {

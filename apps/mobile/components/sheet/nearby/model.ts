@@ -1,8 +1,6 @@
 import {
   ev,
   FEED_IDS,
-  FEED_INFO,
-  feedOfStopId,
   HEADWAY_ONLY_MAX_SEC,
   haversineMeters,
   serviceClock,
@@ -95,6 +93,8 @@ export interface StopRouteRow {
   live: boolean;
   /** No more departures today. */
   ended: boolean;
+  /** The next departure alone, spoken: "next at 7:52, scheduled", "no more today". */
+  whenSpoken: string;
   spoken: string;
 }
 
@@ -133,12 +133,6 @@ const spokenMins = (n: number) => `${n} ${n === 1 ? 'minute' : 'minutes'}`;
 const metresText = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m / 10) * 10} m`);
 const metresSpoken = (m: number) =>
   m >= 1000 ? `${(m / 1000).toFixed(1)} kilometres` : `${Math.round(m / 10) * 10} metres`;
-
-/** The network stop id as the app's tracking stores it: the feed's prefix stripped ('kl:1005840' → '1005840'). */
-export function gtfsStopId(networkStopId: string): string {
-  const prefix = FEED_INFO[feedOfStopId(networkStopId)].idPrefix;
-  return prefix && networkStopId.startsWith(prefix) ? networkStopId.slice(prefix.length) : networkStopId;
-}
 
 /** A leading RapidKL stop code ("PJ210 ", "KL1079 ") or the feeder's "(m) " marker. */
 const STOP_CODE = /^(?:\(m\)\s*)?(?:[A-Z]{1,3}\d{2,5}[A-Z]?\s+)?/;
@@ -234,7 +228,11 @@ export function aroundYou(
   now: number,
   o: {
     clock: (ms: number) => string;
-    /** Your tracked stop as tracking stores it (GTFS id), captioned "Your stop". */
+    /**
+     * Your tracked stop as tracking stores it, captioned "Your stop". The
+     * static database shares the bus feeds' ids with the network
+     * ('kl:1000944', feeder '12000759'), so it compares as is.
+     */
     yourStopId: string | null;
     /** Your tracked route's label and its live ETA text ("4 min"), shown on your stop. */
     yourRouteCode?: string | null;
@@ -307,7 +305,7 @@ export function aroundYou(
     const rows = g.members.flatMap((m) => m.rows);
     const routes = [...new Set(rows.map((r) => net.routes.label[r.route]))].sort(byLabel);
     const best = rows.reduce((b, r) => (soonestMs(r.next, now) < soonestMs(b.next, now) ? r : b));
-    const ids = g.members.map((m) => gtfsStopId(net.stops.id[m.s]));
+    const ids = g.members.map((m) => net.stops.id[m.s]);
     const isYourStop = o.yourStopId != null && ids.includes(o.yourStopId);
     const yourLive = isYourStop && o.yourRouteCode != null && o.yourLiveNext != null && routes.includes(o.yourRouteCode);
     const next = yourLive
@@ -393,6 +391,7 @@ export function stopRoutes(
       then,
       live,
       ended,
+      whenSpoken: ended ? 'no more today' : short.spoken,
       spoken: `Route ${label} to ${towards}, ${ended ? 'no more today' : short.spoken}${live ? ', live' : ''}${then && !ended ? `. ${then}` : ''}`,
     };
   });
