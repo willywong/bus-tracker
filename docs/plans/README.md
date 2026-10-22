@@ -17,6 +17,12 @@ This folder contains the step-by-step build plan for the T816 BusBuddy iOS app. 
 10. `09-device-install/` — Xcode free-signing runbook
 11. `10-polish/` — perf, error states, a11y, final README
 12. `11-multi-bus-search/` — user-curated favorite bus list + Add Bus search modal
+13. `12-transit-network/` — whole Klang Valley network (rail, city bus, feeder, KTM Komuter) compiled on device
+14. `13-rail-experience/` — rail lines on the map, station departure boards, line strip maps
+15. `14-journey-engine/` — on-device range RAPTOR planner + live re-timing of bus legs
+16. `15-journey-planner-ui/` — "Where to?" search, results, itinerary timeline, Go mode
+
+Phases 12–15 implement [`docs/design/transit-and-planner.md`](../design/transit-and-planner.md). Order: 12 → (13 ∥ 14) → 15. Tasks numbered `00` are prototypes that gate the rest of their phase.
 
 ## File shape (every task file)
 - **Context** — what prior steps delivered (carried forward each hand-off)
