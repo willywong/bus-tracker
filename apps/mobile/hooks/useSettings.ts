@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from 'react';
 
+import { parseSheetSection, type SheetSection } from '@/components/sheet/sections';
 import { setClockUse24h } from '@/components/tracker/logic';
 
 export type ClockFormat = '12h' | '24h';
@@ -71,6 +72,8 @@ export interface Settings {
   mapLayers: MapLayers;
   /** Home, Work and pinned places for the journey planner. */
   savedPlaces: SavedPlace[];
+  /** The trip sheet's section (Plan · Nearby · Saved); null until you pick one. */
+  sheetSection: SheetSection | null;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -85,6 +88,7 @@ export const DEFAULT_SETTINGS: Settings = {
   mapType: 'standard',
   mapLayers: { myBuses: true, rail: true },
   savedPlaces: [],
+  sheetSection: null,
 };
 
 export interface SettingsApi extends Settings {
@@ -106,6 +110,7 @@ export interface SettingsApi extends Settings {
   setMapType: (v: MapType) => void;
   setMapLayer: (key: keyof MapLayers, on: boolean) => void;
   setSavedPlaces: (next: SavedPlace[]) => void;
+  setSheetSection: (v: SheetSection) => void;
   /**
    * Adds `code` to the favorites list with a default stop. Returns
    * `{ ok: false }` with a reason when blocked (already favorited, or cap
@@ -130,6 +135,7 @@ const STORAGE_KEYS = {
   mapType: 'bt.mapType',
   mapLayers: 'bt.mapLayers',
   savedPlaces: 'bt.savedPlaces',
+  sheetSection: 'bt.sheetSection',
 } as const;
 
 const SettingsContext = createContext<SettingsApi | null>(null);
@@ -275,6 +281,7 @@ async function loadFromStore(): Promise<Settings> {
     mapType,
     savedPlacesRaw,
     mapLayersRaw,
+    sheetSectionRaw,
   ] = await Promise.all([
     SecureStore.getItemAsync(STORAGE_KEYS.walkMinutes),
     SecureStore.getItemAsync(STORAGE_KEYS.notifBufferMin),
@@ -287,6 +294,7 @@ async function loadFromStore(): Promise<Settings> {
     SecureStore.getItemAsync(STORAGE_KEYS.mapType),
     SecureStore.getItemAsync(STORAGE_KEYS.savedPlaces),
     SecureStore.getItemAsync(STORAGE_KEYS.mapLayers),
+    SecureStore.getItemAsync(STORAGE_KEYS.sheetSection),
   ]);
 
   const favoritedRoutes = parseFavoritedRoutes(favoritesRaw);
@@ -305,6 +313,7 @@ async function loadFromStore(): Promise<Settings> {
     mapType: parseMapTypeOr(mapType, DEFAULT_SETTINGS.mapType),
     mapLayers: parseMapLayers(mapLayersRaw),
     savedPlaces: parseSavedPlaces(savedPlacesRaw),
+    sheetSection: parseSheetSection(sheetSectionRaw),
   };
 }
 
@@ -451,6 +460,14 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const setSheetSection = useCallback((v: SheetSection) => {
+    setState((prev) => {
+      if (prev.sheetSection === v) return prev;
+      writeValue(STORAGE_KEYS.sheetSection, v);
+      return { ...prev, sheetSection: v };
+    });
+  }, []);
+
   const addFavorite = useCallback(
     (code: string, stopId: string): AddFavoriteResult => {
       let result: AddFavoriteResult = { ok: true };
@@ -549,6 +566,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     setMapType,
     setMapLayer,
     setSavedPlaces,
+    setSheetSection,
     addFavorite,
     removeFavorite,
     reorderFavorites,

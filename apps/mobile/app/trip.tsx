@@ -34,6 +34,10 @@ import { SheetHeader } from '@/components/trip/SheetHeader';
 import { sheetPushIn, sheetPushOut } from '@/components/trip/sheetTransition';
 import { sheetMode } from '@/components/sheet/mode';
 import { NearbySection } from '@/components/sheet/NearbySection';
+import { PlanSection } from '@/components/sheet/PlanSection';
+import { SavedSection } from '@/components/sheet/SavedSection';
+import { SectionPicker } from '@/components/sheet/SectionPicker';
+import { currentSection } from '@/components/sheet/sections';
 import { useSettings } from '@/hooks/useSettings';
 import { toPlace, usePlanner } from '@/state/PlannerContext';
 import { useRide } from '@/state/RideContext';
@@ -56,8 +60,8 @@ type DetentListener = (
 /**
  * The persistent trip sheet over the map, in Calm Mono: opaque paper, ink
  * type, hairline rows. "Where to?" tops every state. Go, a ride and a stop or
- * bus detail each take the whole sheet (`sheetMode`); otherwise it shows your
- * tracked bus (`NearbySection`).
+ * bus detail each take the whole sheet (`sheetMode`); otherwise a segmented
+ * control picks Plan, Nearby (your tracked bus) or Saved.
  */
 export default function TripSheet() {
   const trip = useTrip();
@@ -277,11 +281,32 @@ export default function TripSheet() {
     );
   }
 
+  // The sections: switching crossfades the body; the sheet keeps its detent.
+  const section = currentSection(settings.sheetSection, settings.preferredRouteCode != null);
   return (
-    <SheetScroll key="trip" contentContainerStyle={scrollStyle} scheme={scheme} swap>
+    <SheetScroll key="sections" contentContainerStyle={scrollStyle} scheme={scheme} swap>
       {whereTo}
-      <NearbySection peek={peek} scheme={scheme} />
+      <SectionPicker value={section} onChange={settings.setSheetSection} />
+      <SectionBody key={section}>
+        {section === 'plan' ? (
+          <PlanSection peek={peek} scheme={scheme} />
+        ) : section === 'saved' ? (
+          <SavedSection peek={peek} scheme={scheme} />
+        ) : (
+          <NearbySection peek={peek} scheme={scheme} />
+        )}
+      </SectionBody>
     </SheetScroll>
+  );
+}
+
+/** A section's body fades in when you switch to it (no travel); Reduce Motion swaps. */
+function SectionBody({ children }: { children: ReactNode }) {
+  const reduceMotion = useReducedMotion();
+  return (
+    <Animated.View entering={reduceMotion ? undefined : FadeIn.duration(motion.crossfade)}>
+      {children}
+    </Animated.View>
   );
 }
 

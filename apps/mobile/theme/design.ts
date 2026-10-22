@@ -136,14 +136,17 @@ export const SHEET_REVEAL_SHIFT = 10;
 /** The peek's "Where to?" row: a 44pt glass capsule plus 8pt below it. */
 export const WHERE_TO_ROW_HEIGHT = 52;
 
+/** The sheet's Plan · Nearby · Saved segmented control (32pt) plus 8pt below it. */
+export const SECTION_PICKER_ROW_HEIGHT = 40;
+
 /**
  * Content height of the peek detent in points: top padding, the "Where to?"
- * row, the two-line header, then the peek card (number and journey, action
+ * row, the section picker, the two-line header, then the peek card (number and journey, action
  * and next bus). The sheet adds the home indicator inset on top; the strip is
  * allowed to sit in its upper part (about 20pt above the screen edge, like
  * the Apple Maps card) so no empty band shows below it.
  */
-export const PEEK_CONTENT_HEIGHT = 160 + WHERE_TO_ROW_HEIGHT;
+export const PEEK_CONTENT_HEIGHT = 160 + WHERE_TO_ROW_HEIGHT + SECTION_PICKER_ROW_HEIGHT;
 /** Peek top padding, under the grabber. */
 export const PEEK_TOP = 14;
 
@@ -167,8 +170,12 @@ export function itineraryDetents(windowHeight: number, topInset: number): [numbe
   return [peekDetent(windowHeight, topInset, ITINERARY_PEEK_HEIGHT, 0.45), 0.5, 1];
 }
 
-/** Peek as a fraction of the sheet's largest height. The cap leaves room on an iPhone SE (212 / 647pt). */
-function peekDetent(windowHeight: number, topInset: number, height = PEEK_CONTENT_HEIGHT, cap = 0.35): number {
+/**
+ * Peek as a fraction of the sheet's largest height. The cap keeps the map in
+ * view on an iPhone SE: the peek's 252pt there is 0.39 of 647pt, so 0.4 fits it
+ * whole (0.35 clipped the peek card once the section picker came in).
+ */
+function peekDetent(windowHeight: number, topInset: number, height = PEEK_CONTENT_HEIGHT, cap = 0.4): number {
   const max = Math.max(1, windowHeight - topInset);
   return Math.min(cap, height / max);
 }
