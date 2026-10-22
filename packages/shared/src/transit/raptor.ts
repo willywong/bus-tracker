@@ -132,6 +132,7 @@ function queueMarked(net: TransitNetwork, ws: Workspace, allowed: Uint8Array): b
   }
   ws.markedCount = 0;
   ws.queueCount = queued;
+  ws.scans += queued;
   return queued > 0;
 }
 

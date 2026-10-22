@@ -8,3 +8,5 @@ export * from "./serialize.js";
 export * from "./raptor.js";
 export * from "./boarding.js";
 export * from "./workspace.js";
+export * from "./range.js";
+export * from "./rank.js";

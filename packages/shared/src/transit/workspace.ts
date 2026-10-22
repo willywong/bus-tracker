@@ -58,6 +58,8 @@ export interface Workspace {
   queuePos: Int32Array;
   queueList: Int32Array;
   queueCount: number;
+  /** Patterns queued since {@link resetWorkspace}, summed over rounds and departures (diagnostics). */
+  scans: number;
   /** K+1: best egress arrival with ≤ k rides over the departures run so far (target pruning). */
   destBest: Int32Array;
   /** Scratch answer of `earliestBoardInto`. */
@@ -105,6 +107,7 @@ export function workspaceFor(net: TransitNetwork): Workspace {
       queuePos: new Int32Array(patterns),
       queueList: new Int32Array(patterns),
       queueCount: 0,
+      scans: 0,
       destBest: new Int32Array(K + 1),
       board: { kind: 0, trip: -1, window: -1, start: -1, dep: -1 },
     };
@@ -129,5 +132,6 @@ export function resetWorkspace(ws: Workspace): void {
   ws.markedCount = 0;
   ws.queuePos.fill(-1);
   ws.queueCount = 0;
+  ws.scans = 0;
   ws.destBest.fill(INF);
 }

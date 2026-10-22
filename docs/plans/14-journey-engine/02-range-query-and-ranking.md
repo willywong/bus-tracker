@@ -118,3 +118,47 @@
 - `rangeRaptor`, `RawJourney`, `Candidate`, `summarize`, `latestLeave`, `paretoFilter`, `journeySignature`, `scoreOf`, `rankCandidates` and `Ranked` are exported from `packages/shared/src/transit/index.ts`.
 - `rangeRaptor` takes access and egress as `StopTime[]` and an `allowed` pattern mask. Task 03 builds all three from `Place`s and `modes`.
 - `Candidate.raw === null` is reserved for walk-only. Task 03 builds that candidate, and `rankCandidates` already handles it.
+
+## Implementation notes
+- **Which run a journey belongs to.** 01 warned that a backtrack can chain labels from different departures. `rangeRaptor` records `run = d`, the run that found the journey, and does not re-derive it.
+  - A journey is recorded only when it strictly beats every later run's best with ≤ k rides.
+  - Suppose its chain boarded its first ride off a label kept from a later run d′. Then the same legs were feasible from d′, and d′'s best with ≤ k rides would already be at least as early. That contradicts the strict improvement.
+  - So the first ride always boards off this run's access label, and `latestLeave` can trust `run`, including for headway first rides.
+  - The fixture test asserts this for every journey of three goldens: `earliestBoardInto(run + access)` gives back the recorded first vehicle, and the legs replay from `run` to at most `arrive`.
+- **`rides` always equals k here.** `backtrack` walks exact-round rows (01's `tau[k]` holds exactly k rides), so the ride legs always number k. `rides` is still recounted from `legs`, as specified.
+- **`setAccess` is 01's `startDeparture`.** `rangeRaptor` yields after every round (`yield* runRounds`) and once after every run, including the last.
+- **Dedupe keeps the fastest.** By step 4's rule alone, the fastest could lose its signature group to a later, lower-scoring copy, for example when the fastest has a long first wait or more walking. Then index 0 would no longer have the minimum `arrive`. The fastest therefore always wins its group. Other groups keep the lower score, and on a tie the later `leave`.
+- **Fastest outside the top `limit`.** It is inserted at index 0 and the last pick is dropped.
+- **No free slot for a guaranteed pick.** This only happens at `limit = 1`. The pick is not added and gets no tag, because tags go only to returned candidates.
+- **Added:**
+  - `Workspace.scans`, the number of patterns queued since `resetWorkspace`, counted in `queueMarked`. It is diagnostics only; the label-reuse test counts queued patterns per run with it.
+  - Constants `RANGE_WINDOW_SEC` (2400), `RANGE_STEP_SEC` (120), `SLOWER_CUTOFF_SEC` (1800) and `LESS_WALK_MIN_METERS` (100).
+  - `latestLeave(_net, raw)` keeps the specified signature; `net` is unused.
+- **Walk metres:**
+  - `summarize` takes access and egress metres as given in `StopTime.meters`. Task 03 makes these the walked estimate (× 1.25).
+  - The bench's `accessStops` (scripts) still passes straight-line metres, so bench walk totals read low until 03.
+  - Transfer metres are rounded per leg.
+- **First wait.** `firstWaitSec` uses the first ride's `boardTime`. For a headway ride that includes the modelled half headway.
+- **Tests.** `range.test.ts` has 9 tests and `rank.test.ts` has 12. These go beyond the step 6 list:
+  - timetabled latest leave (≤ 60 s at the stop);
+  - fixture run attribution and replay over three goldens, plus a Pareto check;
+  - fastest survives dedupe;
+  - both guaranteed picks at once;
+  - `journeySignature` / `summarize` on a tiny network.
+
+  Mutation checks fail the suite: `>` instead of `>=` against `bestUpTo`, `bestUpTo` not carried to more rides, dedupe without the fastest exception, a headway first ride treated as a trip, guaranteed picks replacing each other, walk-only allowed as fewer-changes, and no cap when the fastest is added.
+- **Shared test helper.** 01's `replay` moved from `raptor.test.ts` to `__tests__/helpers/replay.ts`, so both suites use it.
+- **Bench:**
+  - `scripts/bench-raptor.ts` times `rankedRange` (`rangeRaptor`, then `summarize` and `rankCandidates`) from `scripts/raptor-queries.ts`, then prints each golden's ranked options.
+  - The device harness `apps/mobile/app/dev-planner.tsx` is unchanged. It still times 01's `rangeArrival`, since this task only switches the bench; 04 moves both to `planSync`.
+  - Node v24, `--expose-gc`, two quiet runs, 40-min window:
+
+  | ms | Q1 | Q2 | Q3 | Q4 | Q5 |
+  |---|---:|---:|---:|---:|---:|
+  | p50 | 0.71–0.76 | 0.49 | 2.62 | 0.16 | 0.91–0.95 |
+  | p95 | 0.88–1.05 | 0.61–0.68 | 2.80–2.84 | 0.16–0.17 | 1.08 |
+  | Pareto / ranked | 9 / 5 | 13 / 5 | 23 / 4 | 13 / 5 | 3 / 2 |
+
+  - Runs (21) and rounds (57 / 77 / 84 / 35 / 57) match 01's stand-in, so the range does the same work.
+  - Run back to back in one session, ranking and backtracking add 0–5% over `rangeArrival`.
+  - Q3's p95 of 2.8 ms is about 5% over 01's, well within the task 00 decision: a 40-min window on the JS thread, with Hermes p95 ≤ 48 ms and a Node target under 60 ms.
