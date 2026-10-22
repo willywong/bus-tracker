@@ -5,7 +5,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { formatStopName } from '@/components/map/format';
 import { PlaceThumb } from '@/components/plan/PlaceThumb';
-import { EmptyState } from '@/components/sheet/NearbySection';
+import { EmptyState } from '@/components/sheet/EmptyState';
 import { placeTiles, routeRows, type PlaceTile, type RouteRow } from '@/components/sheet/savedModel';
 import { Hairline, SectionLabel } from '@/components/trip/Rows';
 import { SheetBody } from '@/components/trip/SheetBody';

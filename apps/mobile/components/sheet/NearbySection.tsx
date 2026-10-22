@@ -1,477 +1,99 @@
-import { Button, Host, Text as SwiftText } from '@expo/ui/swift-ui';
-import {
-  buttonBorderShape,
-  buttonStyle,
-  controlSize,
-  font,
-  foregroundStyle,
-  tint,
-} from '@expo/ui/swift-ui/modifiers';
-import { nearbyRailStations } from '@bus-tracker/shared';
-import { SymbolView, type SFSymbol } from 'expo-symbols';
 import { useRouter } from 'expo-router';
-import { useCallback, useMemo } from 'react';
-import { Linking, Share, StyleSheet, Text, View } from 'react-native';
-import Animated, { FadeIn, useReducedMotion } from 'react-native-reanimated';
+import { Fragment } from 'react';
+import { StyleSheet, Text, View } from 'react-native';
 
-import { formatClockHHMM } from '@/components/tracker/logic';
-import { Connections } from '@/components/trip/Connections';
-import { BusPosition } from '@/components/trip/BusPosition';
-import { HeroBlock } from '@/components/trip/Hero';
-import { mins, stopsAwayLabel, type TripState } from '@/components/trip/model';
-import { DataSources } from '@/components/trip/DataSources';
-import { TripRows } from '@/components/trip/Notes';
-import { tripStatusItem, tripWarnings, WarningBadges } from '@/components/trip/Warnings';
-import { AllStopsButton, OnTheWay } from '@/components/trip/OnTheWay';
-import { PeekCard, TripPeekAction } from '@/components/trip/PeekCard';
-import { PrimaryAction } from '@/components/trip/PrimaryAction';
-import { Hairline, LinkRow, ROW_ICON_INSET, ToggleRow } from '@/components/trip/Rows';
-import { Section, SECTION_RULE, SheetBody } from '@/components/trip/SheetBody';
-import { SheetHeader } from '@/components/trip/SheetHeader';
-import { Timetable } from '@/components/trip/Timetable';
-import type { ScheduledDeparture } from '@/db/queries';
-import { useSettings } from '@/hooks/useSettings';
-import { ensureNotificationPermission } from '@/services/reminders/notifications';
-import { arrivalShareMessage } from '@/services/shareArrival';
-import { useRide } from '@/state/RideContext';
-import { useTrip } from '@/state/TripContext';
-import { color, hex, MARGIN, motion, pick, space, type } from '@/theme/design';
+import { STOP_RADIUS_M, type NearbyPlace } from '@/components/sheet/nearby/model';
+import { PLACE_ROW_INSET, PlaceRow, PlaceStatusRow } from '@/components/sheet/nearby/PlaceRow';
+import { YourBusRow } from '@/components/sheet/nearby/YourBusRow';
+import { Hairline, SectionLabel } from '@/components/trip/Rows';
+import { SheetBody } from '@/components/trip/SheetBody';
+import { useNearby } from '@/state/NearbyContext';
+import { color, MARGIN, space, type } from '@/theme/design';
 
 /**
- * The Nearby section: your tracked bus. Peek shows the header row and the
- * peek card; glance the thin hero number, the status line, "Then" and notes,
- * and one action; large adds the approach, today's times, rail nearby and the
- * trip options. With no route yet it invites you to pick one.
+ * The Nearby section (plan 17/02): your bus in one row, then the bus stops
+ * and stations around you, nearest first. A stop opens its routes in the
+ * sheet; a station opens its sheet. Peek shows your bus and the nearest
+ * place; the rest waits in the body, as the other sections' rows do.
  */
-export function NearbySection({ peek, scheme }: { peek: boolean; scheme: 'light' | 'dark' }) {
-  const trip = useTrip();
-  const settings = useSettings();
+export function NearbySection({ peek }: { peek: boolean; scheme: 'light' | 'dark' }) {
+  const nearby = useNearby();
   const router = useRouter();
-  const ride = useRide();
-  const { model } = trip;
-  // The live dot leads the capsule beside the number, then any warnings.
-  const statusItem = tripStatusItem(model);
-  const peekWarnings = [
-    ...(statusItem ? [statusItem] : []),
-    ...tripWarnings(model, settings.walkMinutes),
-  ];
-  const userStop = trip.route?.userStop ?? null;
-  const stopPoint = useMemo(
-    () => (userStop ? { lat: userStop.stop_lat, lng: userStop.stop_lon } : null),
-    [userStop],
-  );
-  const hasRail = useMemo(
-    () => (stopPoint ? nearbyRailStations(stopPoint).length > 0 : false),
-    [stopPoint],
-  );
+  const { places } = nearby;
 
-  // A stop tapped in the sheet opens its detail; your own stop is the trip.
-  const { select } = trip;
-  const openStop = useCallback(
-    (id: string) => select(id === trip.stopId ? null : { kind: 'stop', stopId: id }),
-    [select, trip.stopId],
-  );
-  const stopCount = trip.route?.stops.length ?? 0;
-  const openAllStops = () => router.push('/stops');
-  const openDeparture = (d: ScheduledDeparture) =>
-    router.push({
-      pathname: '/departure',
-      params: { tripId: d.tripId, at: String(d.departureEpochMs) },
-    });
-  const openStation = (station: string) => router.push({ pathname: '/station', params: { station } });
-  const shareArrival = () => {
-    const message = arrivalShareMessage(trip.routeCode, trip.stopName, model.compact, model.source);
-    if (message) void Share.share({ message });
+  const open = (place: NearbyPlace) => {
+    if (place.kind === 'stop') nearby.push({ kind: 'stop', key: place.key });
+    else router.push({ pathname: '/station', params: { station: place.stationId } });
   };
 
-  if (model.state === 'empty') {
-    return (
-      <EmptyState
-        icon="bus"
-        title="Track your bus"
-        message="Pick a route and the stop you board at. Live buses and your countdown appear here."
-        actionLabel="Choose Route"
-        onAction={() => router.push('/add-route')}
-        scheme={scheme}
-      />
-    );
-  }
-
-  // The bus the hero counts down to, live or scheduled.
-  const arrivingTripId = trip.eta.primaryArrival?.sched?.tripId ?? null;
-  const showJourney = model.state === 'arrival' && trip.eta.primaryArrival?.kind === 'live';
-  // Same guard as OnTheWay, so the section never shows as a bare label.
-  const journeyShown =
-    showJourney &&
-    trip.journey.ready &&
-    trip.journey.userStop != null &&
-    trip.journey.busStop != null;
-  const hasLastBus = model.notes.some((n) => n.id === 'last-bus');
-
-  const peekHasAction = model.action.kind !== 'tight' && model.action.kind !== 'none';
-  const stopsAhead = trip.journey.stopsAhead;
-  const peekTrailing =
-    !showJourney || !model.sourceLine.arrives || !trip.eta.primaryArrival
-      ? null
-      : peekHasAction
-        ? { label: 'Arrives', value: formatClockHHMM(trip.eta.primaryArrival.epochMs) }
-        : stopsAhead != null
-          ? { label: '', value: stopsAwayLabel(stopsAhead) }
-          : null;
-
+  const [first, ...rest] = places ?? [];
   return (
-    <>
-      <SheetHeader
-        routeCode={trip.routeCode}
-        title={trip.stopName}
-        peek={peek}
-        status={model.state === 'arrival' || model.state === 'before-service' ? model.status : null}
-        source={model.source}
-        compact={model.hero}
-        peekContent={
-          <PeekCard
-            hero={model.hero}
-            source={model.source}
-            liveMark={false}
-            stopsAhead={showJourney ? trip.journey.stopsAhead : null}
-            aside={model.sourceLine.arrives ?? model.detail}
-            accessory={
-              peekWarnings.length > 0 ? (
-                <WarningBadges items={peekWarnings} onPress={() => router.push('/warnings')} />
-              ) : null
-            }
-            action={
-              // "Too soon" is the walker in the warnings capsule above, so it
-              // has no text of its own here.
-              model.action.kind !== 'tight' ? (
-                <TripPeekAction
-                  action={model.action}
-                  walkMinutes={settings.walkMinutes}
-                  onFollow={trip.follow}
-                  onUnfollow={trip.unfollow}
-                  onStartWalking={trip.startWalking}
-                  onCancelWalking={trip.cancelWalking}
-                />
-              ) : null
-            }
-            // Later buses live in the Today grid. While the rail holds the
-            // top row, "Arrives …" moves here so the clock time isn't lost;
-            // with no button, it takes the left and this says how far.
-            trailing={peekTrailing}
-          />
-        }
-      />
-
-      <SheetBody peek={peek}>
-        <StateBody scheme={scheme} />
-
-        <TripRows
-          model={model}
-          walkMinutes={settings.walkMinutes}
-          inlineWarnings={!showsHero(model.state)}
+    <View>
+      <View style={styles.top}>
+        <YourBusRow
+          here={nearby.here}
+          onOpen={() => nearby.push({ kind: 'trip' })}
+          onTrack={() => router.push('/add-route')}
         />
-
-        {(model.state === 'arrival' || model.action.kind === 'walking') &&
-        model.action.kind !== 'tight' ? (
-          <PrimaryAction
-            action={model.action}
-            walkMinutes={settings.walkMinutes}
-            scheme={scheme}
-            onFollow={trip.follow}
-            onUnfollow={trip.unfollow}
-            onStartWalking={trip.startWalking}
-            onCancelWalking={trip.cancelWalking}
-          />
-        ) : null}
-
-        {journeyShown ? (
-          <Section title="On the way">
-            <OnTheWay journey={trip.journey} arrivalLabel={model.compact} onStopPress={openStop} />
-            {stopCount > 0 ? <AllStopsButton count={stopCount} onPress={openAllStops} /> : null}
-          </Section>
-        ) : null}
-
-        {trip.eta.scheduledUpcoming.length > 0 && model.state !== 'service-ended' ? (
-          <Section title="Today">
-            <Timetable
-              departures={trip.eta.scheduledUpcoming}
-              formatClock={formatClockHHMM}
-              arrivingTripId={arrivingTripId}
-              onPressDeparture={openDeparture}
-              firstBusToday={trip.eta.firstBusToday}
-              lastBusToday={trip.eta.lastBusToday}
-            />
-          </Section>
-        ) : null}
-
-        {stopPoint && hasRail ? (
-          <Section title="Rail nearby">
-            <Connections stop={stopPoint} onOpenStation={openStation} />
-          </Section>
-        ) : null}
-
-        <View style={styles.options}>
-          {model.compact != null ? (
-            <>
-              <LinkRow icon="square.and.arrow.up" title="Share arrival" onPress={shareArrival} />
-              <Hairline inset={ROW_ICON_INSET} />
-            </>
-          ) : null}
-          {model.state === 'arrival' ? (
-            <>
-              <ToggleRow
-                icon="lock.iphone"
-                title="Follow on Lock Screen"
-                value={trip.isFollowing}
-                onValueChange={(on) => (on ? trip.follow() : trip.unfollow())}
-                accessibilityLabel="Follow this bus on the Lock Screen"
-              />
-              <Hairline inset={ROW_ICON_INSET} />
-            </>
-          ) : null}
-          {hasLastBus ? (
-            <>
-              <ToggleRow
-                icon="moon"
-                title="Remind me before the last bus"
-                caption={`${mins(10 + settings.walkMinutes)} before it leaves, from the timetable`}
-                value={trip.lastBusReminder}
-                onValueChange={(on) => {
-                  trip.setLastBusReminder(on);
-                  if (on) void ensureNotificationPermission().catch(() => {});
-                }}
-              />
-              <Hairline inset={ROW_ICON_INSET} />
-            </>
-          ) : null}
-          {!journeyShown && stopCount > 0 ? (
-            <>
-              <LinkRow
-                icon="list.bullet"
-                title={`All stops on ${trip.routeCode}`}
-                value={String(stopCount)}
-                onPress={openAllStops}
-              />
-              <Hairline inset={ROW_ICON_INSET} />
-            </>
-          ) : null}
-          {ride.destinations.length > 0 ? (
-            <>
-              <LinkRow
-                icon="bell"
-                title="Alert me before my stop"
-                onPress={() => router.push('/ride')}
-              />
-              <Hairline inset={ROW_ICON_INSET} />
-            </>
-          ) : null}
-          {stopPoint ? (
-            <>
-              <LinkRow
-                icon="figure.walk"
-                title="Walking directions"
-                value={mins(settings.walkMinutes)}
-                external
-                onPress={() => openWalkingDirections(stopPoint)}
-                accessibilityHint="Opens Apple Maps"
-              />
-              <Hairline inset={ROW_ICON_INSET} />
-            </>
-          ) : null}
+        <View style={styles.titleRow}>
+          <SectionLabel>Around you</SectionLabel>
+          {first ? <Text style={styles.aside}>Nearest first</Text> : null}
         </View>
-
-        <DataSources />
-      </SheetBody>
-    </>
-  );
-}
-
-/** Hands off to Apple Maps in walking mode (Look Around included there). */
-function openWalkingDirections(stop: { lat: number; lng: number }) {
-  void Linking.openURL(`https://maps.apple.com/?daddr=${stop.lat},${stop.lng}&dirflg=w`);
-}
-
-/** States whose body is an empty state rather than the hero number. */
-function showsHero(state: TripState): boolean {
-  return !(state === 'loading' || state === 'service-ended' || state === 'no-service');
-}
-
-/** Hero area for the current state — the map above never changes. */
-function StateBody({ scheme }: { scheme: 'light' | 'dark' }) {
-  const trip = useTrip();
-  const settings = useSettings();
-  const router = useRouter();
-  const { model } = trip;
-  const reduceMotion = useReducedMotion();
-  const status = tripStatusItem(model);
-  const warnings = [...(status ? [status] : []), ...tripWarnings(model, settings.walkMinutes)];
-
-  switch (model.state) {
-    case 'loading':
-      if (trip.routeLoadFailed) {
-        return (
-          <EmptyState
-            icon="wifi.exclamationmark"
-            title="Couldn’t load this route"
-            message="The timetable didn’t download. Check your connection and try again."
-            actionLabel="Try Again"
-            onAction={trip.retryRouteLoad}
-            scheme={scheme}
-            compact
-          />
-        );
-      }
-      return (
-        <View style={styles.heroBlock}>
-          <View style={styles.placeholderNumber} />
-          <Text style={styles.muted}>{model.status}</Text>
-        </View>
-      );
-    case 'service-ended':
-      return (
-        <EmptyState
-          icon="moon.zzz"
-          title="No more buses tonight"
-          message={model.detail ?? 'Check back in the morning for the first bus.'}
-          scheme={scheme}
-          compact
-        />
-      );
-    case 'no-service':
-      return (
-        <EmptyState
-          icon="bus"
-          title={model.status}
-          message="Scheduled times appear here as soon as the next run is due."
-          scheme={scheme}
-          compact
-        />
-      );
-    default:
-      return (
-        <Animated.View
-          key={model.state}
-          entering={reduceMotion ? undefined : FadeIn.duration(motion.crossfade)}
-          style={styles.heroBlock}
-        >
-          <HeroBlock
-            model={model}
-            accessory={
-              warnings.length > 0 ? (
-                <WarningBadges items={warnings} onPress={() => router.push('/warnings')} />
-              ) : null
-            }
-          />
-          {model.facts.map((f) => (
-            <BusPosition key={f.id} title={f.value} caption={f.caption} />
-          ))}
-        </Animated.View>
-      );
-  }
-}
-
-/** Thin SF Symbol, plain type, one ink button. No illustration chrome. */
-export function EmptyState({
-  icon,
-  title,
-  message,
-  actionLabel,
-  onAction,
-  scheme,
-  compact = false,
-}: {
-  icon: SFSymbol;
-  title: string;
-  message: string;
-  actionLabel?: string;
-  onAction?: () => void;
-  scheme: 'light' | 'dark';
-  compact?: boolean;
-}) {
-  return (
-    <View style={[styles.empty, compact && styles.emptyCompact]}>
-      <SymbolView
-        name={icon}
-        size={compact ? 36 : 56}
-        weight="ultraLight"
-        tintColor={color.label}
-      />
-      <Text style={styles.emptyTitle} accessibilityRole="header">
-        {title}
-      </Text>
-      <Text style={styles.emptyMessage}>{message}</Text>
-      {actionLabel && onAction ? (
-        <Host matchContents style={styles.emptyAction}>
-          <Button
-            onPress={onAction}
-            modifiers={[
-              buttonStyle('borderedProminent'),
-              buttonBorderShape('capsule'),
-              controlSize('large'),
-              tint(pick(hex.ink, scheme)),
-            ]}
-          >
-            <SwiftText
-              modifiers={[
-                font({ size: 17, weight: 'semibold' }),
-                foregroundStyle(pick(hex.paper, scheme)),
-              ]}
-            >
-              {actionLabel}
-            </SwiftText>
-          </Button>
-        </Host>
+        {first ? <PlaceRow place={first} onPress={() => open(first)} /> : <Status />}
+      </View>
+      {rest.length > 0 ? (
+        <SheetBody peek={peek}>
+          <View>
+            {rest.map((place) => (
+              <Fragment key={place.key}>
+                <Hairline inset={PLACE_ROW_INSET} />
+                <PlaceRow place={place} onPress={() => open(place)} />
+              </Fragment>
+            ))}
+          </View>
+        </SheetBody>
       ) : null}
     </View>
   );
 }
 
+/** What stands in for the list when there's nothing to list yet, or at all. */
+function Status() {
+  const nearby = useNearby();
+  if (nearby.locationState !== 'granted') {
+    return (
+      <PlaceStatusRow
+        icon="location"
+        title="Turn on location to see stops around you"
+        caption={nearby.locationState === 'denied' ? 'Opens Settings' : undefined}
+        onPress={nearby.requestLocation}
+      />
+    );
+  }
+  if (!nearby.networkReady) return <PlaceStatusRow icon="arrow.down.circle" title="Loading the network…" />;
+  if (!nearby.here || nearby.places == null) return <PlaceStatusRow icon="location" title="Finding where you are…" />;
+  return (
+    <PlaceStatusRow
+      icon="mappin.slash"
+      title={`No stops within ${STOP_RADIUS_M} m`}
+      caption="Show the map to look further"
+    />
+  );
+}
+
 const styles = StyleSheet.create({
-  heroBlock: {
-    gap: space.lg,
-  },
-  placeholderNumber: {
-    width: 72,
-    height: 56,
-    borderRadius: 16,
-    borderCurve: 'continuous',
-    backgroundColor: color.fill,
-  },
-  muted: {
-    ...type.status,
-    color: color.secondaryLabel,
-  },
-  // Major sections are split by a full-width hairline; rows inside a
-  // section keep their own (inset) hairlines.
-  options: {
-    marginHorizontal: -MARGIN,
+  top: {
     paddingHorizontal: MARGIN,
-    borderTopWidth: SECTION_RULE,
-    borderTopColor: color.hairline,
+    paddingTop: space.xxs,
   },
-  empty: {
-    alignItems: 'center',
-    gap: space.xs,
-    paddingHorizontal: space.xl,
-    paddingTop: space.xxl,
-  },
-  emptyCompact: {
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
     paddingTop: space.xs,
-    paddingHorizontal: 0,
   },
-  emptyTitle: {
-    ...type.title,
-    fontWeight: '500',
-    color: color.label,
-    textAlign: 'center',
-    marginTop: space.xs,
-  },
-  emptyMessage: {
-    ...type.status,
+  aside: {
+    ...type.section,
     color: color.secondaryLabel,
-    textAlign: 'center',
-  },
-  emptyAction: {
-    marginTop: space.md,
   },
 });

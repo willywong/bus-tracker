@@ -3,7 +3,7 @@ import { useRouter } from 'expo-router';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
-import { EmptyState } from '@/components/sheet/NearbySection';
+import { EmptyState } from '@/components/sheet/EmptyState';
 import { planRows, recentToPlace, type PlanRow } from '@/components/sheet/planModel';
 import { formatClockHHMM } from '@/components/tracker/logic';
 import { Hairline } from '@/components/trip/Rows';

@@ -141,12 +141,13 @@ export const SECTION_PICKER_ROW_HEIGHT = 40;
 
 /**
  * Content height of the peek detent in points: top padding, the "Where to?"
- * row, the section picker, the two-line header, then the peek card (number and journey, action
- * and next bus). The sheet adds the home indicator inset on top; the strip is
+ * row, the section picker, then the trip's two-line header and peek card
+ * (number and journey, action and next bus), or Nearby's your-bus row,
+ * "Around you" and the nearest place (17/02, which added 24pt). The sheet adds the home indicator inset on top; the strip is
  * allowed to sit in its upper part (about 20pt above the screen edge, like
  * the Apple Maps card) so no empty band shows below it.
  */
-export const PEEK_CONTENT_HEIGHT = 160 + WHERE_TO_ROW_HEIGHT + SECTION_PICKER_ROW_HEIGHT;
+export const PEEK_CONTENT_HEIGHT = 184 + WHERE_TO_ROW_HEIGHT + SECTION_PICKER_ROW_HEIGHT;
 /** Peek top padding, under the grabber. */
 export const PEEK_TOP = 14;
 
@@ -163,7 +164,7 @@ export function sheetDetents(windowHeight: number, topInset: number): [number, n
  * The itinerary peek holds its header, the result row and Go, so it stands
  * taller than the trip peek it covers.
  */
-const ITINERARY_PEEK_HEIGHT = PEEK_CONTENT_HEIGHT + 60;
+const ITINERARY_PEEK_HEIGHT = 220 + WHERE_TO_ROW_HEIGHT + SECTION_PICKER_ROW_HEIGHT;
 
 /** Detents for the `itinerary` sheet: peek (header, row and Go), half, large. */
 export function itineraryDetents(windowHeight: number, topInset: number): [number, number, number] {
@@ -172,8 +173,9 @@ export function itineraryDetents(windowHeight: number, topInset: number): [numbe
 
 /**
  * Peek as a fraction of the sheet's largest height. The cap keeps the map in
- * view on an iPhone SE: the peek's 252pt there is 0.39 of 647pt, so 0.4 fits it
- * whole (0.35 clipped the peek card once the section picker came in).
+ * view on an iPhone SE: the peek's 276pt there is 0.43 of 647pt, so at 0.4
+ * the nearest place sits partly under the edge there (0.35 clipped the peek
+ * card once the section picker came in).
  */
 function peekDetent(windowHeight: number, topInset: number, height = PEEK_CONTENT_HEIGHT, cap = 0.4): number {
   const max = Math.max(1, windowHeight - topInset);

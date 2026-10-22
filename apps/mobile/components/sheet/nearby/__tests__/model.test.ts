@@ -12,6 +12,7 @@ import {
   aroundYou,
   gtfsStopId,
   MAX_PLACES,
+  mergeName,
   MIN_STATIONS,
   placeName,
   routePreview,
@@ -79,6 +80,14 @@ test('same-name stops across the road merge, and your stop is captioned', () => 
   assert.equal(first.isYourStop, true);
   assert.match(first.spoken, /^Hotel Lisa De Inn, your stop, 0 metres, routes /);
   assert.equal(stops(places).filter((p) => p.isYourStop).length, 1);
+});
+
+test('names that differ only in spacing merge too', () => {
+  assert.equal(mergeName('Menara Am First'), mergeName('Menara Amfirst'));
+  assert.notEqual(mergeName('Menara Am First'), mergeName('Menara Am Second'));
+  const net = fixtureNetwork();
+  const names = stops(aroundYou(net, lisa(net), myt(7, 30), { clock, yourStopId: null })).map((p) => p.name);
+  assert.ok(names.filter((n) => mergeName(n) === 'menaraamfirst').length <= 1, names.join(', '));
 });
 
 test('your live ETA shows on your stop', () => {

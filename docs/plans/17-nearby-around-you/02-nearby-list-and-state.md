@@ -98,3 +98,20 @@ export function sheetMode(s: { go: boolean; riding: boolean; detail: boolean; ne
 - `TripView` is today's body, moved.
 - Stub `StopView` and `RouteView` exist (03 and 04), and so do the empty `PreviewLayer` and `PlacePins` (05).
 - `places` and `here` are on the context for 03 and 05.
+
+## Implementation notes (2026-10-23)
+
+Run on the iPhone 17 Pro Max Simulator, Debug build with Metro, location at Hotel Lisa De Inn. JS-only: no prebuild.
+
+- **Peek is 24 pt taller** (`PEEK_CONTENT_HEIGHT` 160 → 184 below the picker). The "≤ 160" budget above counted the top padding and the home-indicator band as room for rows; only about 126 pt sits under the picker. The your-bus row, "Around you" and the nearest place need about 145. The itinerary peek keeps its old height (it now names its own 220). Verified at peek: your bus row and the first place, name and caption, both show. The trip view's peek card also fits under its back header. On an iPhone SE the 0.4 cap still applies, so the nearest place sits partly under the edge there.
+- **`EmptyState`** moved to `components/sheet/EmptyState.tsx`, since Plan and Saved use it too. `TripView` is otherwise `NearbySection`'s old body, moved.
+- **One scroll view for sections and Nearby views.** `trip`, `place` and `preview` render inside the sections' `SheetScroll` (`resetKey` = section or `nearby:<viewKey>`), so a push or pop crossfades with no travel and scrolls to the top. The picker hides on any non-list view.
+- **Places update only while the list shows.** The 75 m watch and the 60 s refresh run only on the list, so a stop's place doesn't move under you while you're in it. `places` is computed only while Nearby is the section.
+- **Merging** also compares names with case, spaces and punctuation dropped (`mergeName`). "Menara Am First" and "Menara Amfirst", across the road at Hotel Lisa, now merge into one place.
+- **Verified on the Simulator:**
+  - The list at Hotel Lisa shows your stop captioned, then Sin Chew Daily (50 m), Menara Am First (130 m) and so on.
+  - Your bus row → trip view → back → list.
+  - From Plan, `xcrun simctl openurl … t816://` lands on the trip view.
+  - Moving the location 1.7 km to Asia Jaya: within 6 s the list leads with Asia Jaya (KJ, 60 m), and your bus row reads 1.7 km.
+  - A stop row opens the stop view stub; back returns to the list.
+- **Not verified here:** permission denied. Permission prompts are the user's to answer. The status rows are checked by reading the code; 06 covers them.

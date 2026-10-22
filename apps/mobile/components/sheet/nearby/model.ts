@@ -154,6 +154,14 @@ export function placeName(raw: string): string {
   return bare || name;
 }
 
+/**
+ * Two names for one kerb compare equal when they differ only in case,
+ * spacing or punctuation ("Menara Am First", "Menara Amfirst").
+ */
+export function mergeName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
 /** A place's stable key: 'station:<id>' or 'stop:<nearest stop id>'. */
 export function placeKey(p: NearbyPlace): string {
   return p.key;
@@ -274,19 +282,26 @@ export function aroundYou(
     .map((s) => ({ s, d: haversineMeters(here, { lat: net.stops.lat[s], lng: net.stops.lon[s] }) }))
     .filter((x) => x.d <= STOP_RADIUS_M)
     .sort((a, b) => a.d - b.d || a.s - b.s);
-  const groups: { name: string; anchor: number; d: number; members: { s: number; rows: BoardRow[] }[] }[] = [];
+  const groups: {
+    name: string;
+    merge: string;
+    anchor: number;
+    d: number;
+    members: { s: number; rows: BoardRow[] }[];
+  }[] = [];
   for (const { s, d } of stops) {
     const rows = stopDepartures(net, s, now);
     if (rows.length === 0) continue; // arrivals only: nothing to board
     const name = placeName(net.stops.name[s]);
+    const merge = mergeName(name);
     const pos = { lat: net.stops.lat[s], lng: net.stops.lon[s] };
     const group = groups.find(
       (g) =>
-        g.name === name &&
+        g.merge === merge &&
         haversineMeters(pos, { lat: net.stops.lat[g.anchor], lng: net.stops.lon[g.anchor] }) <= MERGE_SAME_NAME_M,
     );
     if (group) group.members.push({ s, rows });
-    else groups.push({ name, anchor: s, d, members: [{ s, rows }] });
+    else groups.push({ name, merge, anchor: s, d, members: [{ s, rows }] });
   }
   for (const g of groups) {
     const rows = g.members.flatMap((m) => m.rows);

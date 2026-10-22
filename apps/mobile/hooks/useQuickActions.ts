@@ -8,12 +8,13 @@ import { getStopsByIds } from '@/db/queries';
 import { useSettings } from '@/hooks/useSettings';
 import { placeToPlannerPlace } from '@/services/places/saved';
 import { buildQuickActionItems, PLAN_HREF, trackSlots } from '@/services/quickActions';
+import { useNearby } from '@/state/NearbyContext';
 import { HERE, usePlanner } from '@/state/PlannerContext';
 
 /**
  * Long-press the app icon → "Where to?", Home and Work, then "Track T816 ·
  * Hotel Lisa De Inn" for each favourite. Picking a favourite switches the
- * trip sheet to that route on Nearby; "Where to?" opens the planner over the
+ * trip sheet to that route's trip in Nearby; "Where to?" opens the planner over the
  * trip sheet on Plan, and Home or Work opens it straight to results from your
  * location. All work on a cold launch.
  */
@@ -38,6 +39,9 @@ export function useQuickActions(): void {
   saved.current = savedPlaces;
   const replan = useRef({ setFrom, setWhen });
   replan.current = { setFrom, setWhen };
+  const { reset, push } = useNearby();
+  const view = useRef({ reset, push });
+  view.current = { reset, push };
 
   // Wait for stored settings before applying the launch action, or loading
   // them would overwrite the choice.
@@ -64,6 +68,8 @@ export function useQuickActions(): void {
       if (typeof code === 'string' && code) {
         select.current(code);
         section.current('nearby');
+        view.current.reset();
+        view.current.push({ kind: 'trip' });
       }
     };
     if (QuickActions.initial) handle(QuickActions.initial);

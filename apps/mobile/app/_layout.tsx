@@ -15,6 +15,7 @@ import { useSectionLinks } from '@/hooks/useSectionLinks';
 import { SettingsProvider, useSettings } from '@/hooks/useSettings';
 import { StaticGtfsProvider } from '@/hooks/useStaticGtfs';
 import { TransitNetworkProvider, useTransitNetwork, whenIdle } from '@/hooks/useTransitNetwork';
+import { NearbyProvider } from '@/state/NearbyContext';
 import { PlannerProvider } from '@/state/PlannerContext';
 import { RideProvider } from '@/state/RideContext';
 import { TripProvider } from '@/state/TripContext';
@@ -58,7 +59,9 @@ export default function RootLayout() {
             <TripProvider>
               <PlannerProvider>
                 <RideProvider>
-                  <AppStack />
+                  <NearbyProvider>
+                    <AppStack />
+                  </NearbyProvider>
                 </RideProvider>
               </PlannerProvider>
             </TripProvider>

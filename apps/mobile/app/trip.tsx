@@ -31,15 +31,20 @@ import { EdgeSwipeBack } from '@/components/trip/EdgeSwipeBack';
 import { BusDetailSheet, StopDetailSheet } from '@/components/detail/DetailSheet';
 import { WhereToRow } from '@/components/plan/WhereToRow';
 import { SheetBody } from '@/components/trip/SheetBody';
-import { SheetHeader } from '@/components/trip/SheetHeader';
+import { DetailHeader, SheetHeader } from '@/components/trip/SheetHeader';
 import { sheetPushIn, sheetPushOut } from '@/components/trip/sheetTransition';
 import { sheetMode } from '@/components/sheet/mode';
 import { NearbySection } from '@/components/sheet/NearbySection';
+import { RouteView } from '@/components/sheet/nearby/RouteView';
+import { StopView } from '@/components/sheet/nearby/StopView';
+import { TripView } from '@/components/sheet/nearby/TripView';
 import { PlanSection } from '@/components/sheet/PlanSection';
 import { SavedSection } from '@/components/sheet/SavedSection';
 import { SectionPicker } from '@/components/sheet/SectionPicker';
 import { currentSection } from '@/components/sheet/sections';
 import { useSettings } from '@/hooks/useSettings';
+import { useNearby } from '@/state/NearbyContext';
+import { viewKey } from '@/state/nearbyStack';
 import { usePlanner } from '@/state/PlannerContext';
 import { useRide } from '@/state/RideContext';
 import { useTrip } from '@/state/TripContext';
@@ -73,6 +78,7 @@ export default function TripSheet() {
   const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
   const ride = useRide();
   const planner = usePlanner();
+  const nearby = useNearby();
   const peek = trip.detent === 0;
 
   useEffect(() => {
@@ -172,10 +178,14 @@ export default function TripSheet() {
   );
   const back = useCallback(() => select(null), [select]);
 
+  const section = currentSection(settings.sheetSection, settings.preferredRouteCode != null);
+  // Nearby's own views (17/02) only count while Nearby is the section.
+  const nearbyView = section === 'nearby' ? nearby.top : null;
   const mode = sheetMode({
     go: ride.itinerary != null && ride.journey != null && ride.journeyNetwork != null,
     riding: ride.active,
     detail: trip.selection != null,
+    nearby: nearbyView?.kind ?? 'list',
   });
 
   // Go (15/06): the journey, leg by leg. It doesn't need a tracked route.
@@ -275,20 +285,39 @@ export default function TripSheet() {
     );
   }
 
-  // The sections: switching crossfades the body; the sheet keeps its detent.
-  const section = currentSection(settings.sheetSection, settings.preferredRouteCode != null);
+  // The sections, and Nearby's trip, place and preview views: switching
+  // crossfades the body and scrolls to the top; the sheet keeps its detent.
+  // A Nearby view hides the picker, as a detail does.
+  const bodyKey = nearbyView && nearbyView.kind !== 'list' ? `nearby:${viewKey(nearbyView)}` : section;
   return (
     <SheetScroll
       key="sections"
       contentContainerStyle={scrollStyle}
       scheme={scheme}
       swap
-      resetKey={section}
+      resetKey={bodyKey}
     >
       {whereTo}
-      <SectionPicker value={section} onChange={settings.setSheetSection} />
-      <SectionBody key={section}>
-        {section === 'plan' ? (
+      {mode === 'sections' ? (
+        <SectionPicker value={section} onChange={settings.setSheetSection} />
+      ) : null}
+      <SectionBody key={bodyKey}>
+        {nearbyView?.kind === 'trip' ? (
+          <>
+            <DetailHeader
+              title="Your bus"
+              subtitle={null}
+              peek={false}
+              onBack={nearby.pop}
+              backLabel="Back to around you"
+            />
+            <TripView peek={peek} scheme={scheme} />
+          </>
+        ) : nearbyView?.kind === 'stop' ? (
+          <StopView view={nearbyView} peek={peek} scheme={scheme} />
+        ) : nearbyView?.kind === 'route' ? (
+          <RouteView view={nearbyView} peek={peek} scheme={scheme} />
+        ) : section === 'plan' ? (
           <PlanSection peek={peek} scheme={scheme} />
         ) : section === 'saved' ? (
           <SavedSection peek={peek} scheme={scheme} />
