@@ -84,3 +84,15 @@ export function placeKey(p: NearbyPlace): string;            // 'station:<id>' |
 ## Handoff to next step
 - `components/sheet/nearby/model.ts` exports `aroundYou`, `stopRoutes`, `routePreview`, `gtfsStopId`, `placeKey` and the constants, all tested.
 - **02** renders `aroundYou`; **03** renders `stopRoutes`; **04** and **05** render `routePreview`.
+
+## Implementation notes (2026-10-23)
+
+- **Station radius is 2 km, not 1.5 km** (`STATION_RADIUS_M`). Around Hotel Lisa De Inn the nearest stations are Taman Paramount (1717 m), Asia Jaya (1733 m) and Phileo Damansara (1842 m), so 1.5 km listed none. The list also keeps at least `MIN_STATIONS = 2` stations: when stops fill all 8 places, the farthest stops give way to the nearest missing stations, which then sit at the end. The README's Around you decision is updated to match.
+- **Stop codes in names** (`placeName`). Rapid KL names carry a code ("PJ210 Hotel Lisa De Inn") and feeder names may start "(m)", so the same kerb had two names and never merged. `placeName` runs `formatStopName`, then drops a leading "(m)" and a 1–3 letter, 2–5 digit code. A name that is only a code is kept.
+- **Merging** groups same-name stops within `MERGE_SAME_NAME_M = 80` m. At KL Sentral, the two "KL Sentral" stops 115 m and 222 m away stay separate, as they are on different streets. The two "KL Sentral" stations (rail and KTM) stay separate too, told apart by their line chips.
+- **Tests** run on the real fixture feeds (`fixtureNetwork()`, compiled for 2026-10-28) for `aroundYou` and `stopRoutes`, and on a hand-built network (`buildNetwork`) for `routePreview`, including a headway-only rail line and a road shape.
+- **Real-data check** (a throwaway `tsx` script on the fixture network, deleted), at Hotel Lisa De Inn, 07:30:
+  - 6 stops, then Taman Paramount ("about 2 min") and Asia Jaya ("about 3 min"); about 5 ms per call.
+  - The first place merges two stops (Rapid KL and feeder) with PJ01, PJ02, T786, T787, T790 and T816, captioned "Your stop".
+  - `stopRoutes` there: T816 to MRT Phileo Damansara Pintu A at 7:32, T787 and T786 to LRT Asia Jaya at 7:36, then PJ01, T790 and PJ02.
+  - `routePreview` for T816 from that stop: 21 stops, next at 7:36, first at 6:06.

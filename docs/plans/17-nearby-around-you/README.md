@@ -55,7 +55,7 @@ Design: canvas "BusBuddy Rail + Planner" → page "Nearby options" → artboard 
   - The bus Live Activity link and the "Track" quick action push `trip` directly.
   - With no route tracked, the row is "Track a bus" → `/add-route`.
 - **Around you.**
-  - Bus stops within **600 m** and stations within **1.5 km**, nearest first, **8 places** at most.
+  - Bus stops within **600 m** and stations within **2 km** (1.5 km listed none at Hotel Lisa; see 01 notes), nearest first, **8 places** at most, at least 2 of them stations.
   - Stops with the same name within 80 m (opposite sides of a road) merge into one place.
   - Stops with no boarding departures today are dropped.
   - Your tracked stop stays in the list, captioned "Your stop".
