@@ -184,7 +184,11 @@ export default function TripSheet() {
   const work = settings.savedPlaces.find((p) => p.kind === 'work') ?? null;
   const whereTo = (
     <WhereToRow
-      onOpen={() => router.push('/plan')}
+      onOpen={() => {
+        // A plain "Where to?" searches afresh, not the last destination.
+        planner.setTo(null);
+        router.push('/plan');
+      }}
       home={home}
       work={work}
       onPlace={(p) => {

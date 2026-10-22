@@ -1,19 +1,10 @@
+import type { Place } from '@bus-tracker/shared';
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 
 import type { SavedPlace } from '@/hooks/useSettings';
 
-/**
- * A journey end (spec §4.4). Mirrors `Place` in the shared engine API
- * (`packages/shared/src/transit/plan.ts`, phase 14); switch to that import
- * once it lands.
- */
-export interface Place {
-  kind: 'here' | 'place' | 'stop' | 'station';
-  name: string;
-  lat: number;
-  lng: number;
-  ref?: string;
-}
+/** A journey end (spec §4.4), the engine's own type. */
+export type { Place };
 
 export type When = { kind: 'now' } | { kind: 'depart'; at: number };
 
@@ -68,7 +59,8 @@ export function PlannerProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const requestOpen = useCallback((next?: Place | null) => {
-    if (next !== undefined) setTo(next);
+    // A plain open searches afresh; a stale destination would skip the search.
+    setTo(next ?? null);
     setPendingOpen({ to: next ?? null });
   }, []);
 
