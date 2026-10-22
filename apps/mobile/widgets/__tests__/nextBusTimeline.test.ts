@@ -200,3 +200,86 @@ test('isLastBus is set only when the single remaining departure is known to be t
   const incomplete = buildNextBusTimeline(snap({ lastBusTodayMs: NOW + 15 * 60 * MIN }), NOW);
   assert.ok(incomplete.every((e) => e.props.isLastBus === false));
 });
+
+// --- Home line (plan 15/07) ---------------------------------------------------
+
+const HOME = { label: 'Home', leaveMs: NOW + 30 * MIN, arriveMs: NOW + 64 * MIN };
+
+test('home line is kept until leave time', () => {
+  const entries = buildNextBusTimeline(snap({ home: HOME }), NOW);
+  for (const e of entries.filter((x) => x.date.getTime() < HOME.leaveMs)) {
+    assert.equal(e.props.homeLabel, 'Home');
+    assert.equal(e.props.homeLeaveMs, HOME.leaveMs);
+    assert.equal(e.props.homeArriveMs, HOME.arriveMs);
+  }
+  // Now and the 12-min departure both carry it.
+  assert.deepEqual(
+    entries.slice(0, 2).map((e) => e.props.homeLabel),
+    ['Home', 'Home'],
+  );
+});
+
+test('an entry at leave time drops it', () => {
+  const entries = buildNextBusTimeline(snap({ home: HOME }), NOW);
+  assert.deepEqual(
+    entries.map((e) => e.date.getTime()),
+    [NOW, NOW + 12 * MIN, HOME.leaveMs, NOW + 42 * MIN, NOW + 72 * MIN],
+  );
+  const atLeave = entries.find((e) => e.date.getTime() === HOME.leaveMs)!;
+  assert.deepEqual(
+    [atLeave.props.homeLabel, atLeave.props.homeLeaveMs, atLeave.props.homeArriveMs],
+    ['', 0, 0],
+  );
+  // It still shows the buses ahead at that moment.
+  assert.deepEqual(atLeave.props.departures.map((d) => d.epochMs), [NOW + 42 * MIN, NOW + 72 * MIN]);
+  for (const e of entries.filter((x) => x.date.getTime() >= HOME.leaveMs)) assert.equal(e.props.homeLabel, '');
+
+  // A leave time on a departure reuses that entry.
+  const onDeparture = buildNextBusTimeline(snap({ home: { ...HOME, leaveMs: NOW + 42 * MIN } }), NOW);
+  assert.equal(onDeparture.length, 4);
+  assert.equal(onDeparture[2]!.props.homeLabel, '');
+  assert.equal(onDeparture[1]!.props.homeLabel, 'Home');
+
+  // A plan whose leave time has passed is no line at all.
+  const past = buildNextBusTimeline(snap({ home: { ...HOME, leaveMs: NOW - MIN } }), NOW);
+  assert.ok(past.every((e) => e.props.homeLabel === ''));
+});
+
+test('home never exceeds the entry cap', () => {
+  const departures = Array.from({ length: 40 }, (_, i) => ({ epochMs: NOW + (i + 1) * 15 * MIN, live: false }));
+  const without = buildNextBusTimeline(snap({ departures }), NOW);
+  const leaveMs = NOW + 37 * MIN;
+  const entries = buildNextBusTimeline(snap({ departures, home: { ...HOME, leaveMs, arriveMs: leaveMs + 30 * MIN } }), NOW);
+  assert.equal(entries.length, MAX_TIMELINE_ENTRIES);
+  const times = entries.map((e) => e.date.getTime());
+  assert.ok(times.includes(leaveMs), 'the entry that clears home is kept');
+  assert.deepEqual(times, [...times].sort((a, b) => a - b));
+  // The furthest departure entry made room.
+  assert.ok(!times.includes(without.at(-1)!.date.getTime()));
+  assert.deepEqual(
+    times.filter((t) => t !== leaveMs),
+    without.slice(0, -1).map((e) => e.date.getTime()),
+  );
+});
+
+test('no home gives empty plist-safe fields', () => {
+  for (const home of [undefined, null, { label: '', leaveMs: NOW + MIN, arriveMs: NOW + 2 * MIN }]) {
+    for (const e of buildNextBusTimeline(snap({ home }), NOW)) {
+      assert.equal(e.props.homeLabel, '');
+      assert.equal(e.props.homeLeaveMs, 0);
+      assert.equal(e.props.homeArriveMs, 0);
+    }
+  }
+  const empty = buildNextBusTimeline(null, NOW)[0]!.props;
+  assert.deepEqual([empty.homeLabel, empty.homeLeaveMs, empty.homeArriveMs], ['', 0, 0]);
+  const nan = buildNextBusTimeline(snap({ home: { label: 'Home', leaveMs: Number.NaN, arriveMs: Number.NaN } }), NOW);
+  assert.ok(nan.every((e) => e.props.homeLeaveMs === 0 && e.props.homeArriveMs === 0));
+});
+
+test('key changes when the home plan changes', () => {
+  const a = snap({ home: HOME });
+  assert.notEqual(nextBusTimelineKey(a), nextBusTimelineKey(snap()));
+  assert.notEqual(nextBusTimelineKey(a), nextBusTimelineKey({ ...a, home: { ...HOME, leaveMs: HOME.leaveMs + MIN } }));
+  assert.notEqual(nextBusTimelineKey(a), nextBusTimelineKey({ ...a, home: { ...HOME, label: 'Work' } }));
+  assert.equal(nextBusTimelineKey(a), nextBusTimelineKey({ ...a, home: { ...HOME, leaveMs: HOME.leaveMs + 1_000 } }));
+});

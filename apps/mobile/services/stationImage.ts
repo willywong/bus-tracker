@@ -19,16 +19,20 @@ export async function lookAroundUri(lat: number, lng: number, w = 640, h = 360):
   }
 }
 
-/** A muted map tile of the 600 m box around the point, or null. */
+/**
+ * A muted map tile of the box around the point (600 m, or `boxM` for a
+ * closer look such as a saved place's 400 m thumbnail), or null.
+ */
 export async function snapshotUri(
   lat: number,
   lng: number,
   w: number,
   h: number,
   dark: boolean,
+  boxM: number = BOX_M,
 ): Promise<string | null> {
-  const latDelta = BOX_M / M_PER_DEG_LAT;
-  const lngDelta = BOX_M / (M_PER_DEG_LAT * Math.cos((lat * Math.PI) / 180));
+  const latDelta = boxM / M_PER_DEG_LAT;
+  const lngDelta = boxM / (M_PER_DEG_LAT * Math.cos((lat * Math.PI) / 180));
   try {
     return (await snapshot({ lat, lng, latDelta, lngDelta }, w, h, dark)) || null;
   } catch {

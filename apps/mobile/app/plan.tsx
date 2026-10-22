@@ -16,7 +16,7 @@ import {
 } from '@/components/plan/model';
 import { PlanResults } from '@/components/plan/PlanResults';
 import { localIndexFor, lookupLocal, searchLocal, type LocalHit } from '@/components/plan/searchIndex';
-import { NoteRow, SuggestionRow, SUGGESTION_INSET } from '@/components/plan/SuggestionRow';
+import { NoteRow, SuggestionRow, SUGGESTION_INSET, THUMB_INSET } from '@/components/plan/SuggestionRow';
 import { useNear } from '@/components/plan/useNear';
 import { Hairline, SectionLabel } from '@/components/trip/Rows';
 import { usePlaceSearch } from '@/hooks/usePlaceSearch';
@@ -354,7 +354,7 @@ function SearchBody({ view, onPick }: { view: SearchView; onPick: (t: PickTarget
           {section.title ? <SectionLabel>{section.title}</SectionLabel> : null}
           {section.items.map((item, i) => (
             <Fragment key={item.kind === 'row' ? item.row.key : `note-${i}`}>
-              {i > 0 ? <Hairline inset={SUGGESTION_INSET} /> : null}
+              {i > 0 ? <Hairline inset={item.kind === 'row' && item.row.thumb ? THUMB_INSET : SUGGESTION_INSET} /> : null}
               {item.kind === 'row' ? (
                 <SuggestionRow row={item.row} onPress={() => onPick(item.target)} />
               ) : (

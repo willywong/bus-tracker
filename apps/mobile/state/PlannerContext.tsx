@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { resolveOpen, type OpenRef } from '@/components/itinerary/model';
 import { usePlannerEngine, type PlannerRun } from '@/hooks/usePlannerEngine';
 import type { SavedPlace } from '@/hooks/useSettings';
+import { placeToPlannerPlace } from '@/services/places/saved';
 
 /** A journey end (spec §4.4), the engine's own type. */
 export type { Place };
@@ -53,11 +54,7 @@ export interface PlannerContextValue {
 export const HERE: Place = { kind: 'here', name: 'My location', lat: Number.NaN, lng: Number.NaN };
 
 /** A saved place as a journey end: a stop or station keeps its id. */
-export function toPlace(p: SavedPlace): Place {
-  return p.ref
-    ? { kind: p.ref.kind, name: p.name, lat: p.lat, lng: p.lng, ref: p.ref.id }
-    : { kind: 'place', name: p.name, lat: p.lat, lng: p.lng };
-}
+export const toPlace: (p: SavedPlace) => Place = placeToPlannerPlace;
 
 const PlannerContext = createContext<PlannerContextValue | null>(null);
 

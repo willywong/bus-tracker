@@ -16,6 +16,7 @@ import { PlaceBanner } from './PlaceBanner';
 import { ResultRow } from './ResultRow';
 import { feedNotes, LIVE_PAUSED_NOTE, RESULTS_FOOTER, routeInfoOf, type RouteInfo } from './results';
 import { RouteLoader } from './RouteLoader';
+import { SaveMenu } from './SaveMenu';
 
 /** "Leave in 4 mins" counts down on this beat. */
 const NOW_TICK_MS = 15_000;
@@ -59,6 +60,8 @@ export function PlanResults({
   const notes = done ? feedNotes(run.excludedFeeds) : [];
   const routes = useMemo<RouteInfo | null>(() => (run.network ? routeInfoOf(run.network) : null), [run.network]);
 
+  const canSave = to.kind !== 'here' && Number.isFinite(to.lat) && Number.isFinite(to.lng);
+
   const animateIn = done && run.generation > enteredGeneration;
   useEffect(() => {
     if (animateIn) enteredGeneration = run.generation;
@@ -84,15 +87,19 @@ export function PlanResults({
 
   return (
     <>
-      <View style={styles.header} accessible accessibilityLabel={[to.name, subtitle].filter(Boolean).join(', ')}>
-        <Text style={styles.title} numberOfLines={2}>
-          {to.name}
-        </Text>
-        {subtitle ? (
-          <Text style={styles.subtitle} numberOfLines={2}>
-            {subtitle}
+      <View style={styles.header}>
+        <View style={styles.headerText} accessible accessibilityLabel={[to.name, subtitle].filter(Boolean).join(', ')}>
+          <Text style={styles.title} numberOfLines={2}>
+            {to.name}
           </Text>
-        ) : null}
+          {subtitle ? (
+            <Text style={styles.subtitle} numberOfLines={2}>
+              {subtitle}
+            </Text>
+          ) : null}
+        </View>
+        {/* A place's subtitle is its address; a stop's or station's is its lines. */}
+        {canSave ? <SaveMenu to={to} address={to.kind === 'place' ? subtitle : null} /> : null}
       </View>
       {to.kind !== 'here' ? <PlaceBanner lat={to.lat} lng={to.lng} name={to.name} /> : null}
 
@@ -187,6 +194,13 @@ function useNow(everyMs: number): number {
 const styles = StyleSheet.create({
   header: {
     paddingTop: space.md,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: space.sm,
+  },
+  headerText: {
+    flex: 1,
+    minWidth: 0,
     gap: space.xxs,
   },
   title: {

@@ -28,6 +28,7 @@ import { useColorScheme } from 'react-native';
 
 import { DataSourcesSection } from '@/components/settings/DataSourcesSection';
 import { FavoritesSection } from '@/components/settings/FavoritesSection';
+import { PlacesSection } from '@/components/settings/PlacesSection';
 import { RemindersSection } from '@/components/settings/RemindersSection';
 import {
   CLOCK_FORMATS,
@@ -95,6 +96,8 @@ export default function SettingsScreen() {
             editing={editing}
             onToggleEditing={() => setEditing((e) => !e)}
           />
+
+          <PlacesSection />
 
           <Section
             title="Walking"

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 
 import type { TripModel } from '@/components/trip/model';
+import { useHomeWidgetLine } from '@/hooks/useHomeWidgetPlan';
 import { AT_STOP_NOTIFICATION_KIND, syncArrivalGeofences } from '@/services/arrival/geofence';
 import { syncCommuteReminders, useCommuteSettings } from '@/services/reminders/commuteSettings';
 import {
@@ -62,6 +63,8 @@ export function useTripSideEffects(input: TripSideEffectsInput): {
   } = input;
 
   // --- Widget ---------------------------------------------------------------
+  // The last plan home (useHomeWidgetPlan), shown until its leave time.
+  const home = useHomeWidgetLine();
   useEffect(() => {
     if (!routeCode || !stopId) {
       syncNextBusWidget(null);
@@ -81,8 +84,9 @@ export function useTripSideEffects(input: TripSideEffectsInput): {
       updatedAtMs: lastUpdated ?? Date.now(),
       firstBusTomorrowMs: null,
       lastBusTodayMs: lastBusToday,
+      home,
     });
-  }, [routeCode, stopId, stopName, primaryArrival, laterArrivals, lastBusToday, lastUpdated]);
+  }, [routeCode, stopId, stopName, primaryArrival, laterArrivals, lastBusToday, lastUpdated, home]);
 
   // --- Leave now (while following) -----------------------------------------
   const leaveAt = useRef<number | null>(null);

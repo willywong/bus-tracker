@@ -12,6 +12,13 @@
 
 export type NextBusDeparture = { epochMs: number; live: boolean };
 
+/**
+ * A plan home the app made earlier (plan 15/07): "Home by 18:14 · leave in
+ * 6:00". The widget can't plan, so it is valid for one departure and never
+ * live; the timeline drops it at `leaveMs`.
+ */
+export type NextBusHomePlan = { label: string; leaveMs: number; arriveMs: number };
+
 /** What the app knows right now. `null` = no route chosen yet. */
 export type NextBusSnapshot = {
   routeCode: string;
@@ -28,6 +35,8 @@ export type NextBusSnapshot = {
    * later buses" instead of wrongly claiming service has ended.
    */
   lastBusTodayMs?: number | null;
+  /** The last plan home, shown on the medium widget until its leave time. */
+  home?: NextBusHomePlan | null;
 } | null;
 
 /**
@@ -52,6 +61,12 @@ export type NextBusWidgetProps = {
   firstBusMs: number;
   /** The only departure left is known to be the day's last bus ("Last bus today"). */
   isLastBus: boolean;
+  /** The home line's label ("Home"); '' = no home line in this entry. */
+  homeLabel: string;
+  /** When to leave for home (epoch ms), 0 when none. */
+  homeLeaveMs: number;
+  /** When that plan gets you home (epoch ms), 0 when none. */
+  homeArriveMs: number;
 };
 
 export type NextBusTimelineEntry = { date: Date; props: NextBusWidgetProps };
@@ -80,6 +95,9 @@ export const EMPTY_WIDGET_PROPS: NextBusWidgetProps = {
   updatedAtMs: 0,
   firstBusMs: 0,
   isLastBus: false,
+  homeLabel: '',
+  homeLeaveMs: 0,
+  homeArriveMs: 0,
 };
 
 function finiteOrZero(value: number | null | undefined): number {
@@ -99,6 +117,15 @@ function normaliseDepartures(departures: readonly NextBusDeparture[]): NextBusDe
     .map(([epochMs, live]) => ({ epochMs, live }));
 }
 
+/** The home plan if it is usable at `now`: named, finite and not yet due. */
+function homeAhead(home: NextBusHomePlan | null | undefined, now: number): NextBusHomePlan | null {
+  if (!home || typeof home.label !== 'string' || home.label === '') return null;
+  const leaveMs = finiteOrZero(home.leaveMs);
+  const arriveMs = finiteOrZero(home.arriveMs);
+  if (leaveMs <= now || arriveMs < leaveMs) return null;
+  return { label: home.label, leaveMs, arriveMs };
+}
+
 /**
  * Build the widget timeline for `snapshot` as seen at `now` (epoch ms).
  *
@@ -111,6 +138,9 @@ function normaliseDepartures(departures: readonly NextBusDeparture[]): NextBusDe
  * - At most {@link MAX_TIMELINE_ENTRIES} entries.
  * - `live` survives only on the first entry's first departure, and only while
  *   the data is fresh: later entries can't know whether that bus is still live.
+ * - A `home` plan rides on every entry dated before its `leaveMs`, and one
+ *   entry at `leaveMs` drops it. Under the cap that entry wins over the
+ *   furthest departure's.
  */
 export function buildNextBusTimeline(
   snapshot: NextBusSnapshot,
@@ -124,6 +154,7 @@ export function buildNextBusTimeline(
   const updatedAtMs = finiteOrZero(snapshot.updatedAtMs);
   const firstBusMs = finiteOrZero(snapshot.firstBusTomorrowMs);
   const lastBusTodayMs = finiteOrZero(snapshot.lastBusTodayMs);
+  const home = homeAhead(snapshot.home, now);
   const liveIsFresh = updatedAtMs > 0 && now - updatedAtMs <= LIVE_FRESH_MS;
 
   // Entry dates: now, each departure (it has left → next bus is the hero), and
@@ -136,6 +167,12 @@ export function buildNextBusTimeline(
     dates.push(d.epochMs);
     prev = d.epochMs;
     if (dates.length >= MAX_TIMELINE_ENTRIES) break;
+  }
+  let entryDates = dates.slice(0, MAX_TIMELINE_ENTRIES);
+  if (home && !entryDates.includes(home.leaveMs)) {
+    // The furthest departure entry makes room for the one that clears home.
+    const kept = entryDates.length >= MAX_TIMELINE_ENTRIES ? entryDates.slice(0, MAX_TIMELINE_ENTRIES - 1) : entryDates;
+    entryDates = [...kept, home.leaveMs].sort((a, b) => a - b);
   }
 
   // If the app's list doesn't reach the day's last bus, running out of
@@ -150,7 +187,7 @@ export function buildNextBusTimeline(
     firstBusMs,
   };
 
-  return dates.slice(0, MAX_TIMELINE_ENTRIES).map((date, index) => {
+  return entryDates.map((date, index) => {
     const departures = ahead
       .filter((d) => d.epochMs > date)
       .slice(0, MAX_DEPARTURES_PER_ENTRY)
@@ -161,13 +198,18 @@ export function buildNextBusTimeline(
     const state: NextBusWidgetProps['state'] =
       departures.length > 0 ? 'service' : listIsComplete ? 'ended' : 'stale';
     const isLastBus = departures.length === 1 && listIsComplete && departures[0]!.epochMs === lastListed;
-    return { date: new Date(date), props: { ...base, state, departures, isLastBus } };
+    const homeProps =
+      home && date < home.leaveMs
+        ? { homeLabel: home.label, homeLeaveMs: home.leaveMs, homeArriveMs: home.arriveMs }
+        : { homeLabel: '', homeLeaveMs: 0, homeArriveMs: 0 };
+    return { date: new Date(date), props: { ...base, state, departures, isLastBus, ...homeProps } };
   });
 }
 
 /**
  * Cheap identity for "would the widget show something different?" — route,
- * stop, departures to the minute, live flags and the end-of-day hints. Excludes
+ * stop, departures to the minute, live flags, the end-of-day hints and the
+ * home plan (label and leave/arrive minute). Excludes
  * `updatedAtMs` so a poll that changes nothing doesn't spend WidgetKit's
  * reload budget.
  */
@@ -182,5 +224,8 @@ export function nextBusTimelineKey(snapshot: NextBusSnapshot): string {
     deps,
     Math.floor(finiteOrZero(snapshot.firstBusTomorrowMs) / 60_000),
     Math.floor(finiteOrZero(snapshot.lastBusTodayMs) / 60_000),
+    snapshot.home
+      ? `${snapshot.home.label}@${Math.floor(finiteOrZero(snapshot.home.leaveMs) / 60_000)}>${Math.floor(finiteOrZero(snapshot.home.arriveMs) / 60_000)}`
+      : '',
   ].join('|');
 }

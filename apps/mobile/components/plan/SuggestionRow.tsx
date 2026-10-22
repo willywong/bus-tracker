@@ -6,6 +6,7 @@ import { RowButton } from '@/components/ui/RowButton';
 import { color, space, type } from '@/theme/design';
 
 import type { RowLead, RowModel } from './model';
+import { PlaceThumb } from './PlaceThumb';
 
 /** Same as `ROW_ICON` in `components/trip/Rows.tsx`, so glyphs line up with the trip sheet's. */
 const LEAD = 24;
@@ -14,6 +15,10 @@ const ROW_MIN_HEIGHT = 52;
 
 /** Hairlines between suggestion rows start at the title. */
 export const SUGGESTION_INSET = ROW_ICON_INSET;
+/** A saved place's map thumbnail; with the row's padding its rows are 60pt. */
+const THUMB = 44;
+/** The title's inset in rows led by a thumbnail. */
+export const THUMB_INSET = THUMB + space.sm;
 
 /**
  * One search suggestion (spec §6.2): a station, stop, place, recent or saved
@@ -23,7 +28,7 @@ export const SUGGESTION_INSET = ROW_ICON_INSET;
 export function SuggestionRow({ row, onPress }: { row: RowModel; onPress: () => void }) {
   return (
     <RowButton onPress={onPress} style={styles.row} accessibilityLabel={row.accessibilityLabel}>
-      <Lead lead={row.lead} />
+      {row.thumb ? <PlaceThumb lat={row.thumb.lat} lng={row.thumb.lng} size={THUMB} /> : <Lead lead={row.lead} />}
       <View style={styles.text}>
         <Text style={styles.title} numberOfLines={1}>
           {row.title}

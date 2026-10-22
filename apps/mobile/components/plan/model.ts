@@ -5,6 +5,7 @@ import { formatDistance } from '@/components/map/format';
 import type { SavedPlace } from '@/hooks/useSettings';
 import type { ResolvedPlace } from '@/modules/transit-maps';
 import type { PlaceHit } from '@/services/places/placeSearch';
+import { MAX_PINS } from '@/services/places/saved';
 import type { RecentPlace } from '@/services/places/recents';
 
 import type { LocalHit } from './searchIndex';
@@ -17,7 +18,7 @@ import type { LocalHit } from './searchIndex';
 
 /** Line-colour squares shown before "+n". */
 export const MAX_LINE_SQUARES = 4;
-export const MAX_SAVED_PINS = 6;
+export const MAX_SAVED_PINS = MAX_PINS;
 export const MAX_PLACE_ROWS = 8;
 export const MAX_LOCAL_ROWS = 6;
 
@@ -32,6 +33,8 @@ export interface RowModel {
   /** Right-aligned, secondary (a place's distance). */
   trailing: string | null;
   accessibilityLabel: string;
+  /** A saved place's map thumbnail (15/07), shown instead of the lead glyph. */
+  thumb?: { lat: number; lng: number };
 }
 
 /** "a", "a and b", "a, b and c". */
@@ -155,6 +158,7 @@ export function savedRow(p: SavedPlace): RowModel {
     subtitle: subtitle && subtitle !== title ? subtitle : null,
     trailing: null,
     accessibilityLabel: spoken(title, p.kind === 'pin' ? null : p.name, p.address),
+    thumb: { lat: p.lat, lng: p.lng },
   };
 }
 

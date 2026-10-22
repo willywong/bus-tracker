@@ -41,9 +41,10 @@ export const NEXT_BUS_WIDGET_NAME = 'NextBusWidget';
  * "Next bus" Home Screen + Lock Screen widget.
  *
  *   systemSmall          route badge · stop · ticking countdown · "Then 09:12" · live/scheduled · Updated
- *   systemMedium         same on the left, the next three clock times on the right
+ *   systemMedium         same on the left, the next three clock times on the right;
+ *                        "⌂ Home by 18:14 · leave in 6:00" below while a plan home holds
  *   accessoryCircular    route + ticking countdown (clock time when ≥ 1 h away)
- *   accessoryRectangular glyph "T816 · 08:42" · countdown · stop / then
+ *   accessoryRectangular glyph "T816 · 08:42" · countdown · stop / then ("Home by 18:14" in a free line)
  *   accessoryInline      "T816 · 08:42"
  *
  * The countdown is SwiftUI `Text(timerInterval:)`, so it ticks with no
@@ -94,6 +95,15 @@ const NextBusWidget = (
   const nextClock = next ? clock(next.epochMs) : '';
   const updatedText = props.updatedAtMs > 0 ? `Updated ${clock(props.updatedAtMs)}` : '';
   const firstBusText = props.firstBusMs > 0 ? `First bus ${clock(props.firstBusMs)}` : '';
+
+  // The app's last plan home (plan 15/07), written ahead: the entry at its
+  // leave time clears it, and `at` hides it in between reloads. It is a
+  // snapshot of an earlier plan, so it never carries a live glyph.
+  const homeLabel = props.homeLabel ?? '';
+  const homeLeaveMs = props.homeLeaveMs ?? 0;
+  const homeArriveMs = props.homeArriveMs ?? 0;
+  const showHome = homeLabel !== '' && homeLeaveMs > at && homeArriveMs > 0;
+  const homeBy = showHome ? `${homeLabel} by ${clock(homeArriveMs)}` : '';
 
   // Colour only reinforces glyph + word; in tinted / clear / Lock Screen
   // modes everything falls back to hierarchical styles the system can tint.
@@ -172,6 +182,21 @@ const NextBusWidget = (
       {text}
     </Text>
   );
+
+  // "⌂ Home by 18:14 · leave in 6:00", the countdown ticking to the leave time.
+  const homeRow = showHome ? (
+    <HStack spacing={4} modifiers={[foregroundStyle(secondary)]}>
+      <Image systemName="house.fill" size={11} />
+      <Text modifiers={[font({ size: 12, weight: 'medium' }), monospacedDigit(), lineLimit(1)]}>
+        {`${homeBy} · leave in `}
+      </Text>
+      <Text
+        timerInterval={{ lower: new Date(Math.min(at, homeLeaveMs)), upper: new Date(homeLeaveMs) }}
+        countsDown
+        modifiers={[font({ size: 12, weight: 'medium' }), monospacedDigit(), multilineTextAlignment('leading'), lineLimit(1)]}
+      />
+    </HStack>
+  ) : null;
 
   // A message state (empty / ended / stale) for the system families.
   const message = (icon: string, title: string, detail: string) => (
@@ -265,8 +290,12 @@ const NextBusWidget = (
           {routeCode ? (
             <Text modifiers={[font({ size: 15, weight: 'bold'}), lineLimit(1)]}>{routeCode}</Text>
           ) : null}
-          <Text modifiers={[font({ size: 13, weight: 'medium' }), lineLimit(2)]}>{title}</Text>
-          {state === 'ended' && firstBusText ? caption(firstBusText, 12, secondary) : null}
+          <Text modifiers={[font({ size: 13, weight: 'medium' }), lineLimit(showHome ? 1 : 2)]}>{title}</Text>
+          {state === 'ended' && firstBusText
+            ? caption(firstBusText, 12, secondary)
+            : showHome
+              ? caption(homeBy, 12, secondary)
+              : null}
         </VStack>,
       );
     }
@@ -285,13 +314,24 @@ const NextBusWidget = (
             ? caption('Last bus today', 12, secondary)
             : withinCountdown
               ? caption(stopName, 12, secondary)
-              : null}
+              : showHome
+                ? caption(homeBy, 12, secondary)
+                : null}
       </VStack>,
     );
   }
 
   // --- Home Screen ------------------------------------------------------------
-  if (!next) return systemRoot(messageFor());
+  const wide = family === 'systemMedium' || family === 'systemLarge' || family === 'systemExtraLarge';
+  if (!next) {
+    if (!wide || !homeRow) return systemRoot(messageFor());
+    return systemRoot(
+      <VStack alignment="leading" spacing={6} modifiers={[frame({ maxWidth: 10000, maxHeight: 10000, alignment: 'topLeading' })]}>
+        {messageFor()}
+        {homeRow}
+      </VStack>,
+    );
+  }
 
   const header = (
     <HStack spacing={6}>
@@ -300,9 +340,9 @@ const NextBusWidget = (
     </HStack>
   );
 
-  if (family === 'systemMedium' || family === 'systemLarge' || family === 'systemExtraLarge') {
+  if (wide) {
     const rows = following.slice(0, 3);
-    return systemRoot(
+    const columns = (
       <HStack spacing={16} alignment="top">
         <VStack alignment="leading" spacing={2} modifiers={[frame({ maxWidth: 10000, maxHeight: 10000, alignment: 'topLeading' })]}>
           {header}
@@ -328,7 +368,14 @@ const NextBusWidget = (
           <Spacer />
           {updatedText ? caption(updatedText, 11, tertiary) : null}
         </VStack>
-      </HStack>,
+      </HStack>
+    );
+    if (!homeRow) return systemRoot(columns);
+    return systemRoot(
+      <VStack alignment="leading" spacing={6} modifiers={[frame({ maxWidth: 10000, maxHeight: 10000, alignment: 'topLeading' })]}>
+        {columns}
+        {homeRow}
+      </VStack>,
     );
   }
 

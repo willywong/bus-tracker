@@ -7,6 +7,7 @@ import 'react-native-reanimated';
 import '../global.css';
 
 import { PushRegistrationProvider } from '@/hooks/PushRegistrationContext';
+import { useHomeWidgetPlan } from '@/hooks/useHomeWidgetPlan';
 import { useRealtimeRoutes } from '@/hooks/useRealtimeRoutes';
 import { useQuickActions } from '@/hooks/useQuickActions';
 import { SettingsProvider, useSettings } from '@/hooks/useSettings';
@@ -72,6 +73,7 @@ function AppStack() {
   const insets = useSafeAreaInsets();
   const detents = sheetDetents(windowHeight, insets.top);
   useQuickActions();
+  useHomeWidgetPlan();
 
   useEffect(() => {
     if (ready) void SplashScreen.hideAsync();

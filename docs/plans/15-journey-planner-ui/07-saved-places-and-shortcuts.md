@@ -124,3 +124,60 @@
 - Saved places, the Places settings section, the Home/Work quick actions and the widget home line are done.
 - The widget line is a snapshot of an earlier plan and is labelled as such. Background re-planning stays a follow-up.
 - The quick-action slot budget (Where to?, Home, Work, favourites) is the place to check if 13/05 adds a rail quick action.
+
+## Implementation notes
+- **Files.**
+  - Pure: `services/places/saved.ts` (`setHome`, `setWork`, `addPin`, `removePlace`, `placeToPlannerPlace`, plus `samePlace`, `findSaved`, `pinCount`, `draftFromPlannerPlace`, `MAX_PINS`), `services/planner/homePlan.ts` (`shouldReplanHome`, `homeLineOf`). `widgets/nextBusTimeline.ts` gains `NextBusHomePlan`, `snapshot.home` and the three `home*` props.
+  - Views and hooks: `components/plan/SaveMenu.tsx`, `components/plan/PlaceThumb.tsx` (`PlaceThumb`, `usePlaceThumbUri`), `components/settings/PlacesSection.tsx`, `hooks/useHomeWidgetPlan.ts` (`useHomeWidgetPlan`, `setHomeWidgetLine`, `useHomeWidgetLine`).
+  - Edited: `components/plan/PlanResults.tsx` (header row + Save), `components/plan/SuggestionRow.tsx`, `components/plan/model.ts`, `app/plan.tsx` (hairline inset), `app/settings.tsx`, `app/_layout.tsx` (mounts `useHomeWidgetPlan` beside `useQuickActions`), `services/quickActions.ts`, `hooks/useQuickActions.ts`, `hooks/useTripSideEffects.ts`, `widgets/NextBusWidget.tsx`, `services/stationImage.ts`, `state/PlannerContext.tsx`.
+  - Tests: `services/places/__tests__/saved.test.ts` (the 5 named), `services/planner/__tests__/homePlan.test.ts` (5), +3 named in `services/__tests__/quickActions.test.ts`, +5 named in `widgets/__tests__/nextBusTimeline.test.ts`.
+- **Saved-place rules.**
+  - A duplicate is checked against every saved place, so pinning your Home is refused as `duplicate`. The duplicate check runs before the pin cap.
+  - `setHome` / `setWork` also drop a pin of the same place, so the Saved list never shows it twice.
+  - `PlannerContext.toPlace` is now `placeToPlannerPlace`. `model.ts`'s `MAX_SAVED_PINS` is `MAX_PINS`.
+- **Save menu.**
+  - The label comes from settings (`findSaved`): "Save", or "Saved · Home" / "Saved · Work" / "Saved · Pinned". It survives reopening the sheet.
+  - "Pin this place" is also disabled when the place is already saved; only a full list adds "· 6 max".
+  - Only a `place` saves its subtitle as the address. A stop's or station's subtitle is its lines, so it saves `address: null`.
+  - It shows only for a destination with coordinates (never My location).
+- **Thumbnails.**
+  - `RowModel` gains an optional `thumb` instead of a new `RowLead` kind, so 03's `savedRow` tests stand. A Saved row with a 44pt thumbnail is 60pt tall, and its hairlines start at `THUMB_INSET`.
+  - `snapshotUri` gains `boxM` (default 600). Thumbnails ask for 400 m at 88 × 88.
+  - URIs are cached per place and scheme for the session. A failed snapshot (offline on first use) stays the map-pin glyph until relaunch.
+  - Settings → Places shows the kind's glyph on a fill while the tile is drawn. A stop or station with no address reads "Bus stop" / "Station".
+- **Quick actions.**
+  - Home and Work also set `from` to My location and `when` to now (06's re-plan path) before `requestOpen`. If the place was removed after the action was set, it opens a plain "Where to?".
+  - `trackSlots(saved)` is how many favourites get a slot. The hook looks up only their stops' names.
+- **Widget.**
+  - The home row also shows under the medium (and large) message states, "ended" and "stale". A trip with no route chosen still writes a `null` snapshot, so the empty widget has no home line.
+  - `accessoryRectangular` uses its third line for "Home by 18:14" when nothing else is there. With no departures, the title shrinks to one line.
+  - The key includes the arrival minute as well as `label` and the leave minute.
+  - The row hides itself once `at` passes `homeLeaveMs`, as well as at the clearing entry.
+- **Home plan.**
+  - `shouldReplanHome` returns `'plan' | 'keep' | 'clear'`.
+  - It also re-plans when Home moved more than 30 m.
+  - A plan that found no itinerary (`leaveMs: 0`) waits out its 15 minutes rather than re-planning on every check.
+  - The hook checks the rules on foreground and every 60 s while active, using a last-known fix up to 5 min old.
+  - It plans only when all of these hold:
+    - no planner sheet is presented;
+    - `workspaceBusy(network)` is false;
+    - the loaded network is today's (`networkFor`).
+  - It holds the workspace while it runs and is cancelled when a sheet opens, because `usePlannerEngine` doesn't check `workspaceBusy` before its own plan.
+  - Itinerary times are moved off the dev clock offset before they reach the widget.
+  - The line reaches `syncNextBusWidget` through `setHomeWidgetLine` / `useHomeWidgetLine` (`useSyncExternalStore`).
+- **For 08.**
+  - Background re-planning (`backgroundRefresh.ts`) stays a follow-up.
+  - On a device, check that the medium widget fits the home row under the hero (40pt) plus status row. Shrink the hero if it clips.
+  - The peek's house circle (`trip.tsx`) sets `to` only and keeps any custom From. The quick action resets From to My location. Decide whether the circle should too.
+  - `services/__tests__/railShapes.test.ts` "railShapesSteps…" is timing-based ("longest step 38.2 ms") and fails now and then under the full parallel run. It is unrelated to 07 and passes alone.
+- **Build impact:** JS-only (Metro reload). Kill and relaunch once so the new widget layout is stored, then reload the widget.
+
+## Root verification (iPhone 17 Pro Max Simulator)
+
+- **Save menu.** The glass Save menu on the itinerary and on results rows shows Set as Home, Set as Work and Pin. Set as Home crossfades to "Saved · Home". The peek's house circle then opens the results.
+- **Saved section.** The thumbnail and 60pt row in the planner's Saved section, and the Settings → Places row, thumbnail and footer, are correct.
+- **Quick actions.** The order is Home, Work, then the tracked stops. A warm launch from Home opens the results from My location. A cold launch from Home, or from the pre-existing Where to?, opens the app without acting. That is a dev-client artifact (`QuickActions.initial` is dropped), so recheck it in a Release build (08).
+- **Widget.**
+  - With Home at Pavilion and the fix at FINAS, the medium widget shows "Home by 07:07 · leave in 22:28". It counts down, has no live glyph and fits under the hero. The 40pt clip risk above did not occur on the Pro Max; recheck it on an iPhone 13.
+  - A placed widget with a passed `leaveMs` shows no home row. The gallery preview can still show a stale "leave in 0:00", because it renders an old snapshot.
+- **Unit tests only.** The six-pin limit and the 30 m duplicate check are not verified on the Simulator. Dark-mode thumbnails are checked in 08's dark-mode pass.
