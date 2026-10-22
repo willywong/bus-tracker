@@ -60,7 +60,7 @@ Every §7 moment matches its values on device, with the right Reduce Motion fall
      - the peek strip instruction is read once;
      - the off-route row reads "Off route? Re-plan from here, button";
      - Live Activity text is spoken on the Lock Screen.
-   - Live and scheduled always come as a word, never colour alone (README principle 4). Criterion 7's string omits it; see the report note in the README hand-off.
+   - Live and scheduled always come as a word, never colour alone (README principle 4).
 
 4. **Dynamic Type at accessibility sizes (AX3) and XXL.**
    - **Capsule:** the placeholder truncates, and the capsule stays 44pt (glass chrome).
@@ -144,3 +144,29 @@ Every §7 moment matches its values on device, with the right Reduce Motion fall
 - the follow-ups are recorded.
 
 The next work starts from those follow-ups. Pick one with `poteto-mode` and give it its own phase folder.
+
+## Implementation notes (QA fixes)
+
+- **Search autofocus.** `Stack.SearchBar`'s `autoFocus` is Android-only in react-native-screens 4.30. `plan.tsx` now focuses the bar through its ref on the sheet's `transitionEnd`, with a 700 ms fallback, but only when there's no destination yet. Verified: typed text lands straight away.
+- **Walk-row notes** (`stationModel.interchangeNote`). The curated notes are written from the `a` end. From the `b` end the note now names the other side, e.g. on KTM KL Sentral: "Walk to the LRT and Monorail platforms in KL Sentral". Verified on the Simulator.
+- **Search index.** `LocalIndexWarmer` in `TransitNetworkProvider` builds `localIndexFor(network)` (~50 ms) in idle time, so the first keystroke doesn't pay for it.
+- **Interchange markers at the widest zoom: left as they were.** Making them `required` showed every interchange at zoom ~9, but as a tangled pile over the city centre. MapKit hiding the overlaps at `'high'` reads better, and every interchange shows from zoom 10.
+- **One Live Activity** (`services/liveActivityOwner.ts`). While Go is on, a followed bus doesn't start its own activity, and one already up ends. It comes back after Go.
+- **"Leave now" re-plan** (`session.replanDue`). This applies while the sheet is up and When is now. Once the earliest riding row's leave time is more than 30 s past, it plans again, at most once a minute. It is checked on a 10 s clock, never from a retime. The rows clear and the loader may show, as on the 2-minute reopen re-plan.
+- **Location** (`services/planner/quickFix.ts`). It takes the first of these that is available:
+  1. a last-known fix ≤ 60 s old;
+  2. a fresh fix within 4 s;
+  3. a last-known fix ≤ 10 min old;
+  4. the fresh fix whenever it comes.
+
+  The fourth step is a root fix. Without it, a cold start with no last-known fix showed "Your location isn't available" after 4 s. The ~10 s first-result times seen earlier came from a stale simulated location. After re-setting it, the Pavilion plan took 320 ms.
+- **Haptics and VoiceOver audit fixes:**
+  - Go plays only success; `unfollow({ silent: true })` removes the extra light haptic.
+  - The When menu label is just its value, so it reads "Leave now, menu".
+  - The "Off route?" head no longer hides "Not now", and the button reads "Off route? Re-plan from here".
+  - `GlassCapsuleButton` labels itself with its visible text.
+  - Timeline rows with no action no longer read "dimmed".
+  - The stop summary for a ride with no stops in between is hidden from VoiceOver, so the ride isn't read twice.
+  - Each Settings → Places row is one element.
+- **Dev harness removed.** `app/dev-network.tsx`, `app/dev-planner.tsx`, `services/devStages.ts`, their routes, Settings rows and stage markers.
+- **Build impact:** JS-only.

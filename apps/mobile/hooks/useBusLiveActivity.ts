@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useSyncExternalStore } from 'react';
 import { Platform } from 'react-native';
 
 import type { ScheduleDelay } from '@bus-tracker/shared';
@@ -10,6 +10,7 @@ import type {
   ResolvedEta,
 } from '@/components/tracker/logic';
 import { startBusActivity } from '@/services/liveActivity';
+import { busActivityAllowed, isGoActive, subscribeGoActive } from '@/services/liveActivityOwner';
 import { devNow } from '@/utils/devClock';
 
 type Instance = ReturnType<typeof startBusActivity>;
@@ -58,6 +59,9 @@ const LIVE_STALE_AFTER_MS = 3 * 60_000;
  * Live Activity. Supports two modes:
  *  - 'arrival': a bus is approaching — shows minutes + progress + rich pills
  *  - 'pre-service': no buses yet today — shows "First bus at HH:MM"
+ *
+ * Go owns the one Live Activity (`liveActivityOwner`): while a journey is
+ * on, this one doesn't start (or ends), and comes back once Go ends.
  */
 export function useBusLiveActivity({
   routeCode,
@@ -69,8 +73,10 @@ export function useBusLiveActivity({
   beforeServiceStart = false,
   firstBusToday = null,
   lastUpdated = null,
-  enabled = true,
+  enabled: following = true,
 }: UseBusLiveActivityArgs): void {
+  const goActive = useSyncExternalStore(subscribeGoActive, isGoActive);
+  const enabled = busActivityAllowed(following, goActive);
   const instanceRef = useRef<Instance | null>(null);
   const lastPropsRef = useRef<BusActivityProps | null>(null);
   // Stable across updates so the progress bar advances smoothly. Set on start,
@@ -80,7 +86,7 @@ export function useBusLiveActivity({
   useEffect(() => {
     if (Platform.OS !== 'ios') return;
 
-    // User toggled tracking off — tear down any running activity.
+    // User toggled tracking off, or Go took over — tear down any running activity.
     if (!enabled) {
       const inst = instanceRef.current;
       if (inst) {

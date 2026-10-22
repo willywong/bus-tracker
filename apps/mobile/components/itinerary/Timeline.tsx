@@ -103,7 +103,8 @@ export function Timeline({
               <Pressable
                 key={key}
                 onPress={onPress}
-                disabled={!onPress}
+                // No `disabled`: Pressable copies it into accessibilityState,
+                // so a row with no action would read "dimmed".
                 accessible
                 accessibilityRole={onPress ? 'button' : undefined}
                 accessibilityLabel={labels[i]}
@@ -216,7 +217,14 @@ function RideStops({
 }) {
   const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
   const summary = rideSummary(row);
-  if (row.stops.length === 0) return <Text style={styles.summary}>{summary}</Text>;
+  // The ride head's label already says it: not a second element.
+  if (row.stops.length === 0) {
+    return (
+      <Text style={styles.summary} accessibilityElementsHidden importantForAccessibility="no">
+        {summary}
+      </Text>
+    );
+  }
   return (
     <Host matchContents={{ vertical: true }} style={styles.disclosure}>
       <DisclosureGroup

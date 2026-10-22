@@ -7,6 +7,7 @@ import { useSettings } from '@/hooks/useSettings';
 import { useTransitNetwork } from '@/hooks/useTransitNetwork';
 import { placeToPlannerPlace } from '@/services/places/saved';
 import { homeLineOf, shouldReplanHome, type LastHomePlan } from '@/services/planner/homePlan';
+import { quickFix } from '@/services/planner/quickFix';
 import { runPlan } from '@/services/planner/runPlan';
 import { networkFor } from '@/services/planner/session';
 import { holdWorkspace, workspaceBusy } from '@/services/planner/workspace';
@@ -53,9 +54,14 @@ async function currentFix(): Promise<{ lat: number; lng: number } | null> {
   try {
     const perm = await Location.getForegroundPermissionsAsync();
     if (!perm.granted) return null;
-    const fix =
-      (await Location.getLastKnownPositionAsync({ maxAge: FIX_MAX_AGE_MS })) ??
-      (await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }));
+    // As "My location" (`quickFix`), with the widget's wider fresh window.
+    const fix = await quickFix(
+      {
+        lastKnown: (maxAge) => Location.getLastKnownPositionAsync({ maxAge }),
+        current: () => Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+      },
+      { freshMaxAgeMs: FIX_MAX_AGE_MS },
+    );
     return fix ? { lat: fix.coords.latitude, lng: fix.coords.longitude } : null;
   } catch {
     return null;

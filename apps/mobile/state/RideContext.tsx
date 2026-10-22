@@ -46,6 +46,7 @@ import {
 import { useJourneyLiveActivity } from '@/hooks/useJourneyLiveActivity';
 import { plannerStore } from '@/hooks/usePlannerEngine';
 import { clearGoGeofences, startGoGeofences } from '@/services/arrival/geofence';
+import { setGoActive } from '@/services/liveActivityOwner';
 import { workspaceBusy } from '@/services/planner/workspace';
 import type { RealtimeSnapshot } from '@/services/realtime';
 import {
@@ -524,6 +525,12 @@ export function RideProvider({ children }: { children: ReactNode }) {
     [shown, journey],
   );
   useJourneyLiveActivity(activityProps);
+  // Go owns the one Live Activity: a followed bus's waits until Go ends.
+  const goOn = journeyRide != null;
+  useEffect(() => {
+    setGoActive(goOn);
+    return () => setGoActive(false);
+  }, [goOn]);
 
   // Arrived journeys close themselves too.
   useEffect(() => {
@@ -559,7 +566,8 @@ export function RideProvider({ children }: { children: ReactNode }) {
         run.query?.to ?? plannerTo ?? (last ? { kind: 'place', name: last.to.name, lat: last.to.lat, lng: last.to.lng } : null);
       if (!net || !to || it.legs.length === 0) return;
       // One Live Activity at a time: Go takes over from a followed bus.
-      unfollow();
+      // Silently: Go plays only its success haptic.
+      unfollow({ silent: true });
       // The first step now, so the sheet shows the journey from the first frame.
       setJourney(advanceJourney(it, null, phoneRef.current, devNow()));
       setProgress(null);

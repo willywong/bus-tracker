@@ -3,7 +3,17 @@ import { test } from 'node:test';
 
 import type { Itinerary, Place } from '@bus-tracker/shared';
 
-import { isLiveSkipped, isStale, networkFor, placeKey, queryKey, updatedIds } from '../session';
+import {
+  isLiveSkipped,
+  isStale,
+  networkFor,
+  NOW_REPLAN_MIN_GAP_MS,
+  NOW_REPLAN_PAST_MS,
+  placeKey,
+  queryKey,
+  replanDue,
+  updatedIds,
+} from '../session';
 
 const HERE: Place = { kind: 'here', name: 'My location', lat: Number.NaN, lng: Number.NaN };
 const KLCC: Place = { kind: 'station', name: 'KLCC', lat: 3.1589, lng: 101.7133, ref: 'klcc' };
@@ -67,4 +77,24 @@ test('leave-now results go stale after two minutes; depart-at never', () => {
   assert.equal(isStale({ kind: 'now' }, NOW, NOW + 3 * 60_000), true);
   assert.equal(isStale({ kind: 'depart', at: NOW }, NOW, NOW + H), false);
   assert.equal(isStale({ kind: 'now' }, null, NOW), false);
+});
+
+test('replanDue: a Leave now row 30 s past its leave time plans again, at most once a minute', () => {
+  const now: { kind: 'now' } = { kind: 'now' };
+  const plannedAt = NOW - 5 * 60_000;
+  const rows = (...leaveIn: number[]) => leaveIn.map((s) => ({ departAt: NOW + s * 1000, rides: 1 }));
+  // The earliest row decides, whatever the order.
+  assert.equal(replanDue(now, rows(120, -31), plannedAt, NOW), true);
+  assert.equal(replanDue(now, rows(120, -30), plannedAt, NOW), false);
+  assert.equal(replanDue(now, rows(5, 120), plannedAt, NOW), false);
+  // The last plan under a minute old: wait.
+  assert.equal(replanDue(now, rows(-90), NOW - NOW_REPLAN_MIN_GAP_MS + 1, NOW), false);
+  assert.equal(replanDue(now, rows(-90), NOW - NOW_REPLAN_MIN_GAP_MS, NOW), true);
+  // Depart at… never; nothing planned or no rows, never.
+  assert.equal(replanDue({ kind: 'depart', at: NOW - H }, rows(-90), plannedAt, NOW), false);
+  assert.equal(replanDue(now, rows(-90), null, NOW), false);
+  assert.equal(replanDue(now, [], plannedAt, NOW), false);
+  // A walk-only row leaves whenever: it never makes the results stale.
+  assert.equal(replanDue(now, [{ departAt: NOW - 10 * 60_000, rides: 0 }], plannedAt, NOW), false);
+  assert.equal(replanDue(now, [{ departAt: NOW - 10 * 60_000, rides: 0 }, ...rows(-NOW_REPLAN_PAST_MS / 1000 - 1)], plannedAt, NOW), true);
 });

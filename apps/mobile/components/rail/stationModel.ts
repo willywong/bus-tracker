@@ -254,32 +254,51 @@ const FEED_NOUN: Record<FeedId, string> = {
   feeder: 'MRT feeder bus',
 };
 
+/**
+ * The walk row's note, seen from this station. Curated notes are written
+ * from the `a` end, so a "Walk to …" note read at the `b` end would point
+ * back here (on KTM KL Sentral: "Walk to the KTM platforms"). There the note
+ * names the other end instead: its platforms when both share a name, else
+ * the station. Notes that read both ways ("Walk between …") stay as they are.
+ */
+export function interchangeNote(ic: Interchange, atA: boolean, here: RailStation, other: RailStation): string {
+  if (atA || !ic.note.startsWith('Walk to ')) return ic.note;
+  const modes = [...new Set(other.lines.map((l) => l.mode))];
+  const ktmOnly = modes.length > 0 && modes.every((m) => m === 'KTM');
+  if (other.name === here.name && modes.length > 0) {
+    return `Walk to the ${modes.join(' and ')} platforms in ${other.name}`;
+  }
+  return `Walk to ${ktmOnly ? 'KTM ' : ''}${other.name}`;
+}
+
 function interchangesOf(net: TransitNetwork | null, station: RailStation): InterchangeView[] {
   const mine = new Set(station.stopIds);
-  const best = new Map<string, { other: RailStation; ic: Interchange }>();
+  const best = new Map<string, { other: RailStation; ic: Interchange; atA: boolean }>();
   for (const ic of RAIL_INTERCHANGES) {
-    const otherId = mine.has(ic.a) ? ic.b : mine.has(ic.b) ? ic.a : null;
+    const atA = mine.has(ic.a);
+    const otherId = atA ? ic.b : mine.has(ic.b) ? ic.a : null;
     // Both ends here: a pair already merged into this station.
     if (otherId == null || mine.has(otherId)) continue;
     const other = stationOfStop(net, otherId);
     if (!other || other.id === station.id) continue;
     const prev = best.get(other.id);
-    if (!prev || ic.seconds < prev.ic.seconds) best.set(other.id, { other, ic });
+    if (!prev || ic.seconds < prev.ic.seconds) best.set(other.id, { other, ic, atA });
   }
   return [...best.values()]
     .sort((x, y) => x.ic.seconds - y.ic.seconds || x.other.name.localeCompare(y.other.name))
-    .map(({ other, ic }) => {
+    .map(({ other, ic, atA }) => {
       const m = Math.max(1, Math.round(ic.seconds / 60));
       const walk = ic.verified ? `${m} min walk` : `about ${m} min walk`;
       const lines = other.lines.map(lineDisplayName);
       const spokenWalk = `${ic.verified ? '' : 'about '}${m} minute walk`;
+      const note = interchangeNote(ic, atA, station, other);
       return {
         stationId: other.id,
         name: other.name,
         colors: [...new Set(other.lines.map((l) => l.color))],
         walk,
-        note: ic.note,
-        spoken: [other.name, ...(lines.length ? [[...new Set(lines)].join(', ')] : []), spokenWalk].join(', ') + `. ${ic.note}`,
+        note,
+        spoken: [other.name, ...(lines.length ? [[...new Set(lines)].join(', ')] : []), spokenWalk].join(', ') + `. ${note}`,
       };
     });
 }

@@ -6,13 +6,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import 'react-native-reanimated';
 import '../global.css';
 
+import { localIndexFor } from '@/components/plan/searchIndex';
 import { PushRegistrationProvider } from '@/hooks/PushRegistrationContext';
 import { useHomeWidgetPlan } from '@/hooks/useHomeWidgetPlan';
 import { useRealtimeRoutes } from '@/hooks/useRealtimeRoutes';
 import { useQuickActions } from '@/hooks/useQuickActions';
 import { SettingsProvider, useSettings } from '@/hooks/useSettings';
 import { StaticGtfsProvider } from '@/hooks/useStaticGtfs';
-import { TransitNetworkProvider } from '@/hooks/useTransitNetwork';
+import { TransitNetworkProvider, useTransitNetwork, whenIdle } from '@/hooks/useTransitNetwork';
 import { PlannerProvider } from '@/state/PlannerContext';
 import { RideProvider } from '@/state/RideContext';
 import { TripProvider } from '@/state/TripContext';
@@ -51,6 +52,7 @@ export default function RootLayout() {
       <StaticGtfsProvider>
         <TransitNetworkProvider>
           <RealtimeRoutesRunner />
+          <LocalIndexWarmer />
           <PushRegistrationProvider>
             <TripProvider>
               <PlannerProvider>
@@ -236,30 +238,6 @@ function AppStack() {
             contentStyle: { backgroundColor: SHEET_BACKGROUND },
           }}
         />
-        {/* Temporary (plan 12/00): network build timing harness. */}
-        <Stack.Screen
-          name="dev-network"
-          options={{
-            presentation: 'formSheet',
-            sheetAllowedDetents: [1],
-            sheetGrabberVisible: true,
-            headerShown: true,
-            headerTransparent: true,
-            contentStyle: { backgroundColor: SHEET_BACKGROUND },
-          }}
-        />
-        {/* Temporary (plan 14/00): planner timing harness. */}
-        <Stack.Screen
-          name="dev-planner"
-          options={{
-            presentation: 'formSheet',
-            sheetAllowedDetents: [1],
-            sheetGrabberVisible: true,
-            headerShown: true,
-            headerTransparent: true,
-            contentStyle: { backgroundColor: SHEET_BACKGROUND },
-          }}
-        />
       </Stack>
     </ThemeProvider>
   );
@@ -267,5 +245,19 @@ function AppStack() {
 
 function RealtimeRoutesRunner() {
   useRealtimeRoutes();
+  return null;
+}
+
+/**
+ * Builds the planner's local search index (`localIndexFor`, cached per
+ * network) in idle time once the network is ready, so opening Where to? and
+ * the first keystroke don't pay for it.
+ */
+function LocalIndexWarmer() {
+  const { network } = useTransitNetwork();
+  useEffect(() => {
+    if (!network) return;
+    return whenIdle(() => void localIndexFor(network));
+  }, [network]);
   return null;
 }

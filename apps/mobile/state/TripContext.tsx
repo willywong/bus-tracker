@@ -79,7 +79,8 @@ export interface TripContextValue {
   now: number;
   isFollowing: boolean;
   follow: () => void;
-  unfollow: () => void;
+  /** Stops following. `silent`: no light haptic (Go plays its own success). */
+  unfollow: (opts?: { silent?: boolean }) => void;
   startWalking: () => void;
   cancelWalking: () => void;
   /** MET Malaysia rain/flood nudge for the stop's area, when there is one. */
@@ -331,9 +332,10 @@ export function TripProvider({ children }: { children: ReactNode }) {
     // The "Leave now" alert needs it; asked on this tap, never at launch.
     void ensureNotificationPermission().catch(() => {});
   }, []);
-  const unfollow = useCallback(() => {
+  const unfollow = useCallback((opts?: { silent?: boolean }) => {
     setIsFollowing(false);
-    haptics.light();
+    // Strict: a press handler passed straight through hands in its event.
+    if (opts?.silent !== true) haptics.light();
   }, []);
   const startWalking = useCallback(() => {
     setIsFollowing(true);

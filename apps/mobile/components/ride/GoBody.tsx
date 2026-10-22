@@ -198,9 +198,18 @@ function OffRouteRow({
 }) {
   return (
     <View style={styles.offRoute}>
-      <View style={styles.offRouteHead} accessible accessibilityLabel="Off route? You're away from this journey's route.">
-        <SymbolView name="arrow.triangle.branch" size={17} tintColor={color.label} />
-        <Text style={styles.offRouteTitle}>Off route?</Text>
+      {/* The title rides on the button's label, so "Not now" stays its own element. */}
+      <View style={styles.offRouteHead}>
+        <SymbolView
+          name="arrow.triangle.branch"
+          size={17}
+          tintColor={color.label}
+          accessibilityElementsHidden
+          importantForAccessibility="no"
+        />
+        <Text style={styles.offRouteTitle} accessibilityElementsHidden importantForAccessibility="no">
+          Off route?
+        </Text>
         <Pressable
           onPress={onDismiss}
           hitSlop={8}
@@ -213,6 +222,7 @@ function OffRouteRow({
       </View>
       <GlassCapsuleButton
         label="Re-plan from here"
+        accessibilityLabel="Off route? Re-plan from here"
         icon="arrow.triangle.branch"
         prominent={false}
         hint="Finds routes from where you are now. This journey carries on until you pick one."

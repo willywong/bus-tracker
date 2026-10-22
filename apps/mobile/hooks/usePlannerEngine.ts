@@ -16,6 +16,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { openDb } from '@/db/database';
 import { useTransitNetwork } from '@/hooks/useTransitNetwork';
+import { quickFix } from '@/services/planner/quickFix';
 import { runPlan, type PlanRun } from '@/services/planner/runPlan';
 import { holdWorkspace } from '@/services/planner/workspace';
 import {
@@ -25,6 +26,7 @@ import {
   LOADER_DELAY_MS,
   networkFor,
   queryKey,
+  replanDue,
   UPDATED_FLASH_MS,
   updatedIds as findUpdatedIds,
   type When,
@@ -79,16 +81,23 @@ const USE_MOCK =
 export const plannerStore: RealtimeStore = USE_MOCK ? mockRealtimeStore : realtimeStore;
 const store = plannerStore;
 
-/** A fresh enough fix for "My location" as the start. */
-const HERE_MAX_AGE_MS = 60_000;
+/** How often a presented "Leave now" checks whether its first row has left (`replanDue`). */
+const REPLAN_CHECK_MS = 10_000;
 
+/**
+ * "My location" as the start: a last-known fix under a minute old, else a
+ * fresh one within 4 s, else one under 10 min old, else the fresh one when it
+ * comes (`quickFix`). If that fails, the run ends `no-location` and the fix
+ * watcher plans again on a fix.
+ */
 async function resolveHere(): Promise<Place | null> {
   try {
     const perm = await Location.getForegroundPermissionsAsync();
     if (!perm.granted) return null;
-    const fix =
-      (await Location.getLastKnownPositionAsync({ maxAge: HERE_MAX_AGE_MS })) ??
-      (await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }));
+    const fix = await quickFix({
+      lastKnown: (maxAge) => Location.getLastKnownPositionAsync({ maxAge }),
+      current: () => Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+    });
     if (!fix) return null;
     return { kind: 'here', name: 'My location', lat: fix.coords.latitude, lng: fix.coords.longitude };
   } catch {
@@ -117,6 +126,8 @@ interface Engine {
   flashTimers: Map<string, ReturnType<typeof setTimeout>>;
   /** Tomorrow's network, loaded once for a later "Depart at…". */
   other: TransitNetwork | null;
+  /** Set by the "Leave now" clock check: the next plan effect runs even for the same key. */
+  replanDue: boolean;
 }
 
 /**
@@ -126,7 +137,8 @@ interface Engine {
  *
  * - Runs only while a planner sheet is presented with a destination. A new
  *   `from|to|when` key cancels the run in flight; the same key keeps the
- *   results (a "Leave now" older than 2 min is planned again).
+ *   results (a "Leave now" older than 2 min is planned again, and so is one
+ *   whose first row left over 30 s ago while the sheet is up).
  * - `plan()` is stepped in ~8 ms slices; a 150 ms timer shows the loader.
  * - After a plan, its first-bus routes go to the realtime store
  *   (`setExtraRoutes('planner', …)`); each new poll re-times the plan's own
@@ -152,6 +164,7 @@ export function usePlannerEngine(input: { presented: boolean; from: Place; to: P
     shown: [],
     flashTimers: new Map(),
     other: null,
+    replanDue: false,
   });
 
   // No fix when the plan ran: plan again as soon as one arrives (a cold GPS start).
@@ -178,6 +191,22 @@ export function usePlannerEngine(input: { presented: boolean; from: Place; to: P
   const latest = useRef({ from, to, when, network });
   latest.current = { from, to, when, network };
 
+  // "Leave now" with the sheet up: once the first row has left, plan again
+  // (at most once a minute). Checked on this clock, never from a retime.
+  const [replans, setReplans] = useState(0);
+  const watchLeaving = presented && when.kind === 'now' && run.status === 'done' && run.itineraries.length > 0;
+  useEffect(() => {
+    if (!watchLeaving) return;
+    const id = setInterval(() => {
+      const e = engine.current;
+      if (e.inflight || e.status !== 'done') return;
+      if (!replanDue(latest.current.when, e.shown, e.plannedAt, devNow())) return;
+      e.replanDue = true;
+      setReplans((n) => n + 1);
+    }, REPLAN_CHECK_MS);
+    return () => clearInterval(id);
+  }, [watchLeaving]);
+
   // Plan.
   useEffect(() => {
     const e = engine.current;
@@ -189,11 +218,13 @@ export function usePlannerEngine(input: { presented: boolean; from: Place; to: P
       e.status === 'done' &&
       // A refresh that swaps in a new object for the same day keeps the results.
       e.seenDate === date &&
+      !e.replanDue &&
       !isStale(latest.current.when, e.plannedAt, devNow());
     if (same) {
       registerRoutes(e);
       return;
     }
+    e.replanDue = false;
 
     cancel(e);
     const token = ++e.token;
@@ -280,7 +311,7 @@ export function usePlannerEngine(input: { presented: boolean; from: Place; to: P
       console.warn('[planner] plan failed', err);
       finish('error');
     });
-  }, [presented, key, network, fixes]);
+  }, [presented, key, network, fixes, replans]);
 
   // Live re-timing while a planner sheet is up.
   useEffect(() => {

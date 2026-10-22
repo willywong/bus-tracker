@@ -10,7 +10,6 @@ import {
 import { AppState, type AppStateStatus } from "react-native";
 import { healthNote, runSteps, type NetworkHealth, type TransitNetwork } from "@bus-tracker/shared";
 import { openDb } from "@/db/database";
-import { startDevStages } from "@/services/devStages";
 import { downloadTransitFeeds } from "@/services/gtfsFeed";
 import {
   loadHealth,
@@ -49,11 +48,12 @@ function log(msg: string): void {
 }
 
 /**
- * Runs `fn` once the JS thread is idle. RN 0.88 defines `requestIdleCallback`
- * (and no longer ships `InteractionManager`); a timer covers any runtime
- * without it.
+ * Runs `fn` once the JS thread is idle (at most {@link IDLE_TIMEOUT_MS}
+ * later). RN 0.88 defines `requestIdleCallback` (and no longer ships
+ * `InteractionManager`); a timer covers any runtime without it. Returns a
+ * cancel function.
  */
-function whenIdle(fn: () => void): () => void {
+export function whenIdle(fn: () => void): () => void {
   if (typeof requestIdleCallback === "function") {
     const handle = requestIdleCallback(() => fn(), { timeout: IDLE_TIMEOUT_MS });
     return () => cancelIdleCallback(handle);
@@ -70,7 +70,7 @@ function whenIdle(fn: () => void): () => void {
 function watchFrameGaps(): () => number {
   if (!__DEV__ || typeof requestAnimationFrame !== "function") return () => 0;
   let running = true;
-  const start = startDevStages();
+  const start = performance.now();
   let last = start;
   let longest = 0;
   const frame = () => {
@@ -79,7 +79,7 @@ function watchFrameGaps(): () => number {
     if (AppState.currentState === "active") {
       const gap = t - last;
       longest = Math.max(longest, gap);
-      // Logged as it happens, so it lands between the stage lines it fell in.
+      // Logged as it happens, so it lands between the refresh's own log lines.
       if (gap > FRAME_GAP_LOG_MS) {
         log(`frame gap ${Math.round(gap)} ms at +${Math.round(last - start)} ms`);
       }

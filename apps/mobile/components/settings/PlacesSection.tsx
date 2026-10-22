@@ -1,5 +1,7 @@
 import { HStack, Image, List, Section, Spacer, Text, VStack } from '@expo/ui/swift-ui';
 import {
+  accessibilityElement,
+  accessibilityLabel,
   background,
   clipShape,
   font,
@@ -73,7 +75,12 @@ function PlaceRow({ place }: { place: SavedPlace }) {
   const box = frame({ width: THUMB, height: THUMB });
 
   return (
-    <HStack spacing={12} alignment="center" modifiers={[padding({ vertical: 2 })]}>
+    // One VoiceOver element per row, read as the planner's Saved row is.
+    <HStack
+      spacing={12}
+      alignment="center"
+      modifiers={[padding({ vertical: 2 }), accessibilityElement('ignore'), accessibilityLabel(row.accessibilityLabel)]}
+    >
       {uri ? (
         // A local file, read on the main thread: the tile is only 88 × 88 px.
         <Image

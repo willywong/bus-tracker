@@ -17,6 +17,7 @@ import { fixtureNetwork } from '../../../../../packages/shared/src/transit/__tes
 
 import {
   buildStationSheet,
+  interchangeNote,
   lineBadgeLabel,
   lineDisplayName,
   NEARBY_MAX,
@@ -188,6 +189,34 @@ test('unverified interchange reads "about N min walk"', () => {
   assert.equal(kls.note, 'Walk to KL Sentral');
   assert.deepEqual(kls.colors, [KJ.color, RAIL_LINES.find((l) => l.code === 'Monorail MR')!.color]);
   assert.equal(kls.spoken, 'KL Sentral, Kelana Jaya Line, KL Monorail Line, about 6 minute walk. Walk to KL Sentral');
+});
+
+test('walk notes name the other end from both sides', () => {
+  const net = fixtureNetwork();
+  const noteTo = (from: string, to: string) =>
+    buildStationSheet({ net, health: OK_HEALTH, stationId: from, now: myt(7), clock })!.interchanges.find((x) => x.stationId === to)!.note;
+  // KL Sentral: the curated note reads from the LRT side.
+  assert.equal(noteTo('kl-sentral', 'ktm-kl-sentral'), 'Walk to the KTM platforms in KL Sentral');
+  assert.equal(noteTo('ktm-kl-sentral', 'kl-sentral'), 'Walk to the LRT and Monorail platforms in KL Sentral');
+  // Different names: the other station.
+  assert.equal(noteTo('pasar-seni', 'ktm-kuala-lumpur'), 'Walk to KTM Kuala Lumpur');
+  assert.equal(noteTo('ktm-kuala-lumpur', 'pasar-seni'), 'Walk to Pasar Seni');
+  assert.equal(noteTo('muzium-negara', 'kl-sentral'), 'Walk to KL Sentral');
+  assert.equal(noteTo('kl-sentral', 'muzium-negara'), 'Walk to Muzium Negara');
+  // "Walk between" reads both ways and is kept.
+  assert.equal(noteTo('bukit-nanas', 'dang-wangi'), 'Walk between Dang Wangi and Bukit Nanas');
+  // The spoken label carries the same note.
+  const ktm = buildStationSheet({ net, health: OK_HEALTH, stationId: 'ktm-kl-sentral', now: myt(7), clock })!;
+  assert.match(ktm.interchanges[0].spoken, /\. Walk to the LRT and Monorail platforms in KL Sentral$/);
+});
+
+test('interchangeNote: a KTM-only other end reads "KTM <name>"', () => {
+  const ktmLine = { ...KJ, code: 'KTM', mode: 'KTM' as const, name: 'KTM Seremban Line' };
+  const ic = { a: 'rail:X', b: 'rail:Y', seconds: 180, note: 'Walk to somewhere', verified: false };
+  const here = station('here', 'Here', ['rail:Y']);
+  const there = station('there', 'There', ['ktm:1'], [ktmLine]);
+  assert.equal(interchangeNote(ic, true, here, there), 'Walk to somewhere');
+  assert.equal(interchangeNote(ic, false, here, there), 'Walk to KTM There');
 });
 
 test('nearby keeps bus-kl and feeder stops within 250 m, max 4, nearest first', () => {

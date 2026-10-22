@@ -1,6 +1,7 @@
 import { Button, HStack, Host, Image, Text as SwiftText } from '@expo/ui/swift-ui';
 import {
   accessibilityHint,
+  accessibilityLabel as a11yLabel,
   animation,
   Animation,
   buttonBorderShape,
@@ -122,6 +123,7 @@ export function GlassCapsuleButton({
   scheme,
   onPress,
   bounce,
+  accessibilityLabel,
 }: {
   label: string;
   icon: SFSymbol;
@@ -132,6 +134,8 @@ export function GlassCapsuleButton({
   onPress: () => void;
   /** The glyph bounces once each time this changes (e.g. a reminder set). */
   bounce?: SymbolTrigger;
+  /** What VoiceOver reads; defaults to `label`, so the glyph's symbol name isn't read with it. */
+  accessibilityLabel?: string;
 }) {
   const ink = pick(hex.ink, scheme);
   return (
@@ -143,6 +147,7 @@ export function GlassCapsuleButton({
           buttonBorderShape('capsule'),
           controlSize('large'),
           tint(ink),
+          a11yLabel(accessibilityLabel ?? label),
           accessibilityHint(hint),
         ]}
       >

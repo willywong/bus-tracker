@@ -23,7 +23,6 @@ import {
   type SerializedRouteSearchIndex,
   type T816Bundle,
 } from "@bus-tracker/shared";
-import { devStage } from "./devStages";
 
 /**
  * data.gov.my GTFS feeds, fetched straight from the device — no BusBuddy
@@ -254,10 +253,8 @@ async function fetchZip(category: BusCategory, opts: { spare?: boolean } = {}): 
   let retryAfter: string | null = null;
   for (const url of urls) {
     const res = await fetchStatic(url, opts);
-    devStage(`zip ${category} response ${res.status}`);
     if (res.ok) {
       const bytes = new Uint8Array(await res.arrayBuffer());
-      devStage(`zip ${category} body ${Math.round(bytes.length / 1024)} KB`);
       return bytes;
     }
     lastStatus = res.status;
@@ -308,17 +305,11 @@ function enqueueBuild<T>(build: () => Promise<T>): Promise<T> {
 /** Downloads the feed, builds its index from the zip, keeps and saves it. */
 async function buildIndex(category: BusCategory): Promise<RouteSearchIndex> {
   const bytes = await getZip(category);
-  devStage(`search index ${category} zip ready`);
   const index = await enqueueBuild(() => buildRouteSearchIndexFromZip(bytes, category));
-  devStage(`search index ${category} built`);
   const fetchedAt = Date.now();
   indexes.set(category, { fetchedAt, value: index });
   const serialized = serializeRouteSearchIndex(index);
-  devStage(`search index ${category} serialized`);
-  void indexStore
-    ?.save(category, fetchedAt, serialized)
-    .then(() => devStage(`search index ${category} saved`))
-    .catch(() => {});
+  void indexStore?.save(category, fetchedAt, serialized).catch(() => {});
   return index;
 }
 
@@ -429,7 +420,6 @@ export async function getRouteBundle(
   let firstError: unknown = null;
   for (const category of order) {
     let bytes: Uint8Array;
-    devStage(`bundle ${key} from ${category}`);
     try {
       bytes = await abortable(getZip(category), signal);
     } catch (err) {
@@ -444,10 +434,8 @@ export async function getRouteBundle(
       untilAborted(parseGtfsZipSteps(bytes, { keepRoute: (r) => matchesCode(r, key, category) }), signal),
       BUNDLE_SLICE_MS,
     );
-    devStage(`bundle ${key} parsed`);
     const parsed = namespaceParsedGtfs(raw, category);
     const bundle = filterToRoutes(parsed, [key], Date.now, { category });
-    devStage(`bundle ${key} cut (${bundle.routes.length} routes)`);
     if (bundle.routes.length === 0) continue;
     // Traffic signals were collected for feeder routes only.
     const routeCode = bundle.routes[0].code;
@@ -482,10 +470,8 @@ async function downloadFeed(feed: FeedId, spare: boolean, signal?: AbortSignal):
   // The bus feeds share search's download (and its in-memory copy).
   if (category) return { feed, bytes: await abortable(getZip(category, { spare }), signal), etag: null };
   const res = await fetchStatic(FEED_INFO[feed].staticUrl, { spare, signal });
-  devStage(`zip ${feed} response ${res.status}`);
   if (!res.ok) throw new StaticHttpError(res.status, res.headers.get("retry-after"));
   const bytes = new Uint8Array(await res.arrayBuffer());
-  devStage(`zip ${feed} body ${Math.round(bytes.length / 1024)} KB`);
   return { feed, bytes, etag: res.headers.get("etag") };
 }
 
@@ -508,7 +494,6 @@ export async function downloadTransitFeeds(
   let lastRequestAt: number | null = null;
   /** Downloads `feed`, first waiting out the spacing if it will send a request. */
   const attempt = async (feed: FeedId, spare: boolean) => {
-    devStage(`download ${feed}`);
     if (!feedNeedsRequest(feed)) return downloadFeed(feed, spare, signal);
     const wait = lastRequestAt === null ? 0 : lastRequestAt + TRANSIT_FEED_SPACING_MS - now();
     if (wait > 0) await abortable(sleep(wait), signal);

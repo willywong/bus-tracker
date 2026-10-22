@@ -29,7 +29,6 @@ import {
   touchFeed,
   type StoredFeed,
 } from "@/db/networkStore";
-import { devStage } from "./devStages";
 import { refreshRailShapes } from "./railShapes";
 import type { downloadTransitFeeds } from "./gtfsFeed";
 
@@ -161,7 +160,6 @@ export async function refreshTransitNetwork(deps: NetworkDeps): Promise<RefreshR
   const startedAt = now();
   const dates = serviceDatesFor(startedAt);
   const stored = await loadFeeds(db);
-  devStage("stored feeds loaded");
   // Feeds read in this run, kept for the compile.
   const read = new Map<FeedId, NormalisedFeed>();
   const failedFeeds: FeedId[] = [];
@@ -177,14 +175,12 @@ export async function refreshTransitNetwork(deps: NetworkDeps): Promise<RefreshR
   if (due.length > 0) {
     log(`downloading ${due.join(", ")}`);
     const { ok, failed } = await deps.download(due, { now });
-    devStage("downloads done");
     failed.forEach(fail);
     offline = ok.length === 0;
     for (const d of ok) {
       // One timing for hashing and reading: both run in slices.
       const timing = sliceTiming();
       const hash = d.etag ?? (await deps.runSteps(timed(fnv1a32HexSteps(d.bytes), timing), NETWORK_SLICE_MS));
-      devStage(`${d.feed} hashed`);
       const prev = stored[d.feed];
       const fetchedAt = now();
       const size = `${Math.round(d.bytes.byteLength / 1024)} KB`;
@@ -196,7 +192,6 @@ export async function refreshTransitNetwork(deps: NetworkDeps): Promise<RefreshR
       }
       try {
         const data = await deps.runSteps(timed(readFeedSteps(d.bytes, d.feed, { shapes: d.feed === "rail" }), timing), NETWORK_SLICE_MS);
-        devStage(`${d.feed} read`);
         const feed: StoredFeed = {
           feed: d.feed,
           hash,
@@ -206,7 +201,6 @@ export async function refreshTransitNetwork(deps: NetworkDeps): Promise<RefreshR
           zip: d.bytes,
         };
         await saveFeed(db, feed);
-        devStage(`${d.feed} saved`);
         stored[d.feed] = feed;
         read.set(d.feed, data);
         log(
@@ -267,11 +261,8 @@ export async function refreshTransitNetwork(deps: NetworkDeps): Promise<RefreshR
         timed(compileNetwork(feeds, date, { builtAt: now(), yieldEvery: COMPILE_YIELD_EVERY }), timing),
         NETWORK_SLICE_MS,
       );
-      devStage(`${date} compiled`);
       const bytes = await deps.runSteps(timed(encodeNetworkSteps(net), timing), NETWORK_SLICE_MS);
-      devStage(`${date} encoded`);
       await saveBlob(db, date, NETWORK_FORMAT_VERSION, net.meta.builtAt, bytes);
-      devStage(`${date} saved`);
       rebuilt.push(date);
       log(
         `${date}: built (${reason}) in ${timingSummary(timing)}, ` +

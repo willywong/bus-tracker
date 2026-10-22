@@ -13,6 +13,10 @@ export type When = { kind: 'now' } | { kind: 'depart'; at: number };
 
 /** A "Leave now" result older than this is planned again when the sheet reopens. */
 export const NOW_RESULTS_MAX_AGE_MS = 2 * 60_000;
+/** While the sheet is up, "Leave now" plans again once its first row left this long ago… */
+export const NOW_REPLAN_PAST_MS = 30_000;
+/** …and at most this often (counted from the last plan). */
+export const NOW_REPLAN_MIN_GAP_MS = 60_000;
 /** How long a re-timed row says "Updated · was 9:12". */
 export const UPDATED_FLASH_MS = 4_000;
 /** The loader shows only when `plan()` runs longer than this (spec §7.7). */
@@ -74,4 +78,23 @@ export function isLiveSkipped(needed: readonly Pick<PlannerFeedRoutes, 'category
 /** A "Leave now" result is stale on reopen once it's this old. */
 export function isStale(when: When, plannedAt: number | null, now: number): boolean {
   return when.kind === 'now' && plannedAt != null && now - plannedAt > NOW_RESULTS_MAX_AGE_MS;
+}
+
+/**
+ * True when "Leave now" results should be planned again while the sheet is
+ * up: the earliest row's leave time is more than {@link NOW_REPLAN_PAST_MS}
+ * past, and the last plan is at least {@link NOW_REPLAN_MIN_GAP_MS} old.
+ * Walk-only rows leave whenever, so they don't count. The engine asks on
+ * its own clock tick, never from a retime.
+ */
+export function replanDue(
+  when: When,
+  shown: readonly Pick<Itinerary, 'departAt' | 'rides'>[],
+  plannedAt: number | null,
+  now: number,
+): boolean {
+  if (when.kind !== 'now' || plannedAt == null || now - plannedAt < NOW_REPLAN_MIN_GAP_MS) return false;
+  let earliest = Number.POSITIVE_INFINITY;
+  for (const it of shown) if (it.rides > 0 && it.departAt < earliest) earliest = it.departAt;
+  return now - earliest > NOW_REPLAN_PAST_MS;
 }

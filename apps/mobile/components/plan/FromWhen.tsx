@@ -132,7 +132,7 @@ function WhenRow({ when, onWhen }: { when: When; onWhen: (w: When) => void }) {
               modifiers={[
                 padding({ horizontal: 14, vertical: 8 }),
                 glassEffect({ glass: { variant: 'regular', interactive: true }, shape: 'capsule' }),
-                accessibilityLabel(`When, ${label}`),
+                accessibilityLabel(label),
               ]}
             >
               <Image systemName="clock" size={14} />

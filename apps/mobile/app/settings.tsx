@@ -1,5 +1,4 @@
 import {
-  Button,
   Form,
   Host,
   HStack,
@@ -181,14 +180,6 @@ export default function SettingsScreen() {
                 {version}
               </Text>
             </LabeledContent>
-            {/* Temporary (plan 12/00): network build timing harness. */}
-            {(__DEV__ || process.env.EXPO_PUBLIC_DEV_TOOLS === '1') && (
-              <Button label="Network build timing" onPress={() => router.push('/dev-network')} />
-            )}
-            {/* Temporary (plan 14/00): planner timing harness. */}
-            {(__DEV__ || process.env.EXPO_PUBLIC_DEV_TOOLS === '1') && (
-              <Button label="Planner timing" onPress={() => router.push('/dev-planner')} />
-            )}
           </Section>
         </Form>
       </Host>

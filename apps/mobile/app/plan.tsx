@@ -1,6 +1,6 @@
 import { ContentUnavailableView, Host } from '@expo/ui/swift-ui';
 import * as Location from 'expo-location';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useNavigation, useRouter } from 'expo-router';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import type { SearchBarCommands } from 'react-native-screens';
@@ -32,6 +32,14 @@ import { haptics } from '@/utils/haptics';
 /** What the search bar is choosing; null shows the results state. */
 type Editing = 'to' | 'from' | null;
 
+type TransitionListener = (
+  event: 'transitionEnd',
+  cb: (e: { data: { closing: boolean } }) => void,
+) => () => void;
+
+/** Focus anyway if the sheet's `transitionEnd` hasn't come by then. */
+const FOCUS_FALLBACK_MS = 700;
+
 const sameSpot = (a: Place, b: Place) =>
   (a.ref != null && a.ref === b.ref) || (a.lat.toFixed(4) === b.lat.toFixed(4) && a.lng.toFixed(4) === b.lng.toFixed(4));
 
@@ -53,6 +61,7 @@ const journeyEnd = (p: Place): Place => ({
  */
 export default function PlanScreen() {
   const router = useRouter();
+  const navigation = useNavigation();
   const planner = usePlanner();
   const { setPresented } = planner;
   const settings = useSettings();
@@ -98,7 +107,8 @@ export default function PlanScreen() {
     [editing, from, gps],
   );
 
-  // Built once per network blob and cached; ~6.5k stops, < 30 ms.
+  // Built once per network blob and cached; ~6.5k stops, < 30 ms. Usually
+  // already warm: `_layout`'s LocalIndexWarmer builds it in idle time.
   const ix = useMemo(() => (network ? localIndexFor(network) : null), [network]);
   const searching = editing != null;
   const localHits = useMemo(
@@ -106,6 +116,38 @@ export default function PlanScreen() {
     [ix, query, near, searching],
   );
   const places = usePlaceSearch(searching ? query : '', near);
+
+  // Opened without a destination: the keyboard comes up for it. The bar's
+  // `autoFocus` is Android-only in react-native-screens, so on iOS it's
+  // focused once the sheet has presented (focus mid-presentation is lost).
+  // With a destination (a shortcut) the sheet goes straight to the results.
+  useEffect(() => {
+    if (toRef.current != null) return;
+    let done = false;
+    let tries = 0;
+    let frame = 0;
+    // Runs on the fallback and again on `transitionEnd`: a focus lost to a
+    // slow presentation is retried, and a second one is a no-op.
+    const focus = () => {
+      // Already picked something (a saved row) or tapped From: leave it.
+      if (done || editingRef.current !== 'to' || toRef.current != null) return;
+      if (searchRef.current) searchRef.current.focus();
+      else if (tries++ < 30) frame = requestAnimationFrame(focus);
+    };
+    const addListener = (navigation as unknown as { addListener: TransitionListener }).addListener;
+    const unsubscribe = addListener.call(navigation, 'transitionEnd', (e) => {
+      if (!e.data.closing) focus();
+    });
+    const timer = setTimeout(focus, FOCUS_FALLBACK_MS);
+    return () => {
+      done = true;
+      unsubscribe();
+      clearTimeout(timer);
+      cancelAnimationFrame(frame);
+    };
+    // Mount only: the first presentation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // With a destination and nothing being edited, the bar shows its name.
   useEffect(() => {
@@ -272,6 +314,7 @@ export default function PlanScreen() {
         ref={searchRef}
         placeholder={editing === 'from' ? 'Search for a starting point' : 'Search places, stations, stops'}
         placement="stacked"
+        // Android only; iOS focuses after presenting (above).
         autoFocus={planner.to == null}
         hideWhenScrolling={false}
         autoCapitalize="none"
