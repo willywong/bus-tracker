@@ -255,6 +255,14 @@ export default function PlanScreen() {
     searchRef.current?.focus();
   };
 
+  // No location for My location: the search bar picks the start (15/04).
+  const onChooseStart = () => {
+    setEditing('from');
+    setQuery('');
+    searchRef.current?.setText('');
+    searchRef.current?.focus();
+  };
+
   const to = planner.to;
   const showResults = to != null && editing == null;
 
@@ -295,7 +303,11 @@ export default function PlanScreen() {
           onWhen={planner.setWhen}
         />
         {showResults ? (
-          <PlanResults to={to} subtitle={destinationDetail(to, ix, recents, settings.savedPlaces)} />
+          <PlanResults
+            to={to}
+            subtitle={destinationDetail(to, ix, recents, settings.savedPlaces)}
+            onChooseStart={onChooseStart}
+          />
         ) : (
           <SearchBody view={view} onPick={(t) => void pick(t)} />
         )}

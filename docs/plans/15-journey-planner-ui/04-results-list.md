@@ -190,3 +190,38 @@
 - `realtimeStore.setPlannerRoutes` exists. 06 keeps the chosen itinerary's bus routes subscribed during Go.
 - No walk-speed setting exists. Every query uses 80 m/min (`WALKING_METERS_PER_MINUTE`).
 - `RealtimeSnapshot.plannerSkipped` tells any screen when live re-timing isn't possible.
+
+## Implementation notes
+- **Files.** Pure: `components/plan/results.ts` (row model), `services/planner/runPlan.ts` (sliced, cancellable driver), `services/planner/session.ts` (query key, network choice, updated ids, budget check). Views: `components/plan/{ResultRow,LegChips,JourneyBar,RouteLoader,PlaceBanner}.tsx`, `components/plan/PlanResults.tsx` (header kept; notes, loader, rows, footer, empty states). Hook: `hooks/usePlannerEngine.ts`, called once in `PlannerProvider`. Edited: `state/PlannerContext.tsx` (+`run`, `openId`, `setOpenId`), `app/plan.tsx` (`onChooseStart`), `services/transitNetwork.ts` (+`loadStoredNetwork(deps, date)`; `loadTodayNetwork` delegates to it). Tests: `components/plan/__tests__/results.test.ts` (12), `services/planner/__tests__/runPlan.test.ts` (4), `services/planner/__tests__/session.test.ts` (5), and one more in `services/__tests__/realtimePlan.test.ts`.
+- **Steps 2–3 were done by 14/05, with a different API.** There is no `setPlannerRoutes`, `plannerOnly` or 4th `buildRealtimePlan` argument of `{ code, category }`. The engine calls `realtimeStore.setExtraRoutes('planner', plannerRealtimeRoutes(base, net, now))`, and `[]` on dismiss. A planner-only feed is the one with `intervalMs === PLANNER_INTERVAL_MS`. The `LiveSnapshot` is `{ byCategory: snapshot.byCategory }` straight from the store, not grouped from `positions`, because `positions` only holds followed routes. 14/05's three planner tests already cover "joins a followed feed", "skipped with two followed" and the 60 s planner-only feed, including the `U7700` → `770` alias. This task adds "one followed category leaves room for two planner categories".
+- **The model is `results.ts`, not `model.ts`.** 03 already uses `components/plan/model.ts` for the search state. Deviations from step 4:
+  - every function that needs route names takes a `RouteInfo` (`routeInfoOf(net)`);
+  - `leaveLabel` takes the clock;
+  - `Chip.rail` also carries `name` for `LineBadge`'s label, and KTM chips read "KTM";
+  - walks under 30 s (snaps to the stop, often 3 m) get no chip, are not spoken, and fold into the next bar segment;
+  - transfer waits belong to the ride they wait for, so the segments still add up to `arriveAt − departAt`;
+  - `statusText` says "Walk only · 1.2 km" for a walk-only itinerary and "no walking" under 10 m.
+- **Spoken label.** It follows README criterion 7, so it includes ", live" / ", scheduled" (the task's example omits it): "Leave in 4 minutes, live. 56 minutes. Walk 5 minutes, bus T816, Kajang Line, Kelana Jaya Line, walk 3 minutes. Arrive 9:30. Fastest." From an hour out it says "Leave at 10:42". Any warning note is added at the end. Rail names drop the `LRT|MRT|BRT|KTM` prefix, the same rule as `lineDisplayName`.
+- **`usePlanner().run: PlannerRun`.** It has the fields from step 6, plus:
+  - `network`: the `TransitNetwork` the itineraries were planned on;
+  - `query`: the `PlanQuery`, with `from` resolved to coordinates for My location;
+  - `key`: the `queryKey` of the results.
+
+  `PlanResults` shows rows and empty states only when `run.key === queryKey(from, to, when)`, so a previous query's rows never show for a frame. `updatedIds` is a `ReadonlySet`.
+- **Engine behaviour.**
+  - The key is `from|to|now` or the departure minute. "Leave now" results older than 2 min are planned again when the sheet reopens; otherwise the same key keeps them, so reopening is instant.
+  - A new key cancels the run in flight: a token, the loader timer, and `runPlan.cancel()`, which calls `gen.return()`.
+  - `retime` never runs while `plan()` is in flight. Each retime starts from `plan()`'s own output (`base`), never from an earlier retime. At most one retime runs per store snapshot with a new `lastUpdated` or `plannerSkipped`. The finished plan retimes once with the current snapshot.
+  - Each retime also re-registers the routes, because the 60-min horizon moves with the clock. While a planner sheet is up, the store is `start()`ed, ref-counted, so polling runs even with nothing followed.
+- **Network day.** `useTransitNetwork()` holds only today's network, not tomorrow's. `networkFor(departAt, loadedDate, now)` decides which day to plan on. A "Depart at…" in tomorrow's service day (after 04:00 tomorrow) decodes tomorrow's stored blob with `loadStoredNetwork` and keeps it for reuse. Anything past tomorrow's service day gives `'no-network'`.
+- **Updated flash.** A row is "updated" when it has `previousArriveAt` and arrives ≥ 1 min from what it showed before. Rows are matched by position, because a tail re-plan can change an id. The line reads "Updated · was <planned arrival>" for 4 s.
+- **Rows.** Rows are keyed `generation:index`, so a retime updates rows in place and never re-staggers. The stagger plays once per generation; a module-level `enteredGeneration` stops reopening from replaying it. Reduce Motion uses `FadeIn(200)`. The status line crossfades with `FadeIn` / `FadeOut` (200 ms, kept under Reduce Motion). The leave time and the arrival clock are SwiftUI `Text` with `numericText`. A 15 s ticker refreshes "Leave in N mins".
+- **Loader and banner.** The loader is a Reanimated CSS keyframe animation, so it runs on the UI thread while JS steps the engine; under Reduce Motion it shows three static beads. `PlaceBanner` renders 13/03's `StationPhoto`, which already has the same Look Around → Street View → snapshot chain at 16:9. Rendering it avoids a second copy, and `components/rail/**` (13/04's scope) was not edited.
+- **No-location.** `ContentUnavailableView` has no action slot. "Choose a starting point" is an ink capsule under it, and it puts the search bar into From mode.
+- **For 05.**
+  - `planner.openId` is set before `router.replace('/itinerary', { id })`. Find the itinerary with `run.itineraries.find(i => i.id === openId)`.
+  - The id can change when a retime re-plans a broken transfer's tail. 05 should fall back to the same index, or keep `openId` in step with `run`.
+  - `run.network` is the network to read shapes and stops from.
+  - `ResultRow` takes `{ it, now, routes: routeInfoOf(run.network), updated, onPress }` and works as the peek.
+- **Not done here (08 or later).** Results of a "Leave now" query that stays open are not re-planned as their departures pass. Rows then read "Leave now" until the sheet is reopened 2 min later.
+- **Build impact:** JS-only (Metro reload). No native module or config changed.

@@ -1,12 +1,14 @@
 import type { Place } from '@bus-tracker/shared';
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 
+import { usePlannerEngine, type PlannerRun } from '@/hooks/usePlannerEngine';
 import type { SavedPlace } from '@/hooks/useSettings';
 
 /** A journey end (spec §4.4), the engine's own type. */
 export type { Place };
 
 export type When = { kind: 'now' } | { kind: 'depart'; at: number };
+export type { PlannerRun };
 
 export interface PlannerContextValue {
   from: Place;
@@ -24,6 +26,11 @@ export interface PlannerContextValue {
   pendingOpen: { to: Place | null } | null;
   requestOpen(to?: Place | null): void;
   clearPending(): void;
+  /** The results (15/04): itineraries for this query, re-timed live. */
+  run: PlannerRun;
+  /** The itinerary opened from the results (`Itinerary.id`), for the `itinerary` sheet (15/05). */
+  openId: string | null;
+  setOpenId(id: string | null): void;
 }
 
 /** Where you are, resolved from GPS when a plan runs. */
@@ -47,6 +54,9 @@ export function PlannerProvider({ children }: { children: ReactNode }) {
   // underneath must keep the trip pinned when the other closes.
   const [presentedCount, setPresentedCount] = useState(0);
   const [pendingOpen, setPendingOpen] = useState<{ to: Place | null } | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const presented = presentedCount > 0;
+  const run = usePlannerEngine({ presented, from, to, when });
 
   const swap = useCallback(() => {
     if (!to) return;
@@ -75,13 +85,16 @@ export function PlannerProvider({ children }: { children: ReactNode }) {
       setTo,
       setWhen,
       swap,
-      presented: presentedCount > 0,
+      presented,
       setPresented,
       pendingOpen,
       requestOpen,
       clearPending,
+      run,
+      openId,
+      setOpenId,
     }),
-    [from, to, when, swap, presentedCount, setPresented, pendingOpen, requestOpen, clearPending],
+    [from, to, when, swap, presented, setPresented, pendingOpen, requestOpen, clearPending, run, openId],
   );
 
   return <PlannerContext.Provider value={value}>{children}</PlannerContext.Provider>;

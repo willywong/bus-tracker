@@ -297,3 +297,20 @@ test("planner-only category goes to plannerSkipped when two followed categories 
   assert.ok(requestsPerMinute(penangAndKl) <= 4);
   assert.ok(penangAndKl.feeds[1].routes.has("770"), "the followed KL feed still carries the planner's route");
 });
+
+test("one followed category leaves room for two planner categories", () => {
+  const plan = buildRealtimePlan(
+    ["401 Penang"],
+    [{ code: "401 Penang", route_id: "pg:30000019", category: "rapid-bus-penang" }],
+    new Map(),
+    [FEEDER_EXTRA, KL_EXTRA],
+  );
+  // 2 (followed, 30 s) + 1 + 1 (planner-only, 60 s) = the whole budget of 4.
+  assert.deepEqual(plan.feeds.map((f) => [f.category, f.intervalMs]), [
+    ["rapid-bus-penang", 30_000],
+    ["rapid-bus-mrtfeeder", 60_000],
+    ["rapid-bus-kl", 60_000],
+  ]);
+  assert.deepEqual(plan.plannerSkipped, []);
+  assert.equal(requestsPerMinute(plan), 4);
+});

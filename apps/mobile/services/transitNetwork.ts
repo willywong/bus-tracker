@@ -88,8 +88,18 @@ export function serviceDatesFor(nowMs: number): [today: string, tomorrow: string
  * Decoded in slices: without `TextDecoder`, Hermes decodes the strings in JS.
  */
 export async function loadTodayNetwork(deps: NetworkDeps): Promise<TransitNetwork | null> {
-  const [today] = serviceDatesFor(deps.now());
-  const blob = await loadBlob(deps.db, today);
+  return loadStoredNetwork(deps, serviceDatesFor(deps.now())[0]);
+}
+
+/**
+ * Service date `date`'s stored network ("YYYYMMDD"), or null. The planner
+ * reads tomorrow's for a "Depart at…" past 04:00 tomorrow (15/04).
+ */
+export async function loadStoredNetwork(
+  deps: Pick<NetworkDeps, "db" | "runSteps">,
+  date: string,
+): Promise<TransitNetwork | null> {
+  const blob = await loadBlob(deps.db, date);
   if (!blob || blob.version !== NETWORK_FORMAT_VERSION) return null;
   try {
     return await deps.runSteps(decodeNetworkSteps(blob.data), NETWORK_SLICE_MS);
