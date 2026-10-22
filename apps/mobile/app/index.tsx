@@ -103,6 +103,16 @@ export default function MapScreen() {
   const itOpen = openIt != null;
   const itOpenRef = useRef(itOpen);
   itOpenRef.current = itOpen;
+  // A journey in Go (15/06) keeps its legs on the map, finished (no
+  // draw-on), under the trip sheet. An itinerary opened over it wins.
+  const goIt = ride.itinerary;
+  const shownIt = openIt ?? goIt;
+  const itShown = shownIt != null;
+  const goOnly = !itOpen && goIt != null;
+  const itShownRef = useRef(itShown);
+  itShownRef.current = itShown;
+  const goOnlyRef = useRef(goOnly);
+  goOnlyRef.current = goOnly;
   const reduceMotion = useReducedMotion();
 
   const route = trip.route;
@@ -185,17 +195,17 @@ export default function MapScreen() {
   // follows its road shape; walks follow Apple's path once it's loaded. The
   // legs only move with the itinerary's id (its stops), the network and
   // those sources: a retime's new object with the same id draws the same.
-  const itNet = planner.run.network;
-  const itWalks = openIt ? planner.walkPaths[openIt.id] : undefined;
+  const itNet = openIt ? planner.run.network : ride.journeyNetwork;
+  const itWalks = openIt ? planner.walkPaths[openIt.id] : goIt ? ride.journeyWalkPaths : undefined;
   const tripCode = route?.routeCode;
   const tripLine = route?.polyline;
   const busShapes = useMemo(
     () => (tripCode && tripLine && tripLine.length >= 2 ? new Map([[tripCode, tripLine]]) : undefined),
     [tripCode, tripLine],
   );
-  const openItRef = useRef(openIt);
-  openItRef.current = openIt;
-  const itId = openIt?.id ?? null;
+  const openItRef = useRef(shownIt);
+  openItRef.current = shownIt;
+  const itId = shownIt?.id ?? null;
   const itLegs = useMemo<DrawLeg[]>(() => {
     const it = openItRef.current;
     if (!it || !itNet) return [];
@@ -226,8 +236,8 @@ export default function MapScreen() {
   const markers = useGlidingMarkers(positions, trip.routeCode);
   // My buses off: stop every glide first and unmount the markers on the next
   // render. Unmounting one mid-animation trips Fabric (see useGlidingMarkers).
-  // An open itinerary hides them the same way.
-  const busesOn = layers.myBuses && !itOpen;
+  // An open itinerary (or a journey in Go) hides them the same way.
+  const busesOn = layers.myBuses && !itShown;
   const [busMarkersShown, setBusMarkersShown] = useState(busesOn);
   useEffect(() => {
     if (!busesOn) for (const m of markers) stopAnimation(m.region);
@@ -401,7 +411,7 @@ export default function MapScreen() {
   const framedKey = useRef<string | null>(null);
   useEffect(() => {
     // An open itinerary owns the camera; closing it re-frames the trip.
-    if (!route || itOpenRef.current) return;
+    if (!route || itShownRef.current) return;
     const key = `${route.routeCode}|${route.stopId}`;
     if (framedKey.current === key) return;
     const t = setTimeout(() => {
@@ -416,7 +426,8 @@ export default function MapScreen() {
   // user has taken over the camera.
   useEffect(() => {
     if (userPanned || itOpenRef.current) return;
-    frameRef.current(true);
+    if (goOnlyRef.current) frameGoRef.current(true);
+    else frameRef.current(true);
   }, [primaryVehicleId, trip.detent, userPanned]);
 
   // A new selection (or going back) always re-frames, even after a pan.
@@ -424,7 +435,7 @@ export default function MapScreen() {
   useEffect(() => {
     if (lastSelection.current === selectionKey) return;
     lastSelection.current = selectionKey;
-    if (itOpenRef.current) return;
+    if (itShownRef.current) return;
     setUserPanned(false);
     frameRef.current(true);
   }, [selectionKey]);
@@ -440,12 +451,13 @@ export default function MapScreen() {
     lastFocus.current = focusKey;
     const hadPoint = lastHadPoint.current;
     lastHadPoint.current = focusPoint != null;
-    if (itOpenRef.current && !focusPoint) {
+    if (itShownRef.current && !focusPoint) {
       // The itinerary's own claim is framed by its opening; a station
-      // closing over it goes back to the legs.
+      // closing over it goes back to the legs (in Go, the current leg).
       if (!hadPoint) return;
       setUserPanned(false);
-      frameItRef.current(true);
+      if (goOnlyRef.current) frameGoRef.current(true);
+      else frameItRef.current(true);
       return;
     }
     setUserPanned(false);
@@ -455,7 +467,8 @@ export default function MapScreen() {
   }, [focusKey]);
 
   // --- Itinerary camera (plan 15/05) ----------------------------------------
-  // Fits the legs (or one leg) in the map left above the itinerary sheet.
+  // Fits the legs (or one leg) in the map left above the itinerary sheet
+  // (in Go, above the trip sheet).
   const frameItinerary = useCallback(
     (coords: readonly Coord[], animated: boolean) => {
       const map = mapRef.current;
@@ -469,11 +482,11 @@ export default function MapScreen() {
         ];
       }
       map.fitToCoordinates(target, {
-        edgePadding: { top: insets.top + 80, right: 56, bottom: itSheetHeight + 32, left: 56 },
+        edgePadding: { top: insets.top + 80, right: 56, bottom: coveredHeight + 32, left: 56 },
         animated,
       });
     },
-    [insets.top, itSheetHeight],
+    [insets.top, coveredHeight],
   );
   const frameItRef = useRef((animated: boolean) => frameItinerary(itCoords, animated));
   frameItRef.current = (animated: boolean) => frameItinerary(itCoords, animated);
@@ -481,6 +494,16 @@ export default function MapScreen() {
   frameLegRef.current = frameItinerary;
   const userPannedRef = useRef(userPanned);
   userPannedRef.current = userPanned;
+  // Go: the current leg and where you are.
+  const goLeg = goOnly ? (ride.journey?.legIndex ?? 0) : null;
+  const here = ride.here;
+  const frameGoRef = useRef<(animated: boolean) => void>(() => {});
+  frameGoRef.current = (animated: boolean) => {
+    const leg = goLeg != null ? itLegs[goLeg] : undefined;
+    if (!leg) return;
+    const coords = here ? [...leg.coords, { latitude: here.lat, longitude: here.lng }] : leg.coords;
+    frameItinerary(coords, animated);
+  };
 
   // 1. Opening fits all the legs; 2. the draw starts once the camera first
   // settles, or after 400 ms. Closing goes back to the trip.
@@ -502,9 +525,28 @@ export default function MapScreen() {
       setItDrawn(false);
       setDrawStart(false);
       setUserPanned(false);
-      frameRef.current(true);
+      // Closed by Go: the journey's current leg; else the trip.
+      if (goOnlyRef.current) frameGoRef.current(true);
+      else frameRef.current(true);
     };
   }, [itOpen]);
+
+  // Go: each new leg (and starting) frames that leg with you on it; ending
+  // goes back to the trip.
+  useEffect(() => {
+    if (goLeg == null) return;
+    setUserPanned(false);
+    frameGoRef.current(true);
+  }, [goLeg]);
+  const going = goIt != null;
+  useEffect(() => {
+    if (!going) return;
+    return () => {
+      if (itOpenRef.current) return;
+      setUserPanned(false);
+      frameRef.current(true);
+    };
+  }, [going]);
 
   // 3. The sheet changing detent re-fits, unless the map was moved by hand.
   useEffect(() => {
@@ -516,7 +558,7 @@ export default function MapScreen() {
   const focusNonce = planner.focusLeg?.nonce ?? null;
   const focusIndex = planner.focusLeg?.index ?? null;
   useEffect(() => {
-    if (focusNonce == null || focusIndex == null || !itOpenRef.current) return;
+    if (focusNonce == null || focusIndex == null || !itShownRef.current) return;
     const leg = legsRef.current[focusIndex];
     if (!leg) return;
     setUserPanned(false);
@@ -529,6 +571,7 @@ export default function MapScreen() {
     haptics.light();
     setUserPanned(false);
     if (itOpenRef.current) frameItRef.current(true);
+    else if (goOnlyRef.current) frameGoRef.current(true);
     else frameRef.current(true);
   }, []);
 
@@ -616,7 +659,7 @@ export default function MapScreen() {
             onStationPress={openStation}
           />
         ) : null}
-        {route && layers.myBuses && !itOpen ? (
+        {route && layers.myBuses && !itShown ? (
           <RouteLayer
             key={`${route.routeCode}|${route.stopId}|${railKey}`}
             polyline={polyline}
@@ -634,7 +677,7 @@ export default function MapScreen() {
             onUserStopPress={clearSelection}
           />
         ) : null}
-        {route && layers.myBuses && !itOpen && ghost.coord && positions.length === 0 ? (
+        {route && layers.myBuses && !itShown && ghost.coord && positions.length === 0 ? (
           <GhostBusMarker
             coordinate={{ latitude: ghost.coord.lat, longitude: ghost.coord.lng }}
             color={ink}
@@ -668,7 +711,7 @@ export default function MapScreen() {
           );
         })}
         {/* Last child: the legs are re-added on top whenever rail is (see railKey). */}
-        {openIt && itLegs.length > 0 ? (
+        {shownIt && itLegs.length > 0 ? (
           <ItineraryLayer
             key={`${drawKey}|${railKey}`}
             legs={itLegs}
@@ -677,13 +720,13 @@ export default function MapScreen() {
             paper={mapPaper}
             casing={casing}
             reduceMotion={reduceMotion}
-            animate={!itDrawn}
-            start={drawStart}
+            animate={!goOnly && !itDrawn}
+            start={goOnly || drawStart}
             onDrawn={onItDrawn}
           />
         ) : null}
       </MapView>
-      {route && layers.myBuses && !itOpen ? (
+      {route && layers.myBuses && !itShown ? (
         <RouteShimmer
           mapRef={mapRef}
           path={aheadPath}

@@ -3,20 +3,23 @@ import { font, foregroundStyle, frame, lineLimit, tint } from '@expo/ui/swift-ui
 import { SymbolView } from 'expo-symbols';
 import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, useColorScheme, View, type StyleProp, type ViewStyle } from 'react-native';
+import Animated from 'react-native-reanimated';
 
 import { LineBadge } from '@/components/rail/LineBadge';
 import { formatClockHHMM } from '@/components/tracker/logic';
 import { SourceMark } from '@/components/trip/Hero';
 import { RouteBadge } from '@/components/trip/SheetHeader';
-import { color, hex, pick, space, type } from '@/theme/design';
+import { color, CSS_EASE_OUT, hex, motion, pick, space, type } from '@/theme/design';
 
 import {
   railBetween,
   rideSummary,
+  rowProgress,
   timelineLabels,
   type RailStyle,
   type RideChip,
   type TimeCell,
+  type TimelineProgress,
   type TimelineRow,
 } from './model';
 
@@ -29,6 +32,14 @@ const END_NODE = 16;
 /** Walk rails: 3pt dots every 7pt, as the journey bar. */
 const DOT = 3;
 const DOT_PITCH = 7;
+/** Go: the rail of the legs still ahead sits at 0.35 and crossfades up as the leg comes round. */
+const RAIL_FADE = {
+  transitionProperty: 'opacity',
+  transitionDuration: motion.sheetIn,
+  transitionTimingFunction: CSS_EASE_OUT,
+} as const;
+const RAIL_NOW = { ...RAIL_FADE, opacity: 1 };
+const RAIL_AHEAD = { ...RAIL_FADE, opacity: 0.35 };
 /** Node rows: the node sits on the first line of text (12pt padding + half a 20pt line). */
 const ROW_PAD = 12;
 const NODE_Y = ROW_PAD + 10;
@@ -48,18 +59,30 @@ type RideRow = Extract<TimelineRow, { kind: 'ride' }>;
  * matches the group's height, so the rail beside it stretches as it opens.
  * Tapping a walk or a ride fits the map to that leg; tapping a station
  * opens it. Each row is one VoiceOver element (the disclosure is its own).
+ *
+ * In Go (15/06) it follows the journey: `currentLeg` and its `progress`
+ * fill the nodes you've passed in solid ink and hold the rails still ahead
+ * at 0.35. When the leg changes, the next rail fades up to full over
+ * `motion.sheetIn` (a plain crossfade, so Reduce Motion keeps it).
  */
 export function Timeline({
   rows,
   onLegPress,
   onStationPress,
+  currentLeg = null,
+  progress = null,
 }: {
   rows: readonly TimelineRow[];
   onLegPress: (legIndex: number) => void;
   onStationPress: (stationId: string) => void;
+  /** Go: the leg being followed. */
+  currentLeg?: number | null;
+  /** Go: where on it (`JourneyProgress.phase`). */
+  progress?: TimelineProgress['phase'] | null;
 }) {
   const labels = useMemo(() => timelineLabels(rows, formatClockHHMM), [rows]);
   const [open, setOpen] = useState<Record<number, boolean>>({});
+  const go: TimelineProgress | null = currentLeg != null && progress != null ? { legIndex: currentLeg, phase: progress } : null;
 
   return (
     <View>
@@ -67,6 +90,8 @@ export function Timeline({
         const above = i > 0 ? railBetween(rows[i - 1], row) : null;
         const below = i < rows.length - 1 ? railBetween(row, rows[i + 1]) : null;
         const key = `${row.kind}-${'legIndex' in row ? row.legIndex : row.which}`;
+        const state = go ? rowProgress(row, go) : null;
+        const railStyle = [styles.rail, go ? (state?.ahead ? RAIL_AHEAD : RAIL_NOW) : null];
         switch (row.kind) {
           case 'end':
           case 'board':
@@ -87,16 +112,17 @@ export function Timeline({
                 {({ pressed }) => (
                   <View style={[styles.row, styles.nodeRow, pressed && onPress ? styles.pressed : null]}>
                     <TimeColumn time={row.time} />
-                    <View style={styles.rail}>
+                    <Animated.View style={railStyle}>
                       <Segment style={above} top={0} height={NODE_Y} />
                       <Segment style={below} top={NODE_Y} />
                       <View style={styles.nodeSlot}>
                         <Node
                           kind={end ?? (row.kind === 'end' ? 'origin' : row.node)}
                           color={row.kind === 'end' ? null : row.color}
+                          done={state?.done ?? false}
                         />
                       </View>
-                    </View>
+                    </Animated.View>
                     <View style={styles.content}>
                       <View style={styles.nameLine}>
                         <Text
@@ -128,9 +154,9 @@ export function Timeline({
                 {({ pressed }) => (
                   <View style={[styles.row, styles.walkRow, pressed ? styles.pressed : null]}>
                     <View style={styles.time} />
-                    <View style={styles.rail}>
+                    <Animated.View style={railStyle}>
                       <Segment style={{ kind: 'walk' }} top={0} />
-                    </View>
+                    </Animated.View>
                     <View style={[styles.content, styles.walkContent]}>
                       <SymbolView name="figure.walk" size={14} weight="regular" tintColor={color.secondaryLabel} />
                       <Text style={styles.walkText} numberOfLines={1}>
@@ -145,9 +171,9 @@ export function Timeline({
             return (
               <View key={key} style={[styles.row, styles.rideRow]}>
                 <View style={styles.time} />
-                <View style={styles.rail}>
+                <Animated.View style={railStyle}>
                   <Segment style={above ?? below} top={0} />
-                </View>
+                </Animated.View>
                 <View style={styles.content}>
                   <Pressable
                     onPress={() => onLegPress(row.legIndex)}
@@ -264,11 +290,20 @@ function NodeNote({ time, liveNote }: { time: TimeCell; liveNote: string | null 
   return null;
 }
 
-function Node({ kind, color: line }: { kind: 'origin' | 'destination' | 'stop' | 'station'; color: string | null }) {
+/** A node; `done` (Go: passed or reached) fills it in solid ink. */
+function Node({
+  kind,
+  color: line,
+  done = false,
+}: {
+  kind: 'origin' | 'destination' | 'stop' | 'station';
+  color: string | null;
+  done?: boolean;
+}) {
   switch (kind) {
     case 'origin':
       return (
-        <View style={styles.originNode}>
+        <View style={[styles.originNode, done && styles.nodeDone]}>
           <View style={styles.originDot} />
         </View>
       );
@@ -279,9 +314,9 @@ function Node({ kind, color: line }: { kind: 'origin' | 'destination' | 'stop' |
         </View>
       );
     case 'station':
-      return <View style={[styles.stationNode, { backgroundColor: line ?? color.ink }]} />;
+      return <View style={[styles.stationNode, { backgroundColor: done ? color.ink : (line ?? color.ink) }]} />;
     default:
-      return <View style={styles.stopNode} />;
+      return <View style={[styles.stopNode, done && styles.nodeDone]} />;
   }
 }
 
@@ -363,6 +398,9 @@ const styles = StyleSheet.create({
   rail: {
     width: RAIL_COL,
     alignSelf: 'stretch',
+  },
+  nodeDone: {
+    backgroundColor: color.ink,
   },
   segment: {
     position: 'absolute',

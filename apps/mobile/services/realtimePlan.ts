@@ -150,6 +150,27 @@ export function buildRealtimePlan(
   return { feeds, complete, plannerSkipped };
 }
 
+/**
+ * Several owners' extra routes (the planner's sheet, Go) as one list, one
+ * entry per category in first-seen order: routes unioned, the first alias
+ * for a key kept. Never mutates its input.
+ */
+export function mergeExtraRoutes(lists: readonly (readonly PlannerFeedRoutes[])[]): PlannerFeedRoutes[] {
+  const by = new Map<PlannerFeedRoutes["category"], PlannerFeedRoutes>();
+  for (const list of lists) {
+    for (const x of list) {
+      const e = by.get(x.category);
+      if (!e) {
+        by.set(x.category, { category: x.category, aliases: new Map(x.aliases), routes: [...x.routes] });
+        continue;
+      }
+      for (const [k, v] of x.aliases) if (!e.aliases.has(k)) e.aliases.set(k, v);
+      for (const r of x.routes) if (!e.routes.includes(r)) e.routes.push(r);
+    }
+  }
+  return [...by.values()];
+}
+
 /** Rows written before categories existed are all feeder rows. */
 function storedCategory(row: StoredRoute): BusCategory {
   return isBusCategory(row.category) ? row.category : "rapid-bus-mrtfeeder";

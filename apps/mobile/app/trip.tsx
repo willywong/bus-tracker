@@ -18,6 +18,7 @@ import {
   useColorScheme,
   useWindowDimensions,
   View,
+  type HostInstance,
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
@@ -33,6 +34,9 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { formatClockHHMM } from '@/components/tracker/logic';
+import { routeInfoOf } from '@/components/plan/results';
+import { GoBody, goHeader } from '@/components/ride/GoBody';
+import { destinationName } from '@/components/ride/journey';
 import { rideMinutes } from '@/components/ride/model';
 import { RideBody } from '@/components/ride/RideBody';
 import { Connections } from '@/components/trip/Connections';
@@ -67,17 +71,19 @@ import {
   motion,
   PEEK_TOP,
   pick,
-  SHEET_INITIAL_DETENT,
   sheetDetents,
   space,
   type,
   type DetentIndex,
 } from '@/theme/design';
+import { devNow } from '@/utils/devClock';
 
 /** After the map settles, how long before all detents return (the snap must land first). */
 const COLLAPSE_SETTLE_MS = 300;
 /** Detents come back after this long even if the map never reports settling. */
 const HOLD_PEEK_MAX_MS = 5000;
+/** After the detents return, how long before the sheet has come to rest. */
+const SHEET_SETTLE_MS = 500;
 
 type DetentListener = (
   event: 'sheetDetentChange',
@@ -138,6 +144,7 @@ export default function TripSheet() {
   const { holdPeek, setHoldPeek, setDetent } = trip;
   const pinned = holdPeek || planner.presented;
   const held = useRef(false);
+  const topRow = useRef<HostInstance>(null);
   useEffect(() => {
     const detents = sheetDetents(windowHeight, insets.top);
     if (pinned) {
@@ -157,16 +164,26 @@ export default function TripSheet() {
     }
     if (!held.current) return;
     held.current = false;
-    const t = setTimeout(
-      () =>
-        navigation.setOptions({
-          sheetAllowedDetents: detents,
-          sheetInitialDetentIndex: SHEET_INITIAL_DETENT,
-          sheetLargestUndimmedDetentIndex: 1,
-        }),
-      COLLAPSE_SETTLE_MS,
-    );
-    return () => clearTimeout(t);
+    let settle: ReturnType<typeof setTimeout> | undefined;
+    const t = setTimeout(() => {
+      navigation.setOptions({
+        sheetAllowedDetents: detents,
+        sheetInitialDetentIndex: 0,
+        sheetLargestUndimmedDetentIndex: 1,
+      });
+      // UIKit can return to the detent it had selected before the pin (seen
+      // as glance after Go closes the itinerary) without reporting it, so
+      // read where the sheet came to rest.
+      settle = setTimeout(() => {
+        topRow.current?.measureInWindow((_x, y) => {
+          setDetent(nearestDetent(windowHeight - y, detents, windowHeight - insets.top));
+        });
+      }, SHEET_SETTLE_MS);
+    }, COLLAPSE_SETTLE_MS);
+    return () => {
+      clearTimeout(t);
+      clearTimeout(settle);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pinned, holdPeek]);
 
@@ -183,19 +200,21 @@ export default function TripSheet() {
   const home = settings.savedPlaces.find((p) => p.kind === 'home') ?? null;
   const work = settings.savedPlaces.find((p) => p.kind === 'work') ?? null;
   const whereTo = (
-    <WhereToRow
-      onOpen={() => {
-        // A plain "Where to?" searches afresh, not the last destination.
-        planner.setTo(null);
-        router.push('/plan');
-      }}
-      home={home}
-      work={work}
-      onPlace={(p) => {
-        planner.setTo(toPlace(p));
-        router.push('/plan');
-      }}
-    />
+    <View ref={topRow} collapsable={false}>
+      <WhereToRow
+        onOpen={() => {
+          // A plain "Where to?" searches afresh, not the last destination.
+          planner.setTo(null);
+          router.push('/plan');
+        }}
+        home={home}
+        work={work}
+        onPlace={(p) => {
+          planner.setTo(toPlace(p));
+          router.push('/plan');
+        }}
+      />
+    </View>
   );
 
   const scrollStyle = [styles.scroll, { paddingBottom: insets.bottom + space.xl }];
@@ -215,6 +234,35 @@ export default function TripSheet() {
       params: { tripId: d.tripId, at: String(d.departureEpochMs) },
     });
   const openStation = (station: string) => router.push({ pathname: '/station', params: { station } });
+
+  // Go (15/06): the journey, leg by leg. It doesn't need a tracked route.
+  if (ride.itinerary && ride.journey && ride.journeyNetwork) {
+    const go = goHeader(
+      ride.itinerary,
+      ride.journey,
+      devNow(),
+      routeInfoOf(ride.journeyNetwork),
+      ride.journeyDestination?.name ?? destinationName(ride.itinerary),
+    );
+    return (
+      <SheetScroll key="go" contentContainerStyle={scrollStyle} scheme={scheme}>
+        {whereTo}
+        <SheetHeader
+          routeCode=""
+          badge={go.badge}
+          title={go.title}
+          peek={peek}
+          status={go.status}
+          source={go.source}
+          compact={go.compact}
+          strip={go.strip}
+        />
+        <SheetBody peek={peek}>
+          <GoBody ride={ride} scheme={scheme} />
+        </SheetBody>
+      </SheetScroll>
+    );
+  }
 
   if (model.state === 'empty') {
     return (
@@ -542,6 +590,15 @@ function SheetScroll({
 // Reduce Motion: the same swap as a plain crossfade, no travel.
 const SWAP_FADE_IN = FadeIn.duration(motion.pushIn).delay(motion.pushOverlap);
 const SWAP_FADE_OUT = FadeOut.duration(motion.pushOut);
+
+/** The detent whose height is nearest `shown` points of sheet, given the fractions' full height. */
+function nearestDetent(shown: number, detents: readonly number[], full: number): DetentIndex {
+  let best = 0;
+  detents.forEach((f, i) => {
+    if (Math.abs(f * full - shown) < Math.abs(detents[best] * full - shown)) best = i;
+  });
+  return best as DetentIndex;
+}
 
 function formatKm(meters: number): string {
   return meters < 1000 ? `${Math.round(meters / 10) * 10} m` : `${(meters / 1000).toFixed(1)} km`;

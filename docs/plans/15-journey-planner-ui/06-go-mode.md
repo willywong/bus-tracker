@@ -212,3 +212,60 @@ Single-route ride mode keeps working unchanged.
 - `RideContext` supports `{ kind: 'journey' }`. `journeyActivityProps` and `planJourneyAlerts` are pure and tested. `BusActivityProps` has `kind: 'journey'` plus `legText` / `legIndex` / `legCount` / `approximate`.
 - `RESERVED_NOTIFICATION_SLOTS = 9`. Go regions share the 20-region budget with favourites.
 - The re-plan path is `planner.setFrom/setTo` + `/plan`. 07's Home shortcut uses the same path.
+
+## Implementation notes
+- **Files.**
+  - Pure: `components/ride/journey.ts` (`legSequence`, `advanceJourney`, `offRouteMeters`, `offRouteStep`, `journeyPaths`, `honestTiming`, `retimeFrom`, `retimeJourney`, `keepWalkPaths`, `legText`, `journeyActivityProps`, `goInstruction`, `goCompact`, `arrivalIsApproximate`), `services/arrival/regions.ts`, `services/planner/workspace.ts`. `services/reminders/plan.ts` gains `planJourneyAlerts`, `journeyAlertsMoved`, `GO_ALERT_IDS`, `goLegAlertId`. `services/realtimePlan.ts` gains `mergeExtraRoutes`. `components/itinerary/model.ts` gains `rowProgress`.
+  - Views and hooks: `components/ride/GoBody.tsx` (`GoBody`, `goHeader`, `LegBadge`), `hooks/useJourneyLiveActivity.ts`.
+  - Edited: `state/RideContext.tsx`, `app/trip.tsx`, `app/itinerary.tsx`, `app/index.tsx`, `activities/BusArrivalActivity.tsx`, `hooks/useBusLiveActivity.ts`, `hooks/usePlannerEngine.ts`, `services/realtime.ts`, `services/reminders/notifications.ts`, `services/arrival/geofence.ts`, `components/itinerary/Timeline.tsx`, `components/trip/SheetHeader.tsx` (+ optional `badge`).
+  - Tests: `components/ride/__tests__/journey.test.ts` (the 7 named), `services/reminders/__tests__/plan.test.ts` (+3 named), `services/arrival/__tests__/regions.test.ts` (3), +1 in `components/itinerary/__tests__/model.test.ts` (`rowProgress`) and +1 in `services/__tests__/realtimePlan.test.ts` (`mergeExtraRoutes`). `packages/shared` is unchanged.
+- **Realtime (step 3.3).** There is no `setPlannerRoutes` (see 04's notes). `setExtraRoutes(source, routes)` now keeps one list per source, `'planner'` or `'go'`, and polls their merge (`mergeExtraRoutes`, routes unioned per category). The planner's sheet closing clears only `'planner'`, so Go's bus stays polled. Go `start()`s the store (ref-counted) for as long as the journey runs and registers `plannerRealtimeRoutes` over the legs from the current one, re-registered on every 15 s beat, so the current (or next) bus leg is the one polled. `plannerSkipped` holding that leg's category makes `journeyLiveSkipped` true: the leg reads "Scheduled" in the sheet and on the Lock Screen, and the sheet shows `LIVE_PAUSED_NOTE`.
+- **Re-timing.**
+  - `retimeJourney(base, current, from, live, net, ctx, startedArriveAt)` retimes only `base.legs.slice(from)` and keeps `current.legs` before `from` as they are. `from` is `retimeFrom(progress)`: the current leg until you board it, then the next one. A ride you are on keeps the times (and live vehicle) it had when you boarded.
+  - `base` is the itinerary as Go started, or the last re-planned one adopted. When a retime changes the id (a tail re-plan), Go adopts the result as the new `base`, keeps the leg index (the legs before the break are unchanged by construction), and keeps walk paths only for walks with the same ends (`keepWalkPaths`). With a single itinerary there is nothing to choose between, so `findSuccessor` isn't used.
+  - The started itinerary is the planner's retimed one, not `plan()`'s raw output, which the engine doesn't expose. Retiming a live-shifted leg again is idempotent (`delta` is measured against its current time), so this is safe.
+  - `previousArriveAt` is the arrival when Go started, once moved ≥ 1 min. `detailNotes` then gives "Connection missed. Times updated · was 9:12" (orange) or "Updated · was 9:12".
+  - **Workspace.** `services/planner/workspace.ts` marks a network busy while `usePlannerEngine` has a `plan()` suspended on it (`holdWorkspace` around the run). Go skips a retime on a busy network and catches up on the next snapshot. A "Re-plan from here" during Go can't clobber the plan's labels.
+  - **Honesty.** `honestTiming` shows a live leg as scheduled once its fix is older than 3 min or its feed is skipped, so a frozen "live" never shows. Rail is never live.
+- **Progress model deviations.**
+  - A bus leg with no position (no phone fix, and no live vehicle fix yet) advances by the clock like rail, with `approximate: true`, so it can't stick.
+  - The live vehicle's fix stands in only once the leg's board time has passed. Before that the bus is still coming towards you and would read as "riding".
+  - A ride leg is `waiting` while not past the first stop and within 100 m of it (with a position), or before its board time (by the clock).
+  - A walk into a rail leg also ends by the clock (`to.time` + 2 min) even with a position, because stations are where GPS fails. Snap walks (< 30 s) are done at once, as the chips and timeline skip them.
+  - `leg-done` is reported for one step; the next step (on a fix, the 15 s beat, or 4 s later) moves to the following leg.
+- **Haptics.** Warning (plus speech when "Announce my stop" is on) on `next-is-yours` of a ride leg; success on `leg-done` of a ride leg and on `arrived`; none for walks and waits. The in-app warning cancels that leg's timed alert, as route rides do with `bt.get-off`, and it isn't rescheduled.
+- **Alerts.**
+  - `planJourneyAlerts(it, now, opts?)` takes optional `lineName`, `stopName` and `clock` so `plan.ts` stays dependency-free (type-only imports). Each alert carries `legIndex`.
+  - Copy: the leave alert is "Leave now for T816" / "Walk 5 mins to Hotel Lisa De Inn. T816 at 08:05 (scheduled)." For rail it reads "every 4 mins" or "about 08:05". A change is "Change at Pasar Seni for Kelana Jaya Line" / "Get off now. About a 4-min walk to the platform." ("…to the stop" before a bus; "Get off now." with no walk). The last ride is "Your stop is next: KLCC" / "Get ready to get off."
+  - There is no leave alert when the journey starts at the stop (a snap walk).
+  - Alerts are rescheduled when `journeyAlertsMoved` says one moved > 60 s or one came or went (fired ones are pruned first).
+  - Itinerary times use `devNow()`, so the scheduled times subtract `devClockOffsetMs()`.
+  - Denied permission: `ensureNotificationPermission()` returns false, alerts are scheduled and never shown, and Go carries on. Each schedule is try/caught.
+- **Geofences.** `bt.go.active` (SecureStore, `AFTER_FIRST_UNLOCK`) holds per ride leg its index, alight stop, and the full alert. `syncArrivalGeofences` always merges Go's regions (120 m) ahead of the favourites (`mergeRegions`, 20 max) and remembers the last favourites, so starting and ending Go re-sync without the trip. `startGoGeofences` / `clearGoGeofences` run serially. A `go|i|stop` entry posts that leg's alert at once under the same id (replacing the timed one) and drops the leg from the key. With the arrival alert off, or without Always, it does nothing and never prompts.
+- **Live Activity.**
+  - The hero, the compact trailing and the minimal regions are a SwiftUI `Text` timer to the leg's end (to boarding while waiting), so it ticks with the app suspended. Arrived shows "Here".
+  - Line 2 is `legText`. The status reads "About · from the timetable" when `approximate`, and the trailing text is "Leg 2 of 4" (snap walks don't count; 1-based).
+  - The timer range is clamped (`tripStart ≤ arrival`), since SwiftUI traps on an inverted range. Timer times are moved off the dev clock offset in the hook.
+  - Live bus legs only get a stale date. Arrival ends the activity with `'default'`. A user's End ends it `'immediate'` (as the bus hook does on unfollow), not `'default'` as the step says.
+  - No module-scope helpers; `frame` and `multilineTextAlignment` are modifier exports, available in the widget runtime.
+- **Sheet.**
+  - The Go branch sits before the empty-trip branch, so Go works with no route followed. `goHeader` gives the leg's badge (`RouteBadge`, `LineBadge`, or a walker), "To KLCC", the compact value ("Here" when done), the status, and the strip ("Walk to …" / "On T816 · 4 stops" / "Kajang Line · about 3 stops" | "Arrive 9:52", "Arrive about 9:52" when a headway leg is left).
+  - `Timeline` takes `currentLeg` and `progress` (the phase). `rowProgress` decides done nodes (solid ink) and dimmed rails (0.35, a Reanimated CSS opacity transition over `motion.sheetIn` with `CSS_EASE_OUT`).
+  - Tapping a leg fits it on the map (`planner.focus`).
+- **Go entry.** `itinerary.tsx` calls `ride.startJourney(it)` then `router.back()` (as the other sheets close; the step says `router.dismiss()`). `startJourney` reads `run.network`, `run.query.to` / `.modes` and the cached `walkPaths[it.id]`, unfollows the bus, and sets the first progress at once, so the sheet never flashes the trip.
+- **Map.** While Go runs (and no itinerary sheet is open), `ItineraryLayer` stays mounted with `animate={false}`. The trip's route, buses, ghost and shimmer stay hidden. The camera frames the current leg plus your phone fix (`ride.here`) on each leg change, trip detent change, recenter and station close, above the trip sheet. Ending Go re-frames the trip. The rail focus is released with the itinerary sheet (not re-claimed in Go).
+- **For 07/08.**
+  - The re-plan path is `planner.setFrom(HERE)`, `setTo(place)`, `setWhen({ kind: 'now' })`, `router.push('/plan')`.
+  - `RESERVED_NOTIFICATION_SLOTS = 9`. Go regions share the 20-region budget.
+  - `ride.itinerary` / `ride.journey` / `ride.journeyDestination` tell any surface (Home shortcut, widget) that a journey is running.
+  - Following a bus while Go runs would start a second activity: `trip.follow()` doesn't end Go. 08 should decide (end Go, or block follow).
+  - 08: check the timer widths in the compact and minimal regions on device, and `RAIL_AHEAD` legibility in dark mode.
+- **Build impact:** JS-only (Metro reload), then kill and relaunch once so the new Live Activity layout is registered.
+
+### Review fixes (root, verified on the iPhone 17 Pro Max Simulator)
+
+- **Countdown lower bound.** `tripStartEpochMs` is `min(leg.from.time, now, arrival)`. A SwiftUI timer shows its whole interval until the lower bound passes, so a wait whose range started at boarding read 0:00. Checked on the Lock Screen: 10:23 at 05:59:17 for a 06:09:40 boarding, matching "780 in 11 mins".
+- **Orphaned activities.** `services/liveActivity.ts` holds `startBusActivity`, which both hooks now use, and `endOrphanedActivities`. The first start of a JS run, or the journey hook's mount, ends any activity an earlier run left behind (app killed, dev reload). Before this, a killed Go left its card on the Lock Screen with stale times beside the new one. Checked by killing the app mid-Go: the card is gone after relaunch. Go itself is not restored after a kill.
+- **Trip detent after Go.** The pin offers only detent "0". UIKit can keep "1" (glance) selected through it and return there when all three detents come back, without a `sheetDetentChange`, which left peek content in a half-height sheet. 500 ms after the detents return, the trip sheet now measures its top row (`measureInWindow`) and sets `detent` to the nearest one.
+- **No fix when planning.** A "My location" plan that ended in `no-location` now watches for a fix and plans again when one arrives (`usePlannerEngine`). This was not re-triggered on the Simulator after the fix (the last-known fix kept answering).
+- **For 08.** A "Leave now" plan waits for a fix under 60 s old. With a fixed Simulator location, the first results took about 10 s. Check on a device and consider racing `getCurrentPositionAsync` with a timeout. The 851 leg "towards KL1821 Pasar Seni" with 3 stops from Pasar Seni to Masjid Jamek is planner output to look at.

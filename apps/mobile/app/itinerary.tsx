@@ -16,6 +16,7 @@ import { DetailHeader } from '@/components/trip/SheetHeader';
 import { useRailFocus } from '@/hooks/useRailFocus';
 import { useWalkPaths } from '@/hooks/useWalkPaths';
 import { useOpenItinerary, usePlanner } from '@/state/PlannerContext';
+import { useRide } from '@/state/RideContext';
 import { color, MARGIN, PEEK_TOP, space, type } from '@/theme/design';
 import { devNow } from '@/utils/devClock';
 import { haptics } from '@/utils/haptics';
@@ -45,6 +46,7 @@ export default function ItineraryScreen() {
   const insets = useSafeAreaInsets();
   const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
   const planner = usePlanner();
+  const ride = useRide();
   const { setPresented, setOpenId, setItineraryDetent, focus, run } = planner;
   const it = useOpenItinerary();
   const net = run.network;
@@ -99,8 +101,14 @@ export default function ItineraryScreen() {
     (station: string) => router.push({ pathname: '/station', params: { station } }),
     [router],
   );
-  // 06 makes this `ride.startJourney(it)`; until then Go goes nowhere.
-  const go = useCallback(() => {}, []);
+  // Go (15/06): follow this itinerary, then back to the map with the trip
+  // sheet, which shows the journey. Closing this sheet un-pins the trip.
+  const { startJourney } = ride;
+  const go = useCallback(() => {
+    if (!it) return;
+    startJourney(it);
+    router.back();
+  }, [it, startJourney, router]);
 
   const scrollStyle = [styles.scroll, { paddingBottom: insets.bottom + space.xl }];
 

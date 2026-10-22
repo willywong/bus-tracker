@@ -11,9 +11,11 @@ import {
   contentTransition,
   font,
   foregroundStyle,
+  frame,
   labelsHidden,
   lineLimit,
   monospacedDigit,
+  multilineTextAlignment,
   padding,
   rotationEffect,
   shapes,
@@ -27,8 +29,11 @@ import {
 import { LIVE_ACTIVITY_NAME } from '@/constants/liveActivity';
 
 export type BusActivityProps = {
-  /** 'arrival' = bus approaching; 'pre-service' = waiting for first bus of the day. */
-  kind: 'arrival' | 'pre-service';
+  /**
+   * 'arrival' = bus approaching; 'pre-service' = waiting for first bus of
+   * the day; 'journey' = Go mode, the current leg of an itinerary (15/06).
+   */
+  kind: 'arrival' | 'pre-service' | 'journey';
   routeCode: string;
   /** Minutes until the bus reaches the stop. Null in pre-service (no active ETA). */
   minutesToStop: number | null;
@@ -49,6 +54,13 @@ export type BusActivityProps = {
   arrivalStatus: 'en-route' | 'arriving' | 'arrived';
   /** Epoch ms of the realtime poll behind a live ETA ("as of 08:41"). Null for scheduled. */
   updatedAtEpochMs: number | null;
+  /** Journey only: current instruction, e.g. "Walk to Hotel Lisa De Inn · T816 in 3 mins". */
+  legText: string | null;
+  /** Journey only: "Leg 2 of 4". */
+  legIndex: number | null;
+  legCount: number | null;
+  /** Rail progress from the timetable clock: show "about". */
+  approximate: boolean;
 };
 
 /**
@@ -58,6 +70,11 @@ export type BusActivityProps = {
  *   expanded / Lock Screen — stop, big countdown, trip progress line, and a
  *   status line that says live vs scheduled with a glyph and a word.
  *   bannerSmall — Apple Watch Smart Stack and CarPlay: badge, number, status.
+ *
+ * A journey (Go mode) shows the current leg instead: its chip ("T816",
+ * "KG", "Walk"), where the leg ends, a ticking countdown to it, the
+ * instruction as a second line, and "about" when rail progress comes from
+ * the timetable clock.
  *
  * The app passes a stale date with every live update. When it passes without
  * a fresh poll (app suspended, no signal), iOS sets `environment.isStale` and
@@ -87,6 +104,7 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props, envi
   const warning = '#FF9F0A';
 
   const isPreService = props.kind === 'pre-service';
+  const isJourney = props.kind === 'journey';
   const systemStale = !!environment?.isStale;
   const isOutdated = (props.isStale || systemStale) && props.source === 'live';
   const isArrived = !isPreService && props.arrivalStatus === 'arrived';
@@ -144,7 +162,7 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props, envi
   } else if (isArrived) {
     statusIcon = 'checkmark.circle.fill';
     statusColor = live;
-    statusText = 'At your stop';
+    statusText = isJourney ? 'You’ve arrived' : 'At your stop';
   } else if (isOutdated) {
     statusIcon = 'clock.badge.exclamationmark';
     statusColor = warning;
@@ -161,12 +179,20 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props, envi
       statusText += ` · ${Math.abs(Math.round(props.delayMinutes))} min late`;
     }
   }
-  const trailingText =
-    isPreService || heroUnit == null
+  // Rail (and a bus with no position) moves by the timetable: say so.
+  if (isJourney && !isArrived && !isLive && !isOutdated && props.approximate) {
+    statusText = 'About · from the timetable';
+  }
+  const trailingText = isJourney
+    ? props.legIndex != null && props.legCount != null && props.legCount > 1
+      ? `Leg ${props.legIndex} of ${props.legCount}`
+      : ''
+    : isPreService || heroUnit == null
       ? ''
       : isLive && updatedClock
         ? `as of ${updatedClock}`
         : `Arrives ${arrivalClock}`;
+  const legLine = isJourney && props.legText ? props.legText : null;
 
   const tripStartDate = new Date(props.tripStartEpochMs);
   const arrivalDate = new Date(props.arrivalEpochMs);
@@ -235,7 +261,27 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props, envi
     </HStack>
   );
 
-  const hero = (size: number) => (
+  // A journey's leg ticks down on its own (SwiftUI timer), app running or not.
+  const journeyTimer = (size: number, color: string | null) =>
+    isArrived ? (
+      <Text modifiers={[font({ size: size * 0.7, weight: 'light' }), foregroundStyle(live), lineLimit(1)]}>
+        Here
+      </Text>
+    ) : (
+      <Text
+        timerInterval={{ lower: tripStartDate, upper: arrivalDate }}
+        countsDown
+        modifiers={[
+          font({ size, weight: 'light' }),
+          monospacedDigit(),
+          multilineTextAlignment('trailing'),
+          foregroundStyle(color ?? { type: 'hierarchical', style: isOutdated ? 'secondary' : 'primary' }),
+          lineLimit(1),
+        ]}
+      />
+    );
+
+  const hero = (size: number) => isJourney ? journeyTimer(size, null) : (
     <HStack spacing={4} alignment="firstTextBaseline">
       <Text
         modifiers={[
@@ -269,7 +315,9 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props, envi
   const compactLeading = (
     <HStack modifiers={[padding({ leading: 2 })]}>{badge(12, true)}</HStack>
   );
-  const compactTrailing = (
+  const compactTrailing = isJourney ? (
+    <HStack modifiers={[frame({ maxWidth: 56 }), padding({ trailing: 2 })]}>{journeyTimer(15, islandInk)}</HStack>
+  ) : (
     <Text
       modifiers={[
         font({ size: 15, weight: 'medium' }),
@@ -283,7 +331,9 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props, envi
       {compactText}
     </Text>
   );
-  const minimal = (
+  const minimal = isJourney ? (
+    <HStack modifiers={[frame({ maxWidth: 40 })]}>{journeyTimer(13, islandInk)}</HStack>
+  ) : (
     <Text
       modifiers={[
         font({ size: 15, weight: 'medium' }),
@@ -311,6 +361,11 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props, envi
         <Spacer />
         {hero(30)}
       </HStack>
+      {legLine ? (
+        <Text modifiers={[font({ size: 14, weight: 'medium' }), foregroundStyle(islandInk), lineLimit(2)]}>
+          {legLine}
+        </Text>
+      ) : null}
       {progressRow(true)}
       {statusRow(12)}
     </VStack>
@@ -338,6 +393,17 @@ const BusArrivalActivity: LiveActivityComponent<BusActivityProps> = (props, envi
               ]}
             >
               First bus
+            </Text>
+          ) : null}
+          {legLine ? (
+            <Text
+              modifiers={[
+                font({ size: 13 }),
+                foregroundStyle({ type: 'hierarchical', style: 'secondary' }),
+                lineLimit(2),
+              ]}
+            >
+              {legLine}
             </Text>
           ) : null}
         </VStack>

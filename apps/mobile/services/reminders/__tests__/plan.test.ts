@@ -1,10 +1,17 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import type { Itinerary, Leg, LegPoint, Timing } from '@bus-tracker/shared';
+
 import {
   COMMUTE_MAX_PENDING,
+  GO_ALERT_IDS,
+  GO_LEAVE_ID,
   IOS_MAX_PENDING_NOTIFICATIONS,
+  RESERVED_NOTIFICATION_SLOTS,
   commuteReminderId,
+  journeyAlertsMoved,
+  planJourneyAlerts,
   formatMalaysiaClock,
   isCommuteReminderId,
   isSameMoment,
@@ -321,4 +328,119 @@ test('lastBusLeaveBy treats negative/NaN minutes as zero', () => {
   const r = lastBusLeaveBy(last, -5, Number.NaN);
   assert.equal(r.leaveByMs, last);
   assert.equal(r.notifyAtMs, last);
+});
+
+// ---------------------------------------------------------------------------
+// Go mode (15/06)
+// ---------------------------------------------------------------------------
+
+const GO_T0 = my('2026-10-28', '08:00');
+const gp = (name: string, min: number, stop?: number): LegPoint => ({ stop, name, lat: 3.1, lng: 101.6, time: GO_T0 + min * MIN });
+const gwalk = (from: LegPoint, to: LegPoint): Leg => ({
+  kind: 'walk',
+  from,
+  to,
+  meters: ((to.time - from.time) / 1000) * (80 / 60),
+  seconds: (to.time - from.time) / 1000,
+});
+const gride = (label: string, mode: 'feeder' | 'mrt' | 'lrt', from: LegPoint, to: LegPoint, timing: Timing): Leg => ({
+  kind: 'ride',
+  mode,
+  route: 0,
+  label,
+  color: '000000',
+  headsign: 'Somewhere',
+  from,
+  to,
+  via: [],
+  timing,
+});
+function goItinerary(legs: Leg[]): Itinerary {
+  return {
+    id: 'go',
+    departAt: legs[0].from.time,
+    arriveAt: legs[legs.length - 1].to.time,
+    legs,
+    rides: legs.filter((l) => l.kind === 'ride').length,
+    walkMeters: 0,
+    tags: [],
+    warnings: [],
+  };
+}
+const LINE_NAMES: Record<string, string> = { KG: 'Kajang Line', KJ: 'Kelana Jaya Line' };
+const goOpts = {
+  lineName: (l: { label: string }) => LINE_NAMES[l.label] ?? l.label,
+  stopName: (p: LegPoint) => p.name,
+};
+
+/** Walk 5 → T816 → walk 3 → KG → walk 4 → KJ → walk 4 to KLCC Park. */
+const GO = goItinerary([
+  gwalk(gp('My location', 0), gp('Hotel Lisa De Inn', 5, 0)),
+  gride('T816', 'feeder', gp('Hotel Lisa De Inn', 5, 0), gp('MRT Phileo Damansara', 20, 1), { kind: 'scheduled' }),
+  gwalk(gp('MRT Phileo Damansara', 20, 1), gp('Phileo Damansara', 23, 2)),
+  gride('KG', 'mrt', gp('Phileo Damansara', 25, 2), gp('Pasar Seni', 45, 3), { kind: 'headway', headwaySec: 240 }),
+  gwalk(gp('Pasar Seni', 45, 3), gp('Pasar Seni', 49, 4)),
+  gride('KJ', 'lrt', gp('Pasar Seni', 50, 4), gp('KLCC', 58, 5), { kind: 'headway', headwaySec: 240 }),
+  gwalk(gp('KLCC', 58, 5), gp('KLCC Park', 62)),
+]);
+
+test('journey alerts: leave, change per ride, get-off last', () => {
+  const alerts = planJourneyAlerts(GO, GO_T0 - MIN, goOpts);
+  assert.deepEqual(
+    alerts.map((a) => a.id),
+    [GO_LEAVE_ID, 'bt.go.leg.0', 'bt.go.leg.1', 'bt.go.leg.2'],
+  );
+  const [leave, bus, mrt, last] = alerts;
+  assert.equal(leave.atMs, GO_T0);
+  assert.equal(leave.title, 'Leave now for T816');
+  assert.equal(leave.body, 'Walk 5 mins to Hotel Lisa De Inn. T816 at 08:05 (scheduled).');
+  assert.equal(leave.legIndex, null);
+
+  // A minute before each alight.
+  assert.equal(bus.atMs, GO_T0 + 19 * MIN);
+  assert.equal(bus.title, 'Change at MRT Phileo Damansara for Kajang Line');
+  assert.equal(bus.body, 'Get off now. About a 3-min walk to the platform.');
+  assert.equal(bus.legIndex, 1);
+  assert.equal(mrt.title, 'Change at Pasar Seni for Kelana Jaya Line');
+  assert.equal(mrt.body, 'Get off now. About a 4-min walk to the platform.');
+  assert.equal(last.atMs, GO_T0 + 57 * MIN);
+  assert.equal(last.title, 'Your stop is next: KLCC');
+  assert.equal(last.legIndex, 5);
+
+  // Nothing more than Go's own slots, and the commute cap still leaves them free.
+  assert.ok(alerts.length <= GO_ALERT_IDS.length);
+  assert.equal(RESERVED_NOTIFICATION_SLOTS, 9);
+  assert.equal(COMMUTE_MAX_PENDING, IOS_MAX_PENDING_NOTIFICATIONS - RESERVED_NOTIFICATION_SLOTS);
+
+  // A rescheduling check: a nudge under a minute keeps the queue.
+  const scheduled = new Map(alerts.map((a) => [a.id, a.atMs]));
+  assert.equal(journeyAlertsMoved(scheduled, alerts), false);
+  assert.equal(journeyAlertsMoved(scheduled, alerts.map((a) => ({ ...a, atMs: a.atMs + 30_000 }))), false);
+  assert.equal(journeyAlertsMoved(scheduled, alerts.map((a) => ({ ...a, atMs: a.atMs + 90_000 }))), true);
+  assert.equal(journeyAlertsMoved(scheduled, alerts.slice(1)), true);
+});
+
+test('past alerts are dropped', () => {
+  // On the Kajang Line: the leave and the bus alert are behind us.
+  const alerts = planJourneyAlerts(GO, GO_T0 + 30 * MIN, goOpts);
+  assert.deepEqual(
+    alerts.map((a) => a.id),
+    ['bt.go.leg.1', 'bt.go.leg.2'],
+  );
+  assert.deepEqual(planJourneyAlerts(GO, GO_T0 + 57 * MIN, goOpts), []);
+
+  // Starting at the stop (a snap walk): no leave alert.
+  const atStop = goItinerary([gwalk(gp('Hotel Lisa De Inn', 5, 0), gp('Hotel Lisa De Inn', 5.2, 0)), ...GO.legs.slice(1)]);
+  assert.equal(planJourneyAlerts(atStop, GO_T0, goOpts)[0].id, 'bt.go.leg.0');
+});
+
+test('ids never exceed bt.go.leg.3', () => {
+  const legs: Leg[] = [gwalk(gp('Start', 0), gp('A', 5, 0))];
+  for (let r = 0; r < 6; r++) {
+    legs.push(gride(`R${r}`, 'feeder', gp(`S${r}`, 5 + r * 10, r), gp(`S${r + 1}`, 14 + r * 10, r + 1), { kind: 'scheduled' }));
+  }
+  const ids = planJourneyAlerts(goItinerary(legs), GO_T0 - MIN).map((a) => a.id);
+  assert.equal(ids.filter((id) => id.startsWith('bt.go.leg.')).length, 4);
+  for (const id of ids) assert.ok(GO_ALERT_IDS.includes(id), id);
+  assert.ok(!ids.includes('bt.go.leg.4'));
 });

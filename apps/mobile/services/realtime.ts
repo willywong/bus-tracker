@@ -15,6 +15,7 @@ import { getRealtimeRoutes, getTripToRouteMap } from "@/db/queries";
 import {
   buildRealtimePlan,
   FOLLOWED_INTERVAL_MS,
+  mergeExtraRoutes,
   positionsFromFeed,
   routeFeedHealth,
   tripMapRouteCodes,
@@ -62,6 +63,9 @@ export interface RealtimeSnapshot {
 
 export type PositionFilter = (incoming: VehiclePosition[]) => VehiclePosition[];
 
+/** Who asked for extra routes: the planner's sheets (15/04), or Go (15/06). */
+export type ExtraRoutesSource = "planner" | "go";
+
 type Listener = () => void;
 
 export interface RealtimeStore {
@@ -86,9 +90,11 @@ export interface RealtimeStore {
    * (`plannerRealtimeRoutes`). They ride along in followed categories; other
    * categories are polled every 60 s only from spare budget, else reported in
    * `plannerSkipped`. Clears the cached feed plan. Polling runs while there
-   * are followed routes or extras.
+   * are followed routes or extras. Each `source` owns its own list (the
+   * planner's sheet, and Go following a journey), so one clearing its
+   * routes never drops the other's; they are merged per category.
    */
-  setExtraRoutes(source: "planner", extra: readonly PlannerFeedRoutes[]): void;
+  setExtraRoutes(source: ExtraRoutesSource, extra: readonly PlannerFeedRoutes[]): void;
   setFilter(filter: PositionFilter): void;
   resetFilterState(): void;
   __forTests: {
@@ -203,6 +209,8 @@ export function createRealtimeStore(
 
   let routeCodes: readonly string[] = [];
   let extraRoutes: readonly PlannerFeedRoutes[] = [];
+  /** Each source's own extras; `extraRoutes` is their merge. */
+  const extraBySource = new Map<ExtraRoutesSource, readonly PlannerFeedRoutes[]>();
   /** Followed routes or planner extras: something to poll for. */
   const wanted = () => routeCodes.length > 0 || extraRoutes.length > 0;
   /** Cached once every followed route is in SQLite; rebuilt each poll until then. */
@@ -513,10 +521,12 @@ export function createRealtimeStore(
         void tick();
       }
     },
-    setExtraRoutes(_source, next) {
+    setExtraRoutes(source, list) {
+      extraBySource.set(source, [...list]);
+      const next = mergeExtraRoutes([...extraBySource.values()]);
       if (sameExtraRoutes(extraRoutes, next)) return;
       const wasPolling = wanted();
-      extraRoutes = [...next];
+      extraRoutes = next;
       plan = null;
       if (!wanted()) {
         clearTimer();
@@ -544,6 +554,7 @@ export function createRealtimeStore(
         refCount = 0;
         routeCodes = [];
         extraRoutes = [];
+        extraBySource.clear();
         listeners.clear();
         consecutiveFailures = 0;
         snapshot = EMPTY_SNAPSHOT;

@@ -2,18 +2,17 @@ import { useEffect, useRef } from 'react';
 import { Platform } from 'react-native';
 
 import type { ScheduleDelay } from '@bus-tracker/shared';
-import BusArrivalActivity, {
-  type BusActivityProps,
-} from '@/activities/BusArrivalActivity';
+import type { BusActivityProps } from '@/activities/BusArrivalActivity';
 import { formatStopName } from '@/components/map/format';
 import type { ArrivalEntry } from '@/hooks/useEta';
 import type {
   ArrivalStatus,
   ResolvedEta,
 } from '@/components/tracker/logic';
+import { startBusActivity } from '@/services/liveActivity';
 import { devNow } from '@/utils/devClock';
 
-type Instance = ReturnType<typeof BusArrivalActivity.start>;
+type Instance = ReturnType<typeof startBusActivity>;
 
 function delayToneOf(delay: ScheduleDelay | null): BusActivityProps['delayTone'] {
   if (!delay) return null;
@@ -114,12 +113,16 @@ export function useBusLiveActivity({
         isStale: false,
         arrivalStatus: 'en-route',
         updatedAtEpochMs: null,
+        legText: null,
+        legIndex: null,
+        legCount: null,
+        approximate: false,
       };
 
       const inst = instanceRef.current;
       if (!inst) {
         try {
-          instanceRef.current = BusArrivalActivity.start(next, 't816://');
+          instanceRef.current = startBusActivity(next);
           lastPropsRef.current = next;
         } catch (err) {
           console.warn('[live-activity] start failed', err);
@@ -186,6 +189,10 @@ export function useBusLiveActivity({
       isStale,
       arrivalStatus: activityStatus,
       updatedAtEpochMs: primaryArrival.kind === 'live' ? lastUpdated : null,
+      legText: null,
+      legIndex: null,
+      legCount: null,
+      approximate: false,
     };
     const staleDate =
       next.updatedAtEpochMs != null
@@ -195,7 +202,7 @@ export function useBusLiveActivity({
     const inst = instanceRef.current;
     if (!inst) {
       try {
-        instanceRef.current = BusArrivalActivity.start(next, 't816://', staleDate);
+        instanceRef.current = startBusActivity(next, staleDate);
         lastPropsRef.current = next;
       } catch (err) {
         console.warn('[live-activity] start failed', err);

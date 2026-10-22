@@ -6,6 +6,7 @@ import type { PlannerFeedRoutes } from "@bus-tracker/shared";
 
 import {
   buildRealtimePlan,
+  mergeExtraRoutes,
   positionsFromFeed,
   requestsPerMinute,
   routeFeedHealth,
@@ -313,4 +314,24 @@ test("one followed category leaves room for two planner categories", () => {
   ]);
   assert.deepEqual(plan.plannerSkipped, []);
   assert.equal(requestsPerMinute(plan), 4);
+});
+
+test("extra routes from the planner and Go merge per category", () => {
+  const planner: PlannerFeedRoutes[] = [
+    { category: "rapid-bus-mrtfeeder", aliases: new Map([["30000025", "T816"]]), routes: ["T816"] },
+  ];
+  const go: PlannerFeedRoutes[] = [
+    { category: "rapid-bus-mrtfeeder", aliases: new Map([["30000025", "X"], ["T815", "T815"]]), routes: ["T815", "T816"] },
+    { category: "rapid-bus-kl", aliases: new Map([["U7800", "780"]]), routes: ["780"] },
+  ];
+  const merged = mergeExtraRoutes([planner, go]);
+  assert.deepEqual(merged.map((m) => m.category), ["rapid-bus-mrtfeeder", "rapid-bus-kl"]);
+  assert.deepEqual(merged[0].routes, ["T816", "T815"]);
+  // The first owner's alias for a key wins; the input is untouched.
+  assert.equal(merged[0].aliases.get("30000025"), "T816");
+  assert.equal(merged[0].aliases.get("T815"), "T815");
+  assert.deepEqual(planner[0].routes, ["T816"]);
+  // One owner clearing leaves the other's.
+  assert.deepEqual(mergeExtraRoutes([[], go]).map((m) => m.routes), [["T815", "T816"], ["780"]]);
+  assert.deepEqual(mergeExtraRoutes([[], []]), []);
 });

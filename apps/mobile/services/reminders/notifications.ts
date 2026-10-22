@@ -17,12 +17,14 @@ import { getClockUse24h } from '@/components/tracker/logic';
 
 import {
   COMMUTE_MAX_PENDING,
+  GO_ALERT_IDS,
   IOS_MAX_PENDING_NOTIFICATIONS,
   RESERVED_NOTIFICATION_SLOTS,
   formatMalaysiaClock,
   isCommuteReminderId,
   isSameMoment,
   lastBusLeaveBy,
+  type JourneyAlert,
   type PlannedReminder,
 } from './plan';
 import { mins } from '@/components/trip/model';
@@ -34,7 +36,7 @@ export const DEPARTURE_ID = 'bt.departure';
 /** Android channel for reminders (iOS ignores channels). */
 export const REMINDER_CHANNEL_ID = 'reminders';
 
-export type ReminderKind = 'leave-now' | 'last-bus' | 'get-off' | 'commute' | 'departure';
+export type ReminderKind = 'leave-now' | 'last-bus' | 'get-off' | 'commute' | 'departure' | 'go';
 
 const MINUTE_MS = 60_000;
 
@@ -459,6 +461,65 @@ export async function scheduleGetOffAlert(
 
 export function cancelGetOffAlert(): Promise<void> {
   return cancelById(GET_OFF_ID);
+}
+
+// ---------------------------------------------------------------------------
+// Go mode (15/06): leave, change and get-off for one itinerary
+// ---------------------------------------------------------------------------
+
+/** The notification request for one Go alert; `trigger: null` delivers it now. */
+export function journeyAlertRequest(
+  a: JourneyAlert,
+  trigger: Notifications.NotificationTriggerInput,
+): Notifications.NotificationRequestInput {
+  return {
+    identifier: a.id,
+    content: {
+      title: a.title,
+      body: a.body,
+      interruptionLevel: 'timeSensitive',
+      threadIdentifier: 'bt.go',
+      sound: 'default',
+      data: { kind: 'go' satisfies ReminderKind, fireAtMs: a.atMs, legIndex: a.legIndex },
+    },
+    trigger,
+  };
+}
+
+/**
+ * Replaces Go's pending alerts with `alerts` (`planJourneyAlerts`, times
+ * already on the device clock). Each has its own id, so they never replace
+ * each other or the single-route get-off alert. Without permission they
+ * are scheduled and never shown; a failure is logged, never thrown.
+ */
+export async function scheduleJourneyAlerts(
+  alerts: readonly JourneyAlert[],
+  now: number = Date.now(),
+): Promise<number> {
+  await Promise.all(
+    GO_ALERT_IDS.map((id) => Notifications.cancelScheduledNotificationAsync(id).catch(() => {})),
+  );
+  let count = 0;
+  for (const a of alerts) {
+    if (!(a.atMs > now)) continue;
+    try {
+      await Notifications.scheduleNotificationAsync(journeyAlertRequest(a, dateTrigger(a.atMs)));
+      count++;
+    } catch (err) {
+      console.warn(`[reminders] failed to schedule ${a.id}`, err);
+    }
+  }
+  return count;
+}
+
+/** Cancels one Go alert (it was announced in the app). */
+export function cancelJourneyAlert(id: string): Promise<void> {
+  return cancelById(id);
+}
+
+/** Cancels (and clears delivered) every Go alert. */
+export async function cancelJourneyAlerts(): Promise<void> {
+  await Promise.all(GO_ALERT_IDS.map((id) => cancelById(id)));
 }
 
 const GET_OFF_PHRASES: Record<string, (stop: string) => string> = {

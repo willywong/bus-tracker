@@ -3,8 +3,10 @@
  *
  * Everything here works in absolute epoch ms and treats Malaysia as UTC+8
  * year-round (no DST), matching `toMalaysiaParts` in `@bus-tracker/shared`.
- * Kept dependency-free so it runs under `tsx --test` on plain Node.
+ * Kept dependency-free so it runs under `tsx --test` on plain Node (the
+ * journey types are type-only imports).
  */
+import type { Itinerary, Leg, LegPoint } from '@bus-tracker/shared';
 
 const MY_OFFSET_MS = 8 * 60 * 60_000;
 const DAY_MS = 86_400_000;
@@ -12,8 +14,11 @@ const MINUTE_MS = 60_000;
 
 /** iOS keeps at most 64 pending local notifications per app; extras are silently dropped. */
 export const IOS_MAX_PENDING_NOTIFICATIONS = 64;
-/** Slots kept free for one-off alerts (leave-now, picked departure, last bus, get-off). */
-export const RESERVED_NOTIFICATION_SLOTS = 4;
+/**
+ * Slots kept free for one-off alerts: leave-now, picked departure, last bus
+ * and get-off (4), plus Go mode's leave and up to four ride-leg alerts (5).
+ */
+export const RESERVED_NOTIFICATION_SLOTS = 9;
 /** Default cap on commute reminders scheduled at once. */
 export const COMMUTE_MAX_PENDING = IOS_MAX_PENDING_NOTIFICATIONS - RESERVED_NOTIFICATION_SLOTS;
 
@@ -235,4 +240,152 @@ export function lastBusLeaveBy(
     leaveByMs,
     notifyAtMs: leaveByMs - nonNegative(leadMinutes) * MINUTE_MS,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Go mode (15/06): leave, change and get-off alerts for one itinerary
+// ---------------------------------------------------------------------------
+
+/** Go's leave alert: when the itinerary's own access walk starts. */
+export const GO_LEAVE_ID = 'bt.go.leave';
+/** Go's ride-leg alerts: `bt.go.leg.0` … `bt.go.leg.3`, by ride. */
+export const GO_LEG_ID_PREFIX = 'bt.go.leg.';
+/** A journey has at most four rides (the engine's `MAX_RIDES`), so four leg alerts. */
+export const GO_MAX_LEG_ALERTS = 4;
+/** A ride-leg alert fires this long before the ride's alight time. */
+export const GO_ALERT_LEAD_MS = 60_000;
+/** A walk shorter than this is a snap to the stop: no leave alert, no "walk" in the copy. */
+const GO_SNAP_WALK_SEC = 30;
+/** Rail turning up every this many seconds or less reads "every N mins" (the board's rule). */
+const GO_EVERY_MAX_SEC = 300;
+
+type GoRide = Extract<Leg, { kind: 'ride' }>;
+
+export interface JourneyAlert {
+  /** `bt.go.leave` or `bt.go.leg.<ride>`: scheduling again replaces it. */
+  id: string;
+  atMs: number;
+  title: string;
+  body: string;
+  /** The ride leg it's for (an index into `it.legs`), null for the leave alert. */
+  legIndex: number | null;
+}
+
+export interface JourneyAlertOptions {
+  /** "Kelana Jaya Line", "T816". Default: the leg's label. */
+  lineName?: (ride: GoRide) => string;
+  /** A stop's display name (bus stops display-cased). Default: as given. */
+  stopName?: (p: LegPoint, bus: boolean) => string;
+  /** Clock for the copy. Default 24-hour Malaysia time. */
+  clock?: (epochMs: number) => string;
+}
+
+export function goLegAlertId(ride: number): string {
+  return `${GO_LEG_ID_PREFIX}${ride}`;
+}
+
+/** Every Go alert id, for cancelling them all. */
+export const GO_ALERT_IDS: readonly string[] = [
+  GO_LEAVE_ID,
+  ...Array.from({ length: GO_MAX_LEG_ALERTS }, (_, i) => goLegAlertId(i)),
+];
+
+const goIsBus = (l: GoRide) => l.mode === 'bus' || l.mode === 'feeder';
+const goMins = (n: number) => `${n} ${n === 1 ? 'min' : 'mins'}`;
+
+/**
+ * Go's alerts for `it`, in time order, those already past `now` dropped:
+ * - `bt.go.leave` when the itinerary's own access walk starts (its first
+ *   leg, at the planner's 80 m/min; not the favourite stop's walk setting);
+ * - `bt.go.leg.<i>` a minute before each ride's alight time: "Change at
+ *   Pasar Seni for Kelana Jaya Line" / "Get off now. About a 4-min walk to
+ *   the platform.", and "Your stop is next: KLCC" for the last ride.
+ * Rail times are "about" and never live; a bus is "scheduled" or a "live
+ * estimate".
+ */
+export function planJourneyAlerts(it: Itinerary, now: number, opts: JourneyAlertOptions = {}): JourneyAlert[] {
+  const lineName = opts.lineName ?? ((l: GoRide) => l.label);
+  const stopName = opts.stopName ?? ((p: LegPoint) => p.name);
+  const clock = opts.clock ?? ((ms: number) => formatMalaysiaClock(ms));
+  const legs = it.legs;
+  const out: JourneyAlert[] = [];
+
+  const first = legs[0];
+  const firstRide = legs.find((l): l is GoRide => l.kind === 'ride') ?? null;
+  if (first?.kind === 'walk' && first.seconds >= GO_SNAP_WALK_SEC) {
+    const walk = goMins(Math.max(1, Math.round(first.seconds / 60)));
+    if (firstRide) {
+      const bus = goIsBus(firstRide);
+      const when =
+        firstRide.timing.kind === 'headway'
+          ? firstRide.timing.headwaySec <= GO_EVERY_MAX_SEC
+            ? `every ${goMins(Math.max(1, Math.round(firstRide.timing.headwaySec / 60)))}`
+            : `about ${clock(firstRide.from.time)}`
+          : `at ${clock(firstRide.from.time)} (${firstRide.timing.kind === 'live' ? 'live estimate' : 'scheduled'})`;
+      out.push({
+        id: GO_LEAVE_ID,
+        atMs: first.from.time,
+        title: `Leave now for ${lineName(firstRide)}`,
+        body: `Walk ${walk} to ${stopName(first.to, bus)}. ${lineName(firstRide)} ${when}.`,
+        legIndex: null,
+      });
+    } else {
+      out.push({
+        id: GO_LEAVE_ID,
+        atMs: first.from.time,
+        title: 'Leave now',
+        body: `Walk ${walk} to ${stopName(first.to, false)}.`,
+        legIndex: null,
+      });
+    }
+  }
+
+  const rides: number[] = [];
+  legs.forEach((l, i) => {
+    if (l.kind === 'ride') rides.push(i);
+  });
+  rides.slice(0, GO_MAX_LEG_ALERTS).forEach((i, r) => {
+    const l = legs[i] as GoRide;
+    const at = stopName(l.to, goIsBus(l));
+    const nextIndex = rides[r + 1];
+    let title: string;
+    let body: string;
+    if (nextIndex == null) {
+      title = `Your stop is next: ${at}`;
+      body = 'Get ready to get off.';
+    } else {
+      const next = legs[nextIndex] as GoRide;
+      let walkSec = 0;
+      for (let k = i + 1; k < nextIndex; k++) {
+        const w = legs[k];
+        if (w.kind === 'walk') walkSec += w.seconds;
+      }
+      title = `Change at ${at} for ${lineName(next)}`;
+      body =
+        walkSec >= GO_SNAP_WALK_SEC
+          ? `Get off now. About a ${Math.max(1, Math.round(walkSec / 60))}-min walk to the ${goIsBus(next) ? 'stop' : 'platform'}.`
+          : 'Get off now.';
+    }
+    out.push({ id: goLegAlertId(r), atMs: l.to.time - GO_ALERT_LEAD_MS, title, body, legIndex: i });
+  });
+
+  return out.filter((a) => a.atMs > now).sort((a, b) => a.atMs - b.atMs);
+}
+
+/**
+ * True when `next` should replace what's scheduled: an alert came or went,
+ * or one moved by more than `driftMs` (a retime that only nudges the times
+ * leaves the queue alone).
+ */
+export function journeyAlertsMoved(
+  scheduled: ReadonlyMap<string, number>,
+  next: readonly JourneyAlert[],
+  driftMs = 60_000,
+): boolean {
+  if (scheduled.size !== next.length) return true;
+  for (const a of next) {
+    const at = scheduled.get(a.id);
+    if (at == null || Math.abs(at - a.atMs) > driftMs) return true;
+  }
+  return false;
 }

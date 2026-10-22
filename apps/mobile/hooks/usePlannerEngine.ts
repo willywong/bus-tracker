@@ -17,6 +17,7 @@ import { useEffect, useRef, useState } from 'react';
 import { openDb } from '@/db/database';
 import { useTransitNetwork } from '@/hooks/useTransitNetwork';
 import { runPlan, type PlanRun } from '@/services/planner/runPlan';
+import { holdWorkspace } from '@/services/planner/workspace';
 import {
   departAtOf,
   isLiveSkipped,
@@ -74,7 +75,9 @@ const IDLE: PlannerRun = {
 
 const USE_MOCK =
   process.env.EXPO_PUBLIC_MOCK_REALTIME === '1' || process.env.EXPO_PUBLIC_MOCK_REALTIME === 'true';
-const store: RealtimeStore = USE_MOCK ? mockRealtimeStore : realtimeStore;
+/** The store the planner (and Go, 15/06) polls and re-times from: the mock when asked for. */
+export const plannerStore: RealtimeStore = USE_MOCK ? mockRealtimeStore : realtimeStore;
+const store = plannerStore;
 
 /** A fresh enough fix for "My location" as the start. */
 const HERE_MAX_AGE_MS = 60_000;
@@ -151,6 +154,25 @@ export function usePlannerEngine(input: { presented: boolean; from: Place; to: P
     other: null,
   });
 
+  // No fix when the plan ran: plan again as soon as one arrives (a cold GPS start).
+  const [fixes, setFixes] = useState(0);
+  const waitingForFix = presented && run.status === 'no-location' && from.kind === 'here';
+  useEffect(() => {
+    if (!waitingForFix) return;
+    let live = true;
+    let sub: Location.LocationSubscription | null = null;
+    void (async () => {
+      const perm = await Location.getForegroundPermissionsAsync();
+      if (!perm.granted || !live) return;
+      sub = await Location.watchPositionAsync({ accuracy: Location.Accuracy.Balanced }, () => setFixes((n) => n + 1));
+      if (!live) sub.remove();
+    })().catch(() => {});
+    return () => {
+      live = false;
+      sub?.remove();
+    };
+  }, [waitingForFix]);
+
   const key = to ? queryKey(from, to, when) : null;
   // The effect reads these through a ref so a new `from` object with the same key doesn't re-run it.
   const latest = useRef({ from, to, when, network });
@@ -215,7 +237,14 @@ export function usePlannerEngine(input: { presented: boolean; from: Place; to: P
       const q: PlanQuery = { from: fromPlace, to: end, departAt, walkMetersPerMin: WALKING_METERS_PER_MINUTE };
       const handle = runPlan(plan(planNet, q));
       e.inflight = handle;
-      const result = await handle.promise;
+      // Go's retimes on this network wait until the plan is done (shared workspace).
+      const release = holdWorkspace(planNet);
+      let result: Awaited<typeof handle.promise>;
+      try {
+        result = await handle.promise;
+      } finally {
+        release();
+      }
       if (e.inflight === handle) e.inflight = null;
       if (!result || token !== e.token) return;
 
@@ -251,7 +280,7 @@ export function usePlannerEngine(input: { presented: boolean; from: Place; to: P
       console.warn('[planner] plan failed', err);
       finish('error');
     });
-  }, [presented, key, network]);
+  }, [presented, key, network, fixes]);
 
   // Live re-timing while a planner sheet is up.
   useEffect(() => {

@@ -25,6 +25,8 @@ const settle = LinearTransition.duration(motion.sheetIn).easing(EASE_OUT);
 
 interface SheetHeaderProps {
   routeCode: string;
+  /** In place of the route chip (Go: the current leg's chip, or a walker). */
+  badge?: ReactNode;
   /** Headline: the boarding stop, or "To <stop>" while riding. */
   title: string | null;
   /** Peek detent: add the status line and the compact number, since the body is hidden. */
@@ -48,6 +50,7 @@ interface SheetHeaderProps {
  */
 export function SheetHeader({
   routeCode,
+  badge,
   title,
   peek,
   status,
@@ -61,6 +64,7 @@ export function SheetHeader({
     <View>
       <HeaderRow
         routeCode={routeCode}
+        badge={badge}
         title={title}
         peek={peek && !card}
         status={status}
@@ -164,6 +168,7 @@ export function DetailHeader({
 
 function HeaderRow({
   routeCode,
+  badge,
   title,
   peek,
   status,
@@ -172,7 +177,7 @@ function HeaderRow({
 }: Omit<SheetHeaderProps, 'strip'>) {
   return (
     <View style={styles.row} accessibilityRole="header">
-      <RouteBadge code={routeCode} />
+      {badge ?? <RouteBadge code={routeCode} />}
       <View style={styles.titles}>
         <Animated.Text layout={settle} style={styles.title} numberOfLines={1}>
           {title ?? 'Your stop'}

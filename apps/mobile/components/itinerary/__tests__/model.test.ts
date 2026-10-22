@@ -11,6 +11,7 @@ import {
   railRouteIds,
   resolveOpen,
   rideSummary,
+  rowProgress,
   timelineLabels,
   timelineRows,
   type TimelineNet,
@@ -278,4 +279,25 @@ test('rail headsigns drop the "From X to" prefix', () => {
   assert.equal(railHeadsign('From KL Sentral to Titiwangsa'), 'Titiwangsa');
   assert.equal(railHeadsign('Gombak'), 'Gombak');
   assert.equal(railHeadsign('Tanjung Malim'), 'Tanjung Malim');
+});
+
+test('go progress fills done nodes and dims the legs ahead', () => {
+  const rows = timelineRows(CRITERION, NET, clock);
+  // On the Kajang Line (leg 3), past the boarding station.
+  const state = rows.map((r) => rowProgress(r, { legIndex: 3, phase: 'riding' }));
+  const at = (kind: TimelineRow['kind'], legIndex: number) =>
+    state[rows.findIndex((r) => r.kind === kind && 'legIndex' in r && r.legIndex === legIndex)];
+  assert.deepEqual(state[0], { done: true, ahead: false }); // the start
+  assert.deepEqual(at('alight', 1), { done: true, ahead: false });
+  assert.deepEqual(at('board', 3), { done: true, ahead: false });
+  assert.deepEqual(at('alight', 3), { done: false, ahead: false });
+  assert.deepEqual(at('board', 5), { done: false, ahead: true });
+  assert.deepEqual(at('walk', 4), { done: false, ahead: true });
+  assert.deepEqual(state[state.length - 1], { done: false, ahead: true }); // the destination
+  // Waiting on the platform: the board station isn't done yet.
+  assert.equal(rowProgress(rows.find((r) => r.kind === 'board' && r.legIndex === 3)!, { legIndex: 3, phase: 'waiting' }).done, false);
+  // Arrived: everything done, nothing ahead.
+  const end = rows.map((r) => rowProgress(r, { legIndex: 6, phase: 'arrived' }));
+  assert.ok(end.every((s) => !s.ahead));
+  assert.deepEqual(end[end.length - 1], { done: true, ahead: false });
 });

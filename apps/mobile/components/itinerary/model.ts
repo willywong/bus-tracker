@@ -380,3 +380,28 @@ export function resolveOpen(open: OpenRef | null, prev: Itinerary | null, its: r
   if (next) return next;
   return its[Math.min(Math.max(0, open.index), its.length - 1)];
 }
+
+/** Where Go (15/06) is: the current leg and its phase (`JourneyProgress`). */
+export interface TimelineProgress {
+  legIndex: number;
+  phase: 'walking' | 'waiting' | 'riding' | 'next-is-yours' | 'leg-done' | 'arrived';
+}
+
+/**
+ * A row against Go's progress: `done` fills its node (a stop you've left or
+ * reached), `ahead` dims its rail (legs after the current one). The start
+ * is done once you go; the destination once you've arrived.
+ */
+export function rowProgress(row: TimelineRow, p: TimelineProgress): { done: boolean; ahead: boolean } {
+  const arrived = p.phase === 'arrived';
+  if (row.kind === 'end') return row.which === 'origin' ? { done: true, ahead: false } : { done: arrived, ahead: !arrived };
+  const cur = p.legIndex;
+  const L = row.legIndex;
+  const ahead = L > cur;
+  if (row.kind === 'board') {
+    const boarded = p.phase !== 'walking' && p.phase !== 'waiting';
+    return { done: L < cur || (L === cur && boarded), ahead };
+  }
+  if (row.kind === 'alight') return { done: L < cur || (L === cur && (p.phase === 'leg-done' || arrived)), ahead };
+  return { done: L < cur, ahead };
+}
