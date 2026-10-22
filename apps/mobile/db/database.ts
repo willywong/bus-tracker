@@ -100,6 +100,12 @@ export async function migrate(db: Db): Promise<void> {
     // `IF NOT EXISTS` already created them and there is nothing to backfill;
     // the route bundle stays valid.
   }
+
+  if (current < 9) {
+    // v8 -> v9: rail_shapes for the map's rail layer. Created by the DDL;
+    // the next network refresh fills it from the stored rail zip (it writes
+    // whenever the table is empty), so there is nothing to do here.
+  }
 }
 
 async function addColumnIfMissing(

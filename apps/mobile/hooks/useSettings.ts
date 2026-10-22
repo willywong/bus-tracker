@@ -34,6 +34,14 @@ export type SavedPlace = {
 
 export const MAP_TYPES: readonly MapType[] = ['standard', 'satellite'];
 
+/** What the map draws on top of its base layer (the toolbar Layers menu). */
+export type MapLayers = {
+  /** Your route, its buses and the scheduled ghost bus. */
+  myBuses: boolean;
+  /** Every rail line and station. */
+  rail: boolean;
+};
+
 export const NOTIF_BUFFER_CHOICES_MIN: readonly number[] = [0, 1, 2, 3, 5];
 
 export const MAX_FAVORITES = 10;
@@ -59,6 +67,8 @@ export interface Settings {
   clockFormat: ClockFormat;
   /** Apple Maps base layer for the Map screen. */
   mapType: MapType;
+  /** Map overlays toggled from the Layers menu. Satellite stays `mapType`. */
+  mapLayers: MapLayers;
   /** Home, Work and pinned places for the journey planner. */
   savedPlaces: SavedPlace[];
 }
@@ -73,6 +83,7 @@ export const DEFAULT_SETTINGS: Settings = {
   quietEndMin: 6 * 60,
   clockFormat: '24h',
   mapType: 'standard',
+  mapLayers: { myBuses: true, rail: true },
   savedPlaces: [],
 };
 
@@ -93,6 +104,7 @@ export interface SettingsApi extends Settings {
   setQuietEndMin: (v: number) => void;
   setClockFormat: (v: ClockFormat) => void;
   setMapType: (v: MapType) => void;
+  setMapLayer: (key: keyof MapLayers, on: boolean) => void;
   setSavedPlaces: (next: SavedPlace[]) => void;
   /**
    * Adds `code` to the favorites list with a default stop. Returns
@@ -116,6 +128,7 @@ const STORAGE_KEYS = {
   quietEndMin: 'bt.quietEndMin',
   clockFormat: 'bt.clockFormat',
   mapType: 'bt.mapType',
+  mapLayers: 'bt.mapLayers',
   savedPlaces: 'bt.savedPlaces',
 } as const;
 
@@ -148,6 +161,22 @@ function parseMapTypeOr(value: string | null, fallback: MapType): MapType {
   return value && MAP_TYPES.includes(value as MapType)
     ? (value as MapType)
     : fallback;
+}
+
+/** JSON `{ myBuses, rail }`; a missing or malformed field keeps its default. */
+export function parseMapLayers(raw: string | null): MapLayers {
+  const out = { ...DEFAULT_SETTINGS.mapLayers };
+  if (!raw) return out;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object') return out;
+    const o = parsed as Record<string, unknown>;
+    if (typeof o.myBuses === 'boolean') out.myBuses = o.myBuses;
+    if (typeof o.rail === 'boolean') out.rail = o.rail;
+    return out;
+  } catch {
+    return out;
+  }
 }
 
 function parseFavoritedRoutes(raw: string | null): string[] {
@@ -245,6 +274,7 @@ async function loadFromStore(): Promise<Settings> {
     clockFormat,
     mapType,
     savedPlacesRaw,
+    mapLayersRaw,
   ] = await Promise.all([
     SecureStore.getItemAsync(STORAGE_KEYS.walkMinutes),
     SecureStore.getItemAsync(STORAGE_KEYS.notifBufferMin),
@@ -256,6 +286,7 @@ async function loadFromStore(): Promise<Settings> {
     SecureStore.getItemAsync(STORAGE_KEYS.clockFormat),
     SecureStore.getItemAsync(STORAGE_KEYS.mapType),
     SecureStore.getItemAsync(STORAGE_KEYS.savedPlaces),
+    SecureStore.getItemAsync(STORAGE_KEYS.mapLayers),
   ]);
 
   const favoritedRoutes = parseFavoritedRoutes(favoritesRaw);
@@ -272,6 +303,7 @@ async function loadFromStore(): Promise<Settings> {
     quietEndMin: parseIntOr(quietEnd, DEFAULT_SETTINGS.quietEndMin),
     clockFormat: parseClockFormatOr(clockFormat, DEFAULT_SETTINGS.clockFormat),
     mapType: parseMapTypeOr(mapType, DEFAULT_SETTINGS.mapType),
+    mapLayers: parseMapLayers(mapLayersRaw),
     savedPlaces: parseSavedPlaces(savedPlacesRaw),
   };
 }
@@ -402,6 +434,15 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const setMapLayer = useCallback((key: keyof MapLayers, on: boolean) => {
+    setState((prev) => {
+      if (prev.mapLayers[key] === on) return prev;
+      const next = { ...prev.mapLayers, [key]: on };
+      writeValue(STORAGE_KEYS.mapLayers, JSON.stringify(next));
+      return { ...prev, mapLayers: next };
+    });
+  }, []);
+
   const setSavedPlaces = useCallback((next: SavedPlace[]) => {
     setState((prev) => {
       if (prev.savedPlaces === next) return prev;
@@ -506,6 +547,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     setQuietEndMin,
     setClockFormat,
     setMapType,
+    setMapLayer,
     setSavedPlaces,
     addFavorite,
     removeFavorite,

@@ -30,6 +30,7 @@ import {
   type StoredFeed,
 } from "@/db/networkStore";
 import { devStage } from "./devStages";
+import { refreshRailShapes } from "./railShapes";
 import type { downloadTransitFeeds } from "./gtfsFeed";
 
 /**
@@ -184,7 +185,7 @@ export async function refreshTransitNetwork(deps: NetworkDeps): Promise<RefreshR
         continue;
       }
       try {
-        const data = await deps.runSteps(timed(readFeedSteps(d.bytes, d.feed), timing), NETWORK_SLICE_MS);
+        const data = await deps.runSteps(timed(readFeedSteps(d.bytes, d.feed, { shapes: d.feed === "rail" }), timing), NETWORK_SLICE_MS);
         devStage(`${d.feed} read`);
         const feed: StoredFeed = {
           feed: d.feed,
@@ -227,7 +228,7 @@ export async function refreshTransitNetwork(deps: NetworkDeps): Promise<RefreshR
         let data = read.get(f);
         if (!data) {
           try {
-            data = await deps.runSteps(timed(readFeedSteps(s.zip, f), timing), NETWORK_SLICE_MS);
+            data = await deps.runSteps(timed(readFeedSteps(s.zip, f, { shapes: f === "rail" }), timing), NETWORK_SLICE_MS);
             read.set(f, data);
           } catch (err) {
             log(`${f}: stored zip unreadable, building without it (${errorMessage(err)})`);
@@ -272,6 +273,12 @@ export async function refreshTransitNetwork(deps: NetworkDeps): Promise<RefreshR
     }
   }
 
+  // Rail line geometry for the map (plan 13/02), from the stored rail feed.
+  try {
+    await refreshRailShapes(deps, stored.rail, read.get("rail"), NETWORK_SLICE_MS);
+  } catch (err) {
+    log(`rail shapes: not updated, keeping the previous ones (${errorMessage(err)})`);
+  }
   await pruneBlobs(db, dates);
   return { rebuilt, failedFeeds, failedDates, offline };
 }

@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 export const DDL = [
   `CREATE TABLE IF NOT EXISTS routes (
@@ -124,10 +124,21 @@ export const DDL = [
   `CREATE TABLE IF NOT EXISTS static_requests (
     at INTEGER NOT NULL
   );`,
+  // Each rail line's drawn geometry for the map's rail layer, written from
+  // the rail feed's shapes.txt (simplified to 5 m). Kept apart from
+  // shape_points, which is pruned with the followed bus routes; rows are
+  // only ever replaced, so an expired feed keeps the last good geometry.
+  `CREATE TABLE IF NOT EXISTS rail_shapes (
+    route_id TEXT PRIMARY KEY NOT NULL,
+    shape_id TEXT NOT NULL,
+    coords BLOB NOT NULL
+  );`,
 ] as const;
 
 export const META_KEYS = {
   fetchedAt: "fetchedAt",
   schemaVersion: "schemaVersion",
   generatedAt: "generatedAt",
+  /** The rail feed hash `rail_shapes` was last written from. */
+  railShapesHash: "railShapesHash",
 } as const;

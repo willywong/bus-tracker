@@ -1,4 +1,4 @@
-import { Stack, useRootNavigationState, useRouter } from 'expo-router';
+import { Stack, useRootNavigationState, useRouter, type Href } from 'expo-router';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Easing,
@@ -8,16 +8,27 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import MapView, { AnimatedRegion, PROVIDER_DEFAULT } from 'react-native-maps';
+import MapView, { AnimatedRegion, PROVIDER_DEFAULT, type Region } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BusMarker, GhostBusMarker } from '@/components/map/BusMarker';
+import { RailLayer } from '@/components/map/RailLayer';
+import {
+  railLines,
+  railStationMarks,
+  railStationsFor,
+  railZoomBand,
+  zoomFromRegion,
+  type RailZoomBand,
+} from '@/components/map/railModel';
 import { RouteLayer, type RailStationMark } from '@/components/map/RouteLayer';
 import { RouteShimmer } from '@/components/map/RouteShimmer';
 import { splitRoute } from '@/components/map/routeSplit';
 import { useLocationPermission } from '@/hooks/useLocationPermission';
+import { useRailShapes } from '@/hooks/useRailShapes';
 import { useScheduledBusPosition } from '@/hooks/useScheduledBusPosition';
-import { useSettings, type MapType } from '@/hooks/useSettings';
+import { useSettings, type MapLayers, type MapType } from '@/hooks/useSettings';
+import { useTransitNetwork } from '@/hooks/useTransitNetwork';
 import { useRide } from '@/state/RideContext';
 import { useTrip } from '@/state/TripContext';
 import { hex, pick, sheetDetents } from '@/theme/design';
@@ -45,6 +56,9 @@ const PAN_QUIET_MS = 250;
 const SINGLE_POINT_SPAN = 0.0025;
 const EMPTY_STOPS = new Map<string, { lat: number; lng: number }>();
 const NO_POSITIONS: VehiclePosition[] = [];
+const NO_RAIL_STATIONS: RailStationMark[] = [];
+/** Lines the rail layer keeps at full strength; null until 13/05 and 15/05 set one. */
+const NO_RAIL_FOCUS: readonly string[] | null = null;
 
 type Coord = { latitude: number; longitude: number };
 
@@ -57,7 +71,8 @@ export default function MapScreen() {
   const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
   const settings = useSettings();
   const trip = useTrip();
-  const { height: windowHeight } = useWindowDimensions();
+  const router = useRouter();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   useLocationPermission();
   usePresentTripSheet();
@@ -102,6 +117,38 @@ export default function MapScreen() {
     }));
   }, [route?.userStop]);
 
+  // --- Rail layer: every line and station (plan 13/02) ----------------------
+  const layers = settings.mapLayers;
+  const { network } = useTransitNetwork();
+  const railShapes = useRailShapes(network);
+  const railLineDraws = useMemo(() => railLines(network, railShapes), [network, railShapes]);
+  const railStationDraws = useMemo(() => railStationMarks(railStationsFor(network)), [network]);
+  // Zoom matters only at two thresholds, so it's kept as a band and set from
+  // onRegionChangeComplete: no render per camera frame.
+  const [zoomBand, setZoomBand] = useState<RailZoomBand>(() =>
+    railZoomBand(zoomFromRegion(KL_REGION.longitudeDelta, windowWidth)),
+  );
+  const railDim = zoomBand === 0;
+  const railFocus = NO_RAIL_FOCUS;
+  // Apple Maps stacks overlays in add order and ignores Polyline.zIndex.
+  // Whenever the rail lines restyle or change, RailLayer and RouteLayer both
+  // remount (RailLayer first), so the bus route is re-added on top of rail.
+  const railLinesSig = useMemo(
+    () => railLineDraws.map((l) => `${l.routeId}:${l.coords.length}`).join(','),
+    [railLineDraws],
+  );
+  // Rail off: a constant, so zooming across 11 doesn't remount the bus route.
+  const railKey = layers.rail
+    ? `${railDim}|${railFocus?.join(',') ?? ''}|${layers.rail}|${railLinesSig}`
+    : 'rail-off';
+  const openStation = useCallback(
+    (stationId: string) => {
+      // `/station` arrives in 13/03; typed routes don't know it yet.
+      router.push({ pathname: '/station', params: { station: stationId } } as unknown as Href);
+    },
+    [router],
+  );
+
   // --- Live bus markers ----------------------------------------------------
   // Drawn in the lane, with the arrow along the road (see snapPositions).
   const feedPositions = route ? trip.bus.positions : NO_POSITIONS;
@@ -111,6 +158,15 @@ export default function MapScreen() {
     [feedPositions, routeLine],
   );
   const markers = useGlidingMarkers(positions, trip.routeCode);
+  // My buses off: stop every glide first and unmount the markers on the next
+  // render. Unmounting one mid-animation trips Fabric (see useGlidingMarkers).
+  const [busMarkersShown, setBusMarkersShown] = useState(layers.myBuses);
+  useEffect(() => {
+    if (!layers.myBuses) for (const m of markers) stopAnimation(m.region);
+    setBusMarkersShown(layers.myBuses);
+    // Only on the toggle; `markers` is this render's list.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layers.myBuses]);
   const primaryVehicleId =
     trip.eta.primaryArrival?.kind === 'live'
       ? trip.eta.primaryArrival.live?.vehicleId ?? null
@@ -150,10 +206,12 @@ export default function MapScreen() {
   useEffect(() => () => {
     if (releaseTimer.current) clearTimeout(releaseTimer.current);
   }, []);
-  const onRegionChangeComplete = useCallback(() => {
+  const onRegionChangeComplete = useCallback((region: Region) => {
     cameraMoving.current = false;
     setCameraSettled(true);
     setCameraTick((t) => t + 1);
+    // Same band: React bails out, nothing re-renders for the rail layer.
+    setZoomBand(railZoomBand(zoomFromRegion(region.longitudeDelta, windowWidth)));
     if (!holdPeek) return;
     const release = () => {
       const quiet = Date.now() - lastPanAt.current;
@@ -162,7 +220,7 @@ export default function MapScreen() {
     };
     if (releaseTimer.current) clearTimeout(releaseTimer.current);
     release();
-  }, [holdPeek, setHoldPeek]);
+  }, [holdPeek, setHoldPeek, windowWidth]);
 
   // --- Ghost (scheduled) bus when nothing live is reporting ----------------
   const ghostDeparture =
@@ -324,12 +382,15 @@ export default function MapScreen() {
         favorites={settings.favoritedRoutes}
         activeRoute={settings.preferredRouteCode}
         mapType={mapType}
+        myBusesOn={layers.myBuses}
+        railOn={layers.rail}
         userPanned={userPanned}
         canShare={trip.model.compact != null}
         onRecenter={recenter}
         onShare={share}
         onSelectRoute={selectRoute}
         onSetMapType={settings.setMapType}
+        onSetMapLayer={settings.setMapLayer}
       />
       <MapView
         ref={mapRef}
@@ -353,15 +414,29 @@ export default function MapScreen() {
         onRegionChange={onRegionChange}
         onRegionChangeComplete={onRegionChangeComplete}
       >
-        {route ? (
+        {/* First child: rail sits under the bus route (see railKey). */}
+        {layers.rail ? (
+          <RailLayer
+            key={railKey}
+            lines={railLineDraws}
+            stations={railStationDraws}
+            focus={railFocus}
+            dim={railDim}
+            showAllStations={zoomBand === 2}
+            paper={mapPaper}
+            ink={ink}
+            onStationPress={openStation}
+          />
+        ) : null}
+        {route && layers.myBuses ? (
           <RouteLayer
-            key={`${route.routeCode}|${route.stopId}`}
+            key={`${route.routeCode}|${route.stopId}|${railKey}`}
             polyline={polyline}
             split={split}
             stops={route.stops}
             userStop={route.userStop}
             destination={rideDestination}
-            railStations={railStations}
+            railStations={layers.rail ? NO_RAIL_STATIONS : railStations}
             ink={ink}
             inkMuted={`${ink}59`}
             casing={casing}
@@ -371,14 +446,14 @@ export default function MapScreen() {
             onUserStopPress={clearSelection}
           />
         ) : null}
-        {route && ghost.coord && positions.length === 0 ? (
+        {route && layers.myBuses && ghost.coord && positions.length === 0 ? (
           <GhostBusMarker
             coordinate={{ latitude: ghost.coord.lat, longitude: ghost.coord.lng }}
             color={ink}
             background={mapPaper}
           />
         ) : null}
-        {markers.map(({ vehicle, region }) => {
+        {(busMarkersShown ? markers : []).map(({ vehicle, region }) => {
           const primary = vehicle.vehicleId === primaryVehicleId;
           const passed = trip.eta.passedVehicleIds.has(vehicle.vehicleId);
           return (
@@ -405,7 +480,7 @@ export default function MapScreen() {
           );
         })}
       </MapView>
-      {route ? (
+      {route && layers.myBuses ? (
         <RouteShimmer
           mapRef={mapRef}
           path={aheadPath}
@@ -422,12 +497,15 @@ interface MapToolbarProps {
   favorites: string[];
   activeRoute: string | null;
   mapType: MapType;
+  myBusesOn: boolean;
+  railOn: boolean;
   userPanned: boolean;
   canShare: boolean;
   onRecenter: () => void;
   onShare: () => void;
   onSelectRoute: (code: string) => void;
   onSetMapType: (t: MapType) => void;
+  onSetMapLayer: (key: keyof MapLayers, on: boolean) => void;
 }
 
 /**
@@ -440,14 +518,26 @@ const MapToolbar = memo(function MapToolbar({
   favorites,
   activeRoute,
   mapType,
+  myBusesOn,
+  railOn,
   userPanned,
   canShare,
   onRecenter,
   onShare,
   onSelectRoute,
   onSetMapType,
+  onSetMapLayer,
 }: MapToolbarProps) {
   const router = useRouter();
+  // Each toggle is a decision: a selection tick, then the change.
+  const toggleLayer = (key: keyof MapLayers, on: boolean) => {
+    haptics.selection();
+    onSetMapLayer(key, on);
+  };
+  const toggleSatellite = () => {
+    haptics.selection();
+    onSetMapType(mapType === 'satellite' ? 'standard' : 'satellite');
+  };
 
   return (
     <>
@@ -481,28 +571,38 @@ const MapToolbar = memo(function MapToolbar({
         )}
       </Stack.Toolbar>
       <Stack.Toolbar placement="right">
+        <Stack.Toolbar.Menu icon="square.3.layers.3d" accessibilityLabel="Map layers">
+          <Stack.Toolbar.MenuAction
+            icon="bus.fill"
+            isOn={myBusesOn}
+            onPress={() => toggleLayer('myBuses', !myBusesOn)}
+          >
+            My buses
+          </Stack.Toolbar.MenuAction>
+          <Stack.Toolbar.MenuAction icon="bus" disabled subtitle="Soon">
+            Buses nearby
+          </Stack.Toolbar.MenuAction>
+          <Stack.Toolbar.MenuAction
+            icon="tram.fill"
+            isOn={railOn}
+            onPress={() => toggleLayer('rail', !railOn)}
+          >
+            Rail lines
+          </Stack.Toolbar.MenuAction>
+          <Stack.Toolbar.MenuAction
+            icon="globe.asia.australia"
+            isOn={mapType === 'satellite'}
+            onPress={toggleSatellite}
+          >
+            Satellite
+          </Stack.Toolbar.MenuAction>
+        </Stack.Toolbar.Menu>
         <Stack.Toolbar.Button
           icon={userPanned ? 'location' : 'location.fill'}
           accessibilityLabel="Recenter map"
           onPress={onRecenter}
         />
         <Stack.Toolbar.Menu icon="ellipsis" accessibilityLabel="More">
-          <Stack.Toolbar.Menu inline title="Map">
-            <Stack.Toolbar.MenuAction
-              icon="map"
-              isOn={mapType === 'standard'}
-              onPress={() => onSetMapType('standard')}
-            >
-              Standard
-            </Stack.Toolbar.MenuAction>
-            <Stack.Toolbar.MenuAction
-              icon="globe.asia.australia"
-              isOn={mapType === 'satellite'}
-              onPress={() => onSetMapType('satellite')}
-            >
-              Satellite
-            </Stack.Toolbar.MenuAction>
-          </Stack.Toolbar.Menu>
           {canShare ? (
             <Stack.Toolbar.MenuAction icon="square.and.arrow.up" onPress={onShare}>
               Share Arrival

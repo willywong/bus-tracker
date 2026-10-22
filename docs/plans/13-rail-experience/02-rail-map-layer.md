@@ -95,3 +95,34 @@ A `RailLayer` that draws every rail line in its official colour under the bus ro
 - `RailLayer` with `focus` prop exists; `index.tsx` keeps `railKey` ordering so restyles never cover the bus route.
 - `bt.mapLayers` persisted; Layers menu replaces the More → Map section.
 - Station taps push `/station?station=<slug>`; 03 creates the screen, 05 adds focus/framing via `TripContext`.
+
+## Implementation notes
+
+- **Schema v9** (12/06 left it at v8). `rail_shapes` is in the DDL exactly as specified; the v8 → v9 step in `db/database.ts` has nothing to backfill. `META_KEYS.railShapesHash` records the rail feed hash the table was last written from.
+- **Not in the blob's transaction.** Shapes are written by `refreshRailShapes` (`services/railShapes.ts`), called once at the end of `refreshTransitNetwork`, before `pruneBlobs`. It uses its own `withTransactionAsync`: the rows plus the hash go in together. It doesn't share the blob's transaction for two reasons. The blobs are per date, while the geometry is per rail feed version. And with 12/07's health check an expired rail feed is compiled out of the blob, yet its geometry must stay.
+  - **When it writes:** when the stored rail feed's hash differs from `railShapesHash`. That covers a new rail feed, and a fresh install or the v9 upgrade, where there is no hash yet and the stored zip is read. The daily rebuild of "tomorrow" doesn't write again.
+  - **Rows are only replaced** (`INSERT OR REPLACE`), never deleted.
+- **Rail is read with shapes.** Both `readFeedSteps` calls in the refresh pass `{ shapes: d.feed === "rail" }` / `{ shapes: f === "rail" }`, so a rail read during the refresh is reused. Otherwise the stored zip is read once more.
+- **Sliced.** `railShapesSteps` yields every 2,048 trip or shape rows and after each route. On the fixture, all 8 lines take 1.8 ms on Node and the longest step is well under 1 ms; the test asserts < 10 ms.
+- **Shape per route:** the route's first trip's `shape_id`, the same rule `compileNetwork` uses for `routes.shapeId`, read from the parsed rail feed. The network isn't needed, which matters when rail is compiled out.
+  - Keys are the network route ids: `rail:AG`, `rail:KJ`, `rail:PH`, `rail:KGL`, `rail:PYL`, `rail:MR`, `rail:BRT`, `rail:SA`.
+  - Simplified at 5 m (`simplifyPath` in `packages/shared/src/transit/shapes.ts`), this is 1,412 points in all: AG 82, KJ 256, SP 203, KG 300, PY 325, MR 70, BRT 38, SA 138.
+- **Shapes reach the map** through `useRailShapes(network)` (`hooks/useRailShapes.ts`). It reads `rail_shapes` on mount and again whenever the provider swaps in a network; the refresh writes shapes before it reloads the network.
+- **`railModel.ts` deviations.**
+  - The station type is `RailStationDraw` (`id, name, lat, lng, colors, interchange, label`) rather than `RailStationMark`, which stays `RouteLayer`'s type for the nearby squares.
+  - Extra exports: `hasRailFeed`, `railStationsFor(net)`, `spokenLineName`, `railZoomBand`, `RAIL_DIM_BELOW_ZOOM` = 11 and `RAIL_ALL_STATIONS_FROM_ZOOM` = 12.
+  - **Route ids in the fallback.** With no network, or with rail compiled out, the bundled lines use the `RailLine.code` ('LRT KJ', 'MRT KG', …) as `routeId`, since the network ids can't be derived from `RAIL_STATIONS`. KTM still comes from the network when it is there. `focus` ids therefore only match a network that has rail.
+  - **Stations.** `railStationsFor(net)` is `net.stations` when rail is in; otherwise `RAIL_STATIONS` plus the network's KTM stations.
+  - A rail route whose shape isn't stored yet draws station to station along its longest pattern, the same rule as KTM.
+- **`interchange`** means more than one distinct line name. A station gets one 8 pt dot per distinct colour, in a square `20 + (n − 1) · 9` wide, the same square as `RouteLayer`'s. The accessibility label drops the "LRT/MRT/BRT " prefix: "Kelana Jaya Line and Kajang Line station, Pasar Seni".
+- **`railKey` also carries a lines signature.** The key is `${dim}|${focus}|${layers.rail}|${routeId:pointCount,…}`. Without the signature, new lines after a refresh would re-render `RailLayer` in place and cover the bus route. With rail off it is the constant `'rail-off'`, so crossing zoom 11 doesn't remount `RouteLayer`.
+- **Zoom** is kept as a 3-value band state (`RailZoomBand`), set in `onRegionChangeComplete(region)` from `region.longitudeDelta` and the window width. React bails out when the band is unchanged.
+- **My buses off** hides `RouteLayer`, `RouteShimmer`, the ghost bus and the bus markers. The bus markers first have their glides stopped, then unmount on the next render (`busMarkersShown`), because unmounting a marker mid-animation trips Fabric (see `useGlidingMarkers`).
+- **Focus is wired but unset.** `railFocus` is the module constant `NO_RAIL_FOCUS` (null). 13/05 (selection) and 15/05 (itinerary) replace it with real state; `railKey` already includes it.
+- **`/station` push.** `router.push({ pathname: '/station', params: { station } } as unknown as Href)`, cast because typed routes don't know `/station` until 13/03 adds `app/station.tsx`. Remove the cast then. Until 13/03, a tap lands on `+not-found`.
+- **Settings.** `mapLayers` is `{ myBuses, rail }`, stored as JSON in `bt.mapLayers`. `parseMapLayers` is exported and keeps the default for any missing or invalid field. `setMapLayer(key, on)` is available. The Layers menu replaces More → Map, and Satellite toggles `bt.mapType` between standard and satellite.
+- **Tests:**
+  - `components/map/__tests__/railModel.test.ts` (8): the 6 specified, plus "stored shape vs stops" and "rail feed left out".
+  - `services/__tests__/railShapes.test.ts` (4): fixture shapes, BLOB round trip, write-once/never-delete, and a refresh integration.
+  - `packages/shared/src/transit/__tests__/shapes.test.ts` (5).
+- **Build impact:** JS-only (Metro reload). No new native modules or config; the SQLite table is created at runtime by the DDL.
