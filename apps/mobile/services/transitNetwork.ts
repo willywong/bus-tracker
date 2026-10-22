@@ -2,15 +2,18 @@ import {
   FEED_IDS,
   NETWORK_FORMAT_VERSION,
   NetworkFormatError,
+  activeServiceIds,
   compileNetwork,
   decodeNetworkSteps,
   encodeNetworkSteps,
+  feedHealth,
   fnv1a32HexSteps,
   readFeedSteps,
   readNetworkMeta,
   toMalaysiaParts,
   type CompileFeeds,
   type FeedId,
+  type NetworkHealth,
   type NormalisedFeed,
   type TransitNetwork,
   type runSteps,
@@ -18,6 +21,7 @@ import {
 import type { Db } from "@/db/database";
 import {
   loadBlob,
+  loadFeedInfo,
   loadFeeds,
   pruneBlobs,
   saveBlob,
@@ -92,6 +96,47 @@ export async function loadTodayNetwork(deps: NetworkDeps): Promise<TransitNetwor
     if (err instanceof NetworkFormatError) return null;
     throw err;
   }
+}
+
+/**
+ * Every downloaded feed's health on today's service date, from `feed_meta`
+ * and today's blob meta; no zip is read or decoded. Whether a feed runs
+ * anything today comes from the blob's `meta.feeds[f].included` when that
+ * blob was built from the stored copy, else from the dates alone. Cheap
+ * enough to call whenever the app comes back to the foreground. `loaded` is
+ * the network already in memory; when it is today's, the blob isn't read.
+ */
+export async function loadHealth(
+  deps: NetworkDeps,
+  loaded?: TransitNetwork["meta"] | null,
+): Promise<NetworkHealth> {
+  const [today] = serviceDatesFor(deps.now());
+  const stored = await loadFeedInfo(deps.db);
+  let built: TransitNetwork["meta"]["feeds"] | null = null;
+  if (loaded?.serviceDate === today) {
+    built = loaded.feeds;
+  } else {
+    const blob = await loadBlob(deps.db, today);
+    if (blob && blob.version === NETWORK_FORMAT_VERSION) {
+      try {
+        built = readNetworkMeta(blob.data).feeds;
+      } catch (err) {
+        if (!(err instanceof NetworkFormatError)) throw err;
+      }
+    }
+  }
+  const health: NetworkHealth = {};
+  for (const f of FEED_IDS) {
+    const s = stored[f];
+    if (!s) continue;
+    const m = built?.[f];
+    const hasActiveServicesToday = m && m.hash === s.hash ? m.included : today <= s.validUntil;
+    health[f] = feedHealth(
+      { feed: f, validFrom: s.validFrom, validUntil: s.validUntil, hasActiveServicesToday },
+      today,
+    );
+  }
+  return health;
 }
 
 /**
@@ -190,10 +235,21 @@ export async function refreshTransitNetwork(deps: NetworkDeps): Promise<RefreshR
             continue;
           }
         }
-        // `included` comes from feed health (task 07); until then every feed is in.
+        // Feed health on this service date (spec §3.6): an expired feed is
+        // compiled out, and `meta.feeds[f].included` records it.
+        const { included } = feedHealth(
+          {
+            feed: f,
+            validFrom: s.validFrom,
+            validUntil: s.validUntil,
+            hasActiveServicesToday: activeServiceIds(data.parsed.calendar, data.parsed.calendarDates, date).size > 0,
+          },
+          date,
+        );
+        if (!included) log(`${date}: ${f} expired (valid to ${s.validUntil}), left out`);
         feeds[f] = {
           data,
-          meta: { fetchedAt: s.fetchedAt, hash: s.hash, validUntil: s.validUntil, included: true },
+          meta: { fetchedAt: s.fetchedAt, hash: s.hash, validUntil: s.validUntil, included },
         };
       }
       const net = await deps.runSteps(

@@ -60,6 +60,28 @@ export async function loadFeeds(db: Db): Promise<Partial<Record<FeedId, StoredFe
   return out;
 }
 
+/** A stored feed without its zip: what feed health needs. */
+export type StoredFeedInfo = Omit<StoredFeed, "zip">;
+
+/** Every stored feed's version and service range, without reading the zips. */
+export async function loadFeedInfo(db: Db): Promise<Partial<Record<FeedId, StoredFeedInfo>>> {
+  const rows = await db.getAllAsync<Omit<FeedRow, "zip">>(
+    "SELECT feed_id, hash, fetched_at, valid_from, valid_until FROM feed_meta;",
+  );
+  const out: Partial<Record<FeedId, StoredFeedInfo>> = {};
+  for (const r of rows) {
+    if (!isFeedId(r.feed_id)) continue;
+    out[r.feed_id] = {
+      feed: r.feed_id,
+      hash: r.hash,
+      fetchedAt: Number(r.fetched_at),
+      validFrom: r.valid_from,
+      validUntil: r.valid_until,
+    };
+  }
+  return out;
+}
+
 export async function saveFeed(db: Db, f: StoredFeed): Promise<void> {
   await db.runAsync(
     `INSERT OR REPLACE INTO feed_meta(feed_id, hash, fetched_at, valid_from, valid_until, zip)

@@ -3,10 +3,10 @@ import { StyleSheet, Text } from 'react-native';
 
 import { color, type } from '@/theme/design';
 
-const DATA_GOV_MY = 'https://data.gov.my';
+export const DATA_GOV_MY = 'https://data.gov.my';
 
 /** Opens the open-data portal in an in-app Safari sheet. */
-function openDataGovMy() {
+export function openDataGovMy() {
   void WebBrowser.openBrowserAsync(DATA_GOV_MY, {
     presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
   });

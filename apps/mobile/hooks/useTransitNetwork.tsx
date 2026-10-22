@@ -8,11 +8,12 @@ import {
   type ReactNode,
 } from "react";
 import { AppState, type AppStateStatus } from "react-native";
-import { runSteps, type TransitNetwork } from "@bus-tracker/shared";
+import { healthNote, runSteps, type NetworkHealth, type TransitNetwork } from "@bus-tracker/shared";
 import { openDb } from "@/db/database";
 import { startDevStages } from "@/services/devStages";
 import { downloadTransitFeeds } from "@/services/gtfsFeed";
 import {
+  loadHealth,
   loadTodayNetwork,
   refreshTransitNetwork,
   serviceDatesFor,
@@ -24,9 +25,16 @@ export type TransitNetworkStatus = "loading" | "ready" | "refreshing" | "offline
 export interface TransitNetworkState {
   /** Today's compiled network (service day from 04:00 MYT), or null before the first build. */
   network: TransitNetwork | null;
-  /** Per-feed health. Filled by feed health (plan 12/07); always null until then. */
-  health: null;
+  /**
+   * Per-feed health on today's service date (spec §3.6); a feed never
+   * downloaded is absent. Null until first read from the database.
+   * Recomputed on load, after each refresh, and whenever the app comes back
+   * to the foreground, so expiry shows without a download.
+   */
+  health: NetworkHealth | null;
   status: TransitNetworkStatus;
+  /** The planner's one-line note about expired feeds left out of routing, or null. */
+  note: string | null;
 }
 
 /** How long the first refresh waits for an idle moment before running anyway. */
@@ -100,6 +108,7 @@ export function TransitNetworkProvider({
 }): ReturnType<typeof createElement> {
   const [network, setNetwork] = useState<TransitNetwork | null>(null);
   const [status, setStatus] = useState<TransitNetworkStatus>("loading");
+  const [health, setHealth] = useState<NetworkHealth | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -128,6 +137,20 @@ export function TransitNetworkProvider({
       return net;
     }
 
+    /** Feed health for the current service date; never throws. */
+    async function updateHealth(): Promise<void> {
+      try {
+        const deps = await depsPromise;
+        const h = await loadHealth(deps, current?.meta);
+        const states = Object.values(h).map((f) => `${f.feed} ${f.state} to ${f.validUntil}`);
+        const note = healthNote(h);
+        log(`health: ${states.join(", ") || "no feeds yet"}${note ? ` · note: ${note}` : ""}`);
+        if (!cancelled) setHealth(h);
+      } catch (err) {
+        console.warn("[transit-network] health failed", err);
+      }
+    }
+
     async function refresh(): Promise<void> {
       // One refresh at a time; a request during one runs once it's done.
       if (running) {
@@ -145,6 +168,7 @@ export function TransitNetworkProvider({
         stopFrameGaps = watchFrameGaps();
         const result = await refreshTransitNetwork(deps);
         const net = await load();
+        await updateHealth();
         const next: TransitNetworkStatus = net ? (result.offline ? "offline" : "ready") : "error";
         log(
           `refresh done in ${Date.now() - startedAt} ms: rebuilt [${result.rebuilt.join(", ")}]` +
@@ -183,21 +207,28 @@ export function TransitNetworkProvider({
       } catch (err) {
         console.warn("[transit-network] load failed", err);
       }
+      await updateHealth();
       if (!cancelled) scheduleRefresh();
     })();
 
-    // A new service day (04:00 MYT) since the last load: switch to its blob
-    // at once, then refresh feeds and build the next "tomorrow".
+    // Back in the foreground: feed health is recomputed for the new date, so
+    // an expiry shows without a download. On a new service day (04:00 MYT)
+    // since the last load, switch to its blob at once, then refresh feeds and
+    // build the next "tomorrow".
     const sub = AppState.addEventListener("change", (state: AppStateStatus) => {
       if (state !== "active" || loadedDate === null) return;
       const today = serviceDatesFor(Date.now())[0];
-      if (today === loadedDate) return;
+      if (today === loadedDate) {
+        void updateHealth();
+        return;
+      }
       log(`new service day ${today} (was ${loadedDate})`);
       void load()
         .then((net) => {
           if (!cancelled && !running) setStatus(net ? "ready" : "loading");
         })
-        .catch((err) => console.warn("[transit-network] load failed", err));
+        .catch((err) => console.warn("[transit-network] load failed", err))
+        .then(updateHealth);
       scheduleRefresh();
     });
 
@@ -209,8 +240,8 @@ export function TransitNetworkProvider({
   }, []);
 
   const value = useMemo<TransitNetworkState>(
-    () => ({ network, health: null, status }),
-    [network, status],
+    () => ({ network, health, status, note: health ? healthNote(health) : null }),
+    [network, health, status],
   );
 
   return createElement(TransitNetworkContext.Provider, { value }, children);

@@ -26,6 +26,7 @@ import { Stack, useRouter } from 'expo-router';
 import { useState } from 'react';
 import { useColorScheme } from 'react-native';
 
+import { DataSourcesSection } from '@/components/settings/DataSourcesSection';
 import { FavoritesSection } from '@/components/settings/FavoritesSection';
 import { RemindersSection } from '@/components/settings/RemindersSection';
 import {
@@ -161,11 +162,13 @@ export default function SettingsScreen() {
             </Picker>
           </Section>
 
+          <DataSourcesSection />
+
           <Section
             title="About"
             footer={
               <Text>
-                Live bus positions and timetables from data.gov.my (Prasarana). Traffic signal
+                Live bus positions and timetables from data.gov.my (Prasarana, KTMB). Traffic signal
                 locations © OpenStreetMap contributors. BusBuddy is not affiliated with Rapid KL.
               </Text>
             }

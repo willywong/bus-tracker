@@ -2,9 +2,9 @@ import { count, createTestDb } from "@/db/__tests__/nodeDb";
 
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, mock, test } from "node:test";
-import { strToU8, zipSync } from "fflate";
+import { strToU8, unzipSync, zipSync } from "fflate";
 
-import { FEED_IDS, FEED_INFO, runSteps, type FeedId } from "@bus-tracker/shared";
+import { FEED_IDS, FEED_INFO, healthNote, runSteps, type FeedId } from "@bus-tracker/shared";
 import { loadBlob, saveBlob } from "@/db/networkStore";
 import {
   createStaticLimiter,
@@ -14,6 +14,7 @@ import {
 } from "../gtfsFeed";
 import {
   FEED_MAX_AGE_MS,
+  loadHealth,
   loadTodayNetwork,
   refreshTransitNetwork,
   serviceDatesFor,
@@ -328,4 +329,64 @@ test("corrupt blob (NetworkFormatError) triggers a rebuild", async () => {
   assert.equal(requests.length, 0);
   assert.deepEqual(result.rebuilt, [TODAY]);
   assert.ok(await loadTodayNetwork(deps(db)));
+});
+
+/** The synthetic rail feed with its timetable ending 20261231. */
+function expiringRailZip(): Uint8Array {
+  return zipSync({
+    ...unzipSync(railZip()),
+    "calendar.txt": strToU8(CALENDAR.replace("20271231", "20261231")),
+  });
+}
+
+/** 2027-01-02 10:00 MYT: two days past that rail timetable's end. */
+const AFTER_RAIL_END = Date.UTC(2027, 0, 2, 2, 0, 0);
+
+test("an expired feed is compiled out (meta.feeds.rail.included === false, no rail: stops)", async () => {
+  c.t = AFTER_RAIL_END;
+  relaunch();
+  zips.rail = expiringRailZip();
+  try {
+    const db = createTestDb();
+    const result = await refreshTransitNetwork(deps(db));
+    assert.deepEqual(result.failedFeeds, []);
+    assert.deepEqual(result.rebuilt, ["20270102", "20270103"]);
+
+    const net = await loadTodayNetwork(deps(db));
+    assert.ok(net);
+    assert.equal(net.meta.feeds.rail.included, false);
+    assert.equal(net.meta.feeds.rail.validUntil, "20261231");
+    for (const f of FEED_IDS.filter((f) => f !== "rail")) assert.equal(net.meta.feeds[f].included, true);
+    assert.equal(net.stops.id.filter((id) => id.startsWith("rail:")).length, 0);
+    assert.ok(net.stops.id.some((id) => id.startsWith("ktm:")));
+
+    const health = await loadHealth(deps(db));
+    assert.equal(health.rail?.state, "expired");
+    assert.equal(health.rail?.included, false);
+    assert.equal(health.ktm?.state, "ok");
+    assert.equal(healthNote(health), "Rail timetable from data.gov.my has expired. Showing bus-only routes.");
+    // Same answer from the network already in memory.
+    assert.deepEqual(await loadHealth(deps(db), net.meta), health);
+  } finally {
+    zips.rail = railZip();
+  }
+});
+
+test("loadHealth: dates alone without a blob, and absent feeds stay absent", async () => {
+  const db = createTestDb();
+  assert.deepEqual(await loadHealth(deps(db)), {});
+  c.t = AFTER_RAIL_END;
+  relaunch();
+  zips.rail = expiringRailZip();
+  try {
+    await refreshTransitNetwork(deps(db));
+    db.raw.exec("DELETE FROM network_blobs;");
+    const health = await loadHealth(deps(db));
+    assert.equal(health.rail?.state, "expired");
+    assert.equal(health["bus-kl"]?.state, "ok");
+    // 20270102 → 20271231.
+    assert.equal(health["bus-kl"]?.daysLeft, 363);
+  } finally {
+    zips.rail = railZip();
+  }
 });

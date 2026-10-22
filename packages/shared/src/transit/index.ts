@@ -6,6 +6,7 @@ export * from "./transfers.js";
 export * from "./board.js";
 export * from "./serialize.js";
 export * from "./hash.js";
+export * from "./health.js";
 export * from "./raptor.js";
 export * from "./boarding.js";
 export * from "./workspace.js";

@@ -120,3 +120,23 @@
   - KTM has no shapes, so legs draw straight;
   - curated interchange times override same-station defaults (task 04);
   - KTMB realtime is resolved in task 00 Results.
+
+## Implementation notes
+- **A feed past `validUntil` that still runs today is `expiring`, not `ok`.** Step 1 rule 2 limits `expiring` to `daysLeft` 0–14, which would have shown "Timetable to 31 Dec 2026" on 2 January. Now `expiring` covers `daysLeft <= 14`, including negative values. In practice this case barely happens: `readFeedSteps` already stretches `validUntil` to the latest added `calendar_dates` day.
+- **Health is judged on the service date, not the calendar date.** In the app, both the compile and `loadHealth` call `feedHealth` with the service date (the MYT date of `now − 4 h`, from `serviceDatesFor`). That keeps health in step with the blob that is loaded between 00:00 and 04:00. `networkHealth(feeds, nowMs)` exists as specified (MYT calendar date) and is used by the tests. The app does not call it.
+- **`loadHealth(deps, loaded?)` takes an optional second argument:** the meta of the network already in memory. When that meta is for today, the blob is not read. Otherwise `loadHealth` reads only the blob's META section (`readNetworkMeta`). It reads `feed_meta` through a new `loadFeedInfo(db)` in `db/networkStore.ts`, which selects every column except `zip`.
+  - `hasActiveServicesToday` comes from the blob's `meta.feeds[f].included` only when the blob's hash for that feed matches `feed_meta`.
+  - Otherwise it is `today <= validUntil`, the date check alone.
+- **`health` is `NetworkHealth | null`.** It is null until the first read from the database, and `note` is null while `health` is null.
+  - The provider recomputes health in three places: after the first load, after each refresh, and on every AppState `active`. On a new service day it recomputes after the new day's blob loads.
+  - Dev and release builds both log `[transit-network] health: rail ok to 20261231, … · note: …` each time health is recomputed.
+- **The section reads the hook itself.** `<DataSourcesSection />` calls `useTransitNetwork()` instead of taking a prop, which keeps the `settings.tsx` change to one line. While `health` is null the section shows only the footer and the "Open data.gov.my" button, never four "Not downloaded yet" rows.
+- **`formatYmd`** is exported from `components/settings/dataSources.ts` alongside `dataSourceRows`.
+- **Excluding a feed does not trigger a rebuild on its own.** `rebuildReason` still compares hashes only. For a given service date, `included` depends only on the feed's contents, so a blob built for a date is never wrong about that date. The one gap: a blob built by 12/06 code, where every feed was included, is kept until a feed's hash changes or its date is pruned. Since 12/06, no fixture feed has passed its end date.
+- **An expired feed is still read** for the date being compiled, because `activeServiceIds` needs its calendar. Only `compileNetwork` leaves it out.
+- **A single expired bus feed** gets the generic "Some timetables…" wording, with one label. The spec words only the rail-only and KTM-only cases.
+- **For 13/x and 14/x:** read `useTransitNetwork().note` for the planner line, and `meta.feeds[f].included` (or `excludedFeeds(net)` in `modes.ts`) to tell which feeds a network leaves out. Neither phase writes to the hook.
+- **Tests:**
+  - `health.test.ts` has 11 tests;
+  - `dataSources.test.ts` has 6, adding a `formatYmd` check;
+  - `transitNetwork.test.ts` gains 2: the expired-feed compile, and `loadHealth` falling back to dates alone with no blob.
