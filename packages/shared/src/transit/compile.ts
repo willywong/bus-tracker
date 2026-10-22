@@ -7,6 +7,7 @@ import { frequencyInstanceId } from "../utils/t816-bundle.js";
 import type { NormalisedFeed } from "./feeds.js";
 import { slug } from "./names.js";
 import { FEED_IDS, MODES, namespaceFeedId, NETWORK_VERSION, type FeedId, type TransitNetwork } from "./network.js";
+import { buildTransfersSteps } from "./transfers.js";
 
 export interface FeedMeta { fetchedAt: number; hash: string; validUntil: string; included: boolean }
 export type CompileFeeds = Partial<Record<FeedId, { data: NormalisedFeed; meta: FeedMeta }>>;
@@ -123,7 +124,7 @@ type Stops = TransitNetwork["stops"];
  * Builds one service day's {@link TransitNetwork} from the included feeds, as
  * a generator that yields every `yieldEvery` units of work (drive it with
  * `runSteps`). Feeds go in `FEED_IDS` order so indices are deterministic.
- * `transfers` is left as empty CSR.
+ * Transfers come last, from {@link buildTransfersSteps}.
  */
 export function* compileNetwork(
   feeds: CompileFeeds,
@@ -156,7 +157,7 @@ export function* compileNetwork(
       ? { fetchedAt: m.fetchedAt, hash: m.hash, validUntil: m.validUntil, included: m.included }
       : { fetchedAt: 0, hash: "", validUntil: "", included: false };
   }
-  return {
+  const net: TransitNetwork = {
     meta: { version: NETWORK_VERSION, serviceDate, builtAt: opts.builtAt ?? Date.now(), feeds: metaFeeds },
     stops,
     stations,
@@ -172,6 +173,8 @@ export function* compileNetwork(
     },
     grid,
   };
+  net.transfers = yield* buildTransfersSteps(net);
+  return net;
 }
 
 /** Drains {@link compileNetwork} in one go, for tests and scripts. */

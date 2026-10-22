@@ -353,7 +353,8 @@ test("an 840 s rail window stays a freq window (no expanded trips)", (t) => {
   assert.deepEqual(added.stopIds, ["rail:KJ99"]);
   assert.equal(added.name, "New Station");
   assert.deepEqual(added.lines.map((l) => l.code), ["LRT KJ"]);
-  assert.equal(warn.mock.callCount(), 1);
+  // The compiler's own warning; buildTransfers also warns about the curated ids this tiny feed lacks.
+  assert.equal(warn.mock.calls.filter((c) => String(c.arguments[0]).startsWith("compileNetwork:")).length, 1);
 });
 
 test("times past 24:00:00 are kept above 86400", () => {

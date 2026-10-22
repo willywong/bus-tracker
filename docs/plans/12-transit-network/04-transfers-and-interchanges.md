@@ -119,3 +119,17 @@
 - `compileNetwork` now returns a full `TransitNetwork`, transfers included, and the output is deterministic for the same inputs.
 - `RAIL_INTERCHANGES` is in `packages/shared/src/data/rail-interchanges.ts`, with the spec §3.4 ids and all entries `verified: false`.
 - Precedence is curated, then station, then walk. Curated times override the same-station default.
+
+## Implementation notes
+- **Every spec §3.4 id resolves** in the 2026-10-23 fixtures compiled for 20261028. The KTM names are `19100` KL SENTRAL, `19000` KUALA LUMPUR, `18900` BANK NEGARA, `53700` SUBANG JAYA, `53600` SETIA JAYA and `52700` ABDULLAH HUKUM.
+- **Counts for 20261028.** There are 17,042 directed pairs, an average degree of 2.65:
+  - walk: 16,954;
+  - station: 48;
+  - interchange: 40 (the 20 entries, both ways);
+  - verified: 0.
+  This is fewer than the "tens of thousands" estimate. Most bus stops have only one or two neighbours within 250 m.
+- **The proximity scan yields every 64 stops, not every 512.** A dense-city stop costs about 4 µs on Node, so 512 stops made a step of about 2 ms on Node, roughly 15 ms on Hermes. At 64, every transfer step stays at or under 0.5 ms on Node. The CSR fill and sort yield every 8,192 pairs or stops.
+- **Compile time on Node** rose from about 25 ms to 55–60 ms. On its own, `buildTransfersSteps` takes about 26 ms over 103 steps.
+- **`same priority keeps the smaller time` uses duplicate curated entries,** larger time first and one written `b → a`. A pair cannot get two proximity candidates, because its distance is the same from both ends. The test still exercises the same merge rule.
+- **Unresolved curated ids produce one aggregated `console.warn` per build.** An id is reported only when its feed has stops in the network. An excluded feed, such as expired rail, is expected and stays silent. The 840 s rail test in `compile.test.ts` now counts only the `compileNetwork:` warnings, because a tiny synthetic rail feed lacks the curated ids.
+- **Additions:** `buildTransfers(net, curated?)` is a sync drain for tests and scripts. `RAIL_INTERCHANGES` and `Interchange` are exported from the package root, next to `RAIL_STATIONS`.

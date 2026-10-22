@@ -4,6 +4,7 @@ export * from "./transit/index.js";
 
 export { TRAFFIC_SIGNALS } from "./data/traffic-signals.js";
 export { RAIL_LINES, RAIL_STATIONS } from "./data/rail-stations.js";
+export { RAIL_INTERCHANGES, type Interchange } from "./data/rail-interchanges.js";
 export {
   nearbyRailStations,
   formatWalkingDistance,
