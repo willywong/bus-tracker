@@ -161,6 +161,18 @@ function AppStack() {
             contentStyle: { backgroundColor: SHEET_BACKGROUND },
           }}
         />
+        {/* Temporary (plan 12/00): network build timing harness. */}
+        <Stack.Screen
+          name="dev-network"
+          options={{
+            presentation: 'formSheet',
+            sheetAllowedDetents: [1],
+            sheetGrabberVisible: true,
+            headerShown: true,
+            headerTransparent: true,
+            contentStyle: { backgroundColor: SHEET_BACKGROUND },
+          }}
+        />
       </Stack>
     </ThemeProvider>
   );
