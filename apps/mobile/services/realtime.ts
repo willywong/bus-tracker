@@ -63,8 +63,8 @@ export interface RealtimeSnapshot {
 
 export type PositionFilter = (incoming: VehiclePosition[]) => VehiclePosition[];
 
-/** Who asked for extra routes: the planner's sheets (15/04), or Go (15/06). */
-export type ExtraRoutesSource = "planner" | "go";
+/** Who asked for extra routes: the planner's sheets (15/04), Go (15/06), or Nearby's route preview (17/05). */
+export type ExtraRoutesSource = "planner" | "go" | "preview";
 
 type Listener = () => void;
 
@@ -91,8 +91,8 @@ export interface RealtimeStore {
    * categories are polled every 60 s only from spare budget, else reported in
    * `plannerSkipped`. Clears the cached feed plan. Polling runs while there
    * are followed routes or extras. Each `source` owns its own list (the
-   * planner's sheet, and Go following a journey), so one clearing its
-   * routes never drops the other's; they are merged per category.
+   * planner's sheet, Go following a journey, and a previewed route), so one
+   * clearing its routes never drops the others'; they are merged per category.
    */
   setExtraRoutes(source: ExtraRoutesSource, extra: readonly PlannerFeedRoutes[]): void;
   setFilter(filter: PositionFilter): void;

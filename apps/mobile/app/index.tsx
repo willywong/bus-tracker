@@ -14,6 +14,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BusMarker, GhostBusMarker } from '@/components/map/BusMarker';
 import { itineraryDrawLegs } from '@/components/map/itineraryGeometry';
 import { ItineraryLayer, type DrawLeg } from '@/components/map/ItineraryLayer';
+import { PlacePins, PlaceWalk, placeCoord } from '@/components/map/PlacePins';
+import { PreviewLayer, type PreviewStopMark } from '@/components/map/PreviewLayer';
 import { RailLayer } from '@/components/map/RailLayer';
 import {
   railLines,
@@ -27,16 +29,23 @@ import { RouteLayer, type RailStationMark } from '@/components/map/RouteLayer';
 import { RouteShimmer } from '@/components/map/RouteShimmer';
 import { splitRoute } from '@/components/map/routeSplit';
 import { mapRailFocus } from '@/components/rail/railFocus';
+import { placeName, routePreview, type NearbyPlace } from '@/components/sheet/nearby/model';
+import { currentSection } from '@/components/sheet/sections';
+import { formatClockHHMM } from '@/components/tracker/logic';
 import { shouldPresentTrip, type NavStateLike } from '@/components/trip/sheetStack';
 import { useLocationPermission } from '@/hooks/useLocationPermission';
+import { usePreviewRealtime } from '@/hooks/usePreviewRealtime';
 import { useRailShapes } from '@/hooks/useRailShapes';
 import { useScheduledBusPosition } from '@/hooks/useScheduledBusPosition';
 import { useSettings, type MapLayers, type MapType } from '@/hooks/useSettings';
 import { useTransitNetwork } from '@/hooks/useTransitNetwork';
+import { useNearby } from '@/state/NearbyContext';
+import { viewKey } from '@/state/nearbyStack';
 import { useOpenItinerary, usePlanner } from '@/state/PlannerContext';
 import { useRide } from '@/state/RideContext';
 import { useTrip } from '@/state/TripContext';
-import { hex, itineraryDetents, pick, sheetDetents } from '@/theme/design';
+import { hex, itineraryDetents, motion, pick, sheetDetents } from '@/theme/design';
+import { devNow } from '@/utils/devClock';
 import { haptics } from '@/utils/haptics';
 import {
   nearbyRailStations,
@@ -83,6 +92,7 @@ export default function MapScreen() {
   const insets = useSafeAreaInsets();
   useLocationPermission();
   usePresentTripSheet();
+  usePreviewRealtime();
 
   const mapRef = useRef<MapView>(null);
   const [userPanned, setUserPanned] = useState(false);
@@ -224,6 +234,92 @@ export default function MapScreen() {
   /** Set from opening until the camera first settles: that starts the draw. */
   const awaitingDraw = useRef(false);
 
+  // --- Nearby on the map (plan 17/05) ---------------------------------------
+  // A route previewed from a stop takes the map over from the trip, as an
+  // itinerary does: its path, stops and live buses show, and the trip's
+  // route, buses and shimmer hide. An itinerary (or Go) wins over it. The
+  // list shows small pins for its places; a stop's view, the walk to it.
+  const nearby = useNearby();
+  const nearbyTop = nearby.top;
+  const onNearby = currentSection(settings.sheetSection, settings.preferredRouteCode != null) === 'nearby';
+  const previewView = nearbyTop.kind === 'route' ? nearbyTop : null;
+  const previewKey = previewView ? viewKey(previewView) : null;
+  // Your tracked route follows its road shape; any other route draws stop to stop.
+  const preview = useMemo(() => {
+    if (!previewView || !network) return null;
+    const label = network.routes.label[previewView.route];
+    const roadShape = tripCode != null && label === tripCode ? tripLine : null;
+    return routePreview(network, previewView.pattern, previewView.fromStopIndex, devNow(), {
+      clock: formatClockHHMM,
+      roadShape,
+    });
+  }, [previewView, network, tripCode, tripLine]);
+  const previewShown = preview != null && !itShown;
+  const previewShownRef = useRef(previewShown);
+  previewShownRef.current = previewShown;
+  /** Anything that takes the map over from the trip. */
+  const tripHidden = itShown || previewShown;
+  const previewPath = useMemo<Coord[]>(
+    () => preview?.path.map((p) => ({ latitude: p.lat, longitude: p.lng })) ?? [],
+    [preview],
+  );
+  const previewStops = useMemo<PreviewStopMark[]>(
+    () =>
+      preview?.stops.map((st) => ({
+        index: st.index,
+        name: st.name,
+        coord: { latitude: st.lat, longitude: st.lng },
+        yours: st.yours,
+      })) ?? [],
+    [preview],
+  );
+  const previewDrawKey = `${previewKey}|${previewPath.length}`;
+  const [previewDrawStart, setPreviewDrawStart] = useState(false);
+  const [previewDrawn, setPreviewDrawn] = useState(false);
+  const onPreviewDrawn = useCallback(() => setPreviewDrawn(true), []);
+  /** Set from opening a preview until the camera first settles: that starts its draw. */
+  const awaitingPreviewDraw = useRef(false);
+  // Its buses glide like the trip's. Fed even as the preview closes, so
+  // they stop before they unmount (see useGlidingMarkers).
+  const previewMarkers = useGlidingMarkers(
+    previewShown ? nearby.previewPositions : NO_POSITIONS,
+    previewKey ?? '',
+  );
+
+  // Pins: the list on screen, nothing drawn over it (an itinerary, Go, a
+  // ride, a stop or bus open in the sheet).
+  const pinsShown =
+    onNearby && nearbyTop.kind === 'list' && !itShown && !ride.active && trip.selection == null;
+  // Nearby's push and pop are new each time its state changes (every poll
+  // while previewing): held in a ref, so the pins and the toolbar's chip
+  // don't re-render with them.
+  const nearbyNav = useRef(nearby);
+  nearbyNav.current = nearby;
+  const popNearby = useCallback(() => nearbyNav.current.pop(), []);
+  const openPlace = useCallback(
+    (place: NearbyPlace) => {
+      if (place.kind === 'stop') nearbyNav.current.push({ kind: 'stop', key: place.key });
+      else router.push({ pathname: '/station', params: { station: place.stationId } });
+    },
+    [router],
+  );
+  // A stop's view: you, and the stop you'd walk to (its nearest member).
+  const nearbyHere = nearby.here;
+  const walkTo = useMemo(() => {
+    if (nearbyTop.kind !== 'stop' || !network) return null;
+    const place = nearby.places?.find((p) => p.key === nearbyTop.key);
+    if (place) {
+      const at = placeCoord(network, place);
+      return at ? { at, name: place.name } : null;
+    }
+    // Moved out of the list since: the key names the stop.
+    const s = network.stops.id.indexOf(nearbyTop.key.replace(/^stop:/, ''));
+    return s < 0
+      ? null
+      : { at: { lat: network.stops.lat[s], lng: network.stops.lon[s] }, name: placeName(network.stops.name[s]) };
+  }, [nearbyTop, network, nearby.places]);
+  const walkShown = walkTo != null && nearbyHere != null && !itShown;
+
   // --- Live bus markers ----------------------------------------------------
   // Drawn in the lane, with the arrow along the road (see snapPositions).
   const feedPositions = route ? trip.bus.positions : NO_POSITIONS;
@@ -235,8 +331,8 @@ export default function MapScreen() {
   const markers = useGlidingMarkers(positions, trip.routeCode);
   // My buses off: stop every glide first and unmount the markers on the next
   // render. Unmounting one mid-animation trips Fabric (see useGlidingMarkers).
-  // An open itinerary (or a journey in Go) hides them the same way.
-  const busesOn = layers.myBuses && !itShown;
+  // An open itinerary (or a journey in Go, or a route preview) hides them the same way.
+  const busesOn = layers.myBuses && !tripHidden;
   const [busMarkersShown, setBusMarkersShown] = useState(busesOn);
   useEffect(() => {
     if (!busesOn) for (const m of markers) stopAnimation(m.region);
@@ -283,13 +379,20 @@ export default function MapScreen() {
   useEffect(() => () => {
     if (releaseTimer.current) clearTimeout(releaseTimer.current);
   }, []);
+  /** Where the camera last settled: a preview restores it when it closes. */
+  const lastRegion = useRef<Region | null>(null);
   const onRegionChangeComplete = useCallback((region: Region) => {
     cameraMoving.current = false;
+    lastRegion.current = region;
     setCameraSettled(true);
     setCameraTick((t) => t + 1);
     if (awaitingDraw.current) {
       awaitingDraw.current = false;
       setDrawStart(true);
+    }
+    if (awaitingPreviewDraw.current) {
+      awaitingPreviewDraw.current = false;
+      setPreviewDrawStart(true);
     }
     // Same band: React bails out, nothing re-renders for the rail layer.
     setZoomBand(railZoomBand(zoomFromRegion(region.longitudeDelta, windowWidth)));
@@ -409,8 +512,8 @@ export default function MapScreen() {
   // pending timer just reschedules it.
   const framedKey = useRef<string | null>(null);
   useEffect(() => {
-    // An open itinerary owns the camera; closing it re-frames the trip.
-    if (!route || itShownRef.current) return;
+    // An open itinerary (or a preview) owns the camera; closing it re-frames the trip.
+    if (!route || itShownRef.current || previewShownRef.current) return;
     const key = `${route.routeCode}|${route.stopId}`;
     if (framedKey.current === key) return;
     const t = setTimeout(() => {
@@ -422,9 +525,9 @@ export default function MapScreen() {
   }, [route]);
 
   // Re-frame when the tracked bus or the sheet height changes — unless the
-  // user has taken over the camera.
+  // user has taken over the camera. A preview holds still (its own fit is below).
   useEffect(() => {
-    if (userPanned || itOpenRef.current) return;
+    if (userPanned || itOpenRef.current || previewShownRef.current) return;
     if (goOnlyRef.current) frameGoRef.current(true);
     else frameRef.current(true);
   }, [primaryVehicleId, trip.detent, userPanned]);
@@ -434,7 +537,7 @@ export default function MapScreen() {
   useEffect(() => {
     if (lastSelection.current === selectionKey) return;
     lastSelection.current = selectionKey;
-    if (itShownRef.current) return;
+    if (itShownRef.current || previewShownRef.current) return;
     setUserPanned(false);
     frameRef.current(true);
   }, [selectionKey]);
@@ -457,6 +560,13 @@ export default function MapScreen() {
       setUserPanned(false);
       if (goOnlyRef.current) frameGoRef.current(true);
       else frameItRef.current(true);
+      return;
+    }
+    // A station closing over a preview goes back to the path.
+    if (previewShownRef.current && !focusPoint) {
+      if (!hadPoint) return;
+      setUserPanned(false);
+      framePreviewRef.current(true);
       return;
     }
     setUserPanned(false);
@@ -566,11 +676,64 @@ export default function MapScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusNonce]);
 
+  // --- Preview camera (plan 17/05) ------------------------------------------
+  // 1. Opening a preview fits its path (from your stop on) above the sheet,
+  // as the itinerary fit does, and remembers where the camera was; 2. the
+  // draw starts once the camera first settles, or after 400 ms; 3. the sheet
+  // changing detent re-fits unless the map was moved by hand; 4. closing it
+  // puts the camera back where it was. Its buses never move the camera.
+  const framePreviewRef = useRef((animated: boolean) => frameItinerary(previewPath, animated));
+  framePreviewRef.current = (animated: boolean) => frameItinerary(previewPath, animated);
+  const beforePreview = useRef<{ region: Region | null; userPanned: boolean } | null>(null);
+  useEffect(() => {
+    if (!previewShown) return;
+    beforePreview.current ??= { region: lastRegion.current, userPanned: userPannedRef.current };
+    setUserPanned(false);
+    setPreviewDrawn(false);
+    setPreviewDrawStart(false);
+    awaitingPreviewDraw.current = true;
+    framePreviewRef.current(true);
+    const t = setTimeout(() => {
+      awaitingPreviewDraw.current = false;
+      setPreviewDrawStart(true);
+    }, DRAW_START_MAX_MS);
+    return () => {
+      clearTimeout(t);
+      awaitingPreviewDraw.current = false;
+      // Reset now, so the next preview's first frame doesn't show it drawn.
+      setPreviewDrawn(false);
+      setPreviewDrawStart(false);
+    };
+  }, [previewShown, previewKey]);
+  useEffect(() => {
+    if (previewShown) return;
+    const before = beforePreview.current;
+    if (!before) return;
+    beforePreview.current = null;
+    // An itinerary opened over it frames itself.
+    if (itShownRef.current) return;
+    setUserPanned(before.userPanned);
+    // Tracking a new route from the preview frames that route instead.
+    const tripKey = route ? `${route.routeCode}|${route.stopId}` : null;
+    if (before.region && tripKey === framedKey.current) {
+      mapRef.current?.animateToRegion(before.region, motion.reposition);
+    } else {
+      frameRef.current(true);
+    }
+    // Only on closing; `route` is this render's.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewShown]);
+  useEffect(() => {
+    if (!previewShownRef.current || userPannedRef.current) return;
+    framePreviewRef.current(true);
+  }, [trip.detent]);
+
   const recenter = useCallback(() => {
     haptics.light();
     setUserPanned(false);
     if (itOpenRef.current) frameItRef.current(true);
     else if (goOnlyRef.current) frameGoRef.current(true);
+    else if (previewShownRef.current) framePreviewRef.current(true);
     else frameRef.current(true);
   }, []);
 
@@ -595,6 +758,8 @@ export default function MapScreen() {
   return (
     <View style={styles.root}>
       <MapToolbar
+        previewing={previewShown ? (preview?.label ?? null) : null}
+        onStopPreview={popNearby}
         favorites={settings.favoritedRoutes}
         activeRoute={settings.preferredRouteCode}
         mapType={mapType}
@@ -643,7 +808,7 @@ export default function MapScreen() {
             onStationPress={openStation}
           />
         ) : null}
-        {route && layers.myBuses && !itShown ? (
+        {route && layers.myBuses && !tripHidden ? (
           <RouteLayer
             key={`${route.routeCode}|${route.stopId}|${railKey}`}
             polyline={polyline}
@@ -661,7 +826,7 @@ export default function MapScreen() {
             onUserStopPress={clearSelection}
           />
         ) : null}
-        {route && layers.myBuses && !itShown && ghost.coord && positions.length === 0 ? (
+        {route && layers.myBuses && !tripHidden && ghost.coord && positions.length === 0 ? (
           <GhostBusMarker
             coordinate={{ latitude: ghost.coord.lat, longitude: ghost.coord.lng }}
             color={ink}
@@ -709,8 +874,53 @@ export default function MapScreen() {
             onDrawn={onItDrawn}
           />
         ) : null}
+        {/* Overlays over rail: re-added on top whenever rail is (see railKey). */}
+        {previewShown && preview ? (
+          <PreviewLayer
+            key={`${previewDrawKey}|${railKey}`}
+            path={previewPath}
+            stops={previewStops}
+            drawKey={previewDrawKey}
+            ink={ink}
+            paper={mapPaper}
+            casing={casing}
+            reduceMotion={reduceMotion}
+            animate={!previewDrawn}
+            start={previewDrawStart}
+            onDrawn={onPreviewDrawn}
+          />
+        ) : null}
+        {walkShown && walkTo && nearbyHere ? (
+          <PlaceWalk
+            key={`walk|${railKey}`}
+            from={nearbyHere}
+            to={walkTo.at}
+            name={walkTo.name}
+            ink={ink}
+            paper={mapPaper}
+          />
+        ) : null}
+        {pinsShown && nearby.places && network ? (
+          <PlacePins places={nearby.places} network={network} ink={ink} paper={mapPaper} onPress={openPlace} />
+        ) : null}
+        {/* Unkeyed and always mapped: they empty themselves a render after
+            the preview closes, with their glides stopped (useGlidingMarkers). */}
+        {previewMarkers.map(({ vehicle, region }) => (
+          <BusMarker
+            key={`preview-${vehicle.vehicleId}`}
+            region={region}
+            ink={ink}
+            paper={mapPaper}
+            live={pick(hex.live, mapScheme)}
+            primary
+            passed={false}
+            bearing={vehicle.bearing}
+            vehicleId={vehicle.vehicleId}
+            accessibilityLabel={`Route ${preview?.label ?? ''} bus, live`}
+          />
+        ))}
       </MapView>
-      {route && layers.myBuses && !itShown ? (
+      {route && layers.myBuses && !tripHidden ? (
         <RouteShimmer
           mapRef={mapRef}
           path={aheadPath}
@@ -724,6 +934,9 @@ export default function MapScreen() {
 }
 
 interface MapToolbarProps {
+  /** The route Nearby is previewing ("780"): its chip replaces the route switcher. */
+  previewing: string | null;
+  onStopPreview: () => void;
   favorites: string[];
   activeRoute: string | null;
   mapType: MapType;
@@ -737,13 +950,16 @@ interface MapToolbarProps {
 }
 
 /**
- * Native glass toolbar over the map: the route switcher (leading) and the
+ * Native glass toolbar over the map: the route switcher (leading; while a
+ * route is previewed, its "Previewing 780 ✕" chip instead) and the
  * layers / recenter cluster (trailing). Settings is the profile circle in the
  * trip sheet's "Where to?" row. System-drawn, so it gets Liquid Glass,
  * grouping, sizing and accessibility for free. Memoised on primitive props so
  * live data ticks don't rebuild the header items (and close an open menu).
  */
 const MapToolbar = memo(function MapToolbar({
+  previewing,
+  onStopPreview,
   favorites,
   activeRoute,
   mapType,
@@ -769,7 +985,18 @@ const MapToolbar = memo(function MapToolbar({
   return (
     <>
       <Stack.Toolbar placement="left">
-        {favorites.length === 0 ? (
+        {previewing != null ? (
+          // While a route is previewed (17/05): "Previewing 780 ✕" goes back to the stop.
+          <Stack.Toolbar.Button
+            accessibilityLabel={`Stop previewing ${previewing}`}
+            onPress={() => {
+              haptics.light();
+              onStopPreview();
+            }}
+          >
+            <Stack.Toolbar.Label>{`Previewing ${previewing} ✕`}</Stack.Toolbar.Label>
+          </Stack.Toolbar.Button>
+        ) : favorites.length === 0 ? (
           <Stack.Toolbar.Button icon="plus" onPress={() => router.push('/add-route')}>
             <Stack.Toolbar.Label>Add Route</Stack.Toolbar.Label>
           </Stack.Toolbar.Button>

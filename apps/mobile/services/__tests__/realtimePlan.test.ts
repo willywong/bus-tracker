@@ -335,3 +335,49 @@ test("extra routes from the planner and Go merge per category", () => {
   assert.deepEqual(mergeExtraRoutes([[], go]).map((m) => m.routes), [["T815", "T816"], ["780"]]);
   assert.deepEqual(mergeExtraRoutes([[], []]), []);
 });
+
+test("a route preview's extras merge with the planner's and Go's, and release on their own", () => {
+  const planner: PlannerFeedRoutes[] = [FEEDER_EXTRA];
+  const go: PlannerFeedRoutes[] = [
+    { category: "rapid-bus-mrtfeeder", aliases: new Map([["T815", "T815"]]), routes: ["T815"] },
+  ];
+  // Previewing 780 from a stop near you (17/05): its own list, under 'preview'.
+  const preview: PlannerFeedRoutes[] = [
+    { category: "rapid-bus-kl", aliases: new Map([["U7800", "780"], ["780", "780"]]), routes: ["780"] },
+  ];
+  const merged = mergeExtraRoutes([planner, go, preview]);
+  assert.deepEqual(merged.map((m) => [m.category, m.routes]), [
+    ["rapid-bus-mrtfeeder", ["T816", "T815"]],
+    ["rapid-bus-kl", ["780"]],
+  ]);
+  // The previewed route is polled with the followed one, and its buses resolve by GTFS route id.
+  const plan = buildRealtimePlan(
+    ["T789"],
+    [{ code: "T789", route_id: "30000026", category: "rapid-bus-mrtfeeder" }],
+    new Map(),
+    merged,
+  );
+  const kl = plan.feeds.find((f) => f.category === "rapid-bus-kl");
+  assert.ok(kl);
+  const positions = positionsFromFeed(
+    kl,
+    feed([
+      { id: "PREV", trip_id: "a", route_id: "U7800" },
+      { id: "OTHER", trip_id: "b", route_id: "U7700" },
+    ]),
+    NOW,
+  );
+  assert.deepEqual(positions.map((p) => [p.vehicleId, p.routeId]), [["PREV", "780"]]);
+  // Closing the preview drops 780 and its category; the planner's and Go's routes stay.
+  const released = mergeExtraRoutes([planner, go, []]);
+  assert.deepEqual(released.map((m) => [m.category, m.routes]), [["rapid-bus-mrtfeeder", ["T816", "T815"]]]);
+  const after = buildRealtimePlan(
+    ["T789"],
+    [{ code: "T789", route_id: "30000026", category: "rapid-bus-mrtfeeder" }],
+    new Map(),
+    released,
+  );
+  assert.deepEqual(after.feeds.map((f) => f.category), ["rapid-bus-mrtfeeder"]);
+  // Releasing the planner and Go first leaves the preview's route alone.
+  assert.deepEqual(mergeExtraRoutes([[], [], preview]).map((m) => m.routes), [["780"]]);
+});
