@@ -57,3 +57,42 @@ Section switches feel instant and calm, and work with VoiceOver, Dynamic Type an
   - live Home/Work leave times (background `plan()`);
   - a "Buses nearby" layer feeding Nearby;
   - pinned stations in Saved.
+
+## Implementation notes (2026-10-23)
+
+Run on the iPhone 17 Pro Max Simulator, Debug build with Metro. JS-only throughout: no prebuild.
+
+- **Crossfade.** `SectionBody` fades the incoming body in over `motion.crossfade` (none under Reduce Motion). It is wrapped in `LayoutAnimationConfig skipExiting`, so the outgoing body leaves at once. Before that fix, the Nearby peek card's own `exiting` fade showed as a ghost under Plan. Verified: no ghost, and rapid Plan → Nearby → Saved taps land on the last one tapped.
+- **Scroll reset.** `SheetScroll` takes a `resetKey` (the section) and scrolls to the top with no animation when it changes.
+- **Bare `t816://` while running** (`app/+native-intent.tsx`). Since 13/05 the bare link was routed to `/`, which pushed a second map over the trip sheet. A warm bare link is now dropped (`redirectSystemPath` returns null when `!initial`), and `useSectionLinks` turns the sheet to Nearby. `isBareLink` in `components/rail/deepLink.ts` serves both and is unit-tested. Verified: on Plan, `xcrun simctl openurl … t816://` turns the sheet to Nearby, and the sheet stays up.
+- **Loop routes in the Today grid** (`Timetable`). T815 passes the same stop twice on one trip. That gave duplicate React keys (a LogBox error) and two blue "your bus" chips. The key now includes the departure time, and only the trip's first pass is marked. Verified on T815: one blue chip, no error.
+- **Dark mode.** Plan, Nearby and Saved checked at peek: the picker, rows, tiles and route badges read correctly.
+- **Dynamic Type, AX3** (accessibility-extra-extra-extra-large):
+  - At peek, every section shows the picker and its first row.
+  - The SwiftUI segmented control keeps its size. That is the system behaviour for segmented controls, which offer the Large Content Viewer on long press instead; it is not a bug to fix.
+  - **Route badge** (`RouteBadge`): it had a fixed 24 pt height, so the code was cut in half. It now uses `minHeight` plus `maxFontSizeMultiplier={1.6}`, as the rail `LineBadge` does.
+  - **Saved tiles**: the 76 pt square pushed the thumbnail under the picker and cut labels to "H…". The tile now grows (`minHeight`), and its label scales to at most 1.3×.
+  - Plan's Home detail truncates to "Leave 7:19 AM · …" at AX3. That is the one-line row design, the same as `SuggestionRow`.
+  - Anything below the first row clips at peek, as recorded in 15/08.
+- **VoiceOver**: checked in code only; the Simulator tools can't drive VoiceOver.
+  - The picker is a native SwiftUI `Picker` labelled "Sheet section".
+  - The profile circle is labelled "Settings".
+  - Plan rows, Saved tiles and route rows carry the labels and hints from 03 and 04. The active route also carries `selected`.
+- **Not run:**
+  - **Release build.** Criteria 1, 2 and 4 were checked in Debug only.
+  - **iPhone SE peek.** The 0.4 cap was worked out, not seen on that Simulator.
+  - **Cold-launch quick action.** Covered by `useQuickActions`, which sets `plan`, and by 15/08's native patch; not re-run this phase.
+  - **break-ui worst-case data**: 60-character recents, 6 pins plus Home and Work, 12 routes. The truncation and scrolling come from the components' `numberOfLines` and horizontal `ScrollView`; not seeded on the Simulator.
+
+### Success criteria
+
+| # | Result |
+|---|---|
+| 1 | Verified on the 17 Pro Max: the picker shows at peek, switching sections never moves the sheet, and the 252 pt peek fits. iPhone SE not run. |
+| 2 | Verified: Nearby's peek matches the old one, below the picker row. |
+| 3 | Verified for stop detail: the picker hides and back returns to Saved. Go and ride share the same `sheetMode` gate, which is unit-tested. |
+| 4 | Live Activity link → Nearby verified while running. Cold-launch quick action: code and unit tests only. |
+| 5 | Verified: the section survives a relaunch. |
+| 6 | Code-level only (see VoiceOver). |
+| 7 | Verified: "…" is gone, Share arrival is in Nearby, and the profile button opens Settings. |
+| 8 | `tsc` clean; `pnpm test` 448/448 (the railShapes timing test flaked once and passed on rerun). |

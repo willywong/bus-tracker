@@ -37,3 +37,11 @@ function reencode(segment: string | undefined): string | null {
     return null;
   }
 }
+
+/**
+ * Bare `t816://` (the bus Live Activity and the widget): the scheme with no
+ * path. Scheme optional, so the router's `/` counts too.
+ */
+export function isBareLink(path: string): boolean {
+  return path.trim().replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').replace(/^\/+/, '') === '';
+}

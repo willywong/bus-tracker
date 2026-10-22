@@ -282,6 +282,8 @@ export function RouteBadge({ code, size = 'regular' }: { code: string; size?: 'r
       />
       <Text
         style={[styles.badgeText, size === 'small' && styles.badgeTextSmall]}
+        // Grows with Dynamic Type, as LineBadge does, but stays a chip.
+        maxFontSizeMultiplier={1.6}
         accessibilityLabel={`Route ${code}`}
       >
         {code}
@@ -401,7 +403,7 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   },
   badge: {
-    height: 24,
+    minHeight: 24,
     paddingHorizontal: 8,
     borderRadius: 6,
     borderWidth: 1,
@@ -412,7 +414,7 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   badgeSmall: {
-    height: 20,
+    minHeight: 20,
     paddingHorizontal: 6,
     borderRadius: 5,
   },

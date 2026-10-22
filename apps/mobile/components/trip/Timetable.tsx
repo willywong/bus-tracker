@@ -47,14 +47,17 @@ export function Timetable({
   onPressDeparture,
 }: TimetableProps) {
   if (departures.length === 0) return null;
+  // A loop route can list one trip twice; the hero counts to its first pass.
+  const arrivingIndex = departures.findIndex((d) => d.tripId === arrivingTripId);
 
   return (
     <View style={styles.wrap}>
       <View style={[styles.grid, onPressDeparture && styles.gridButtons]}>
-        {departures.map((d) => {
-          const arriving = d.tripId === arrivingTripId;
+        {departures.map((d, i) => {
+          const arriving = i === arrivingIndex;
           const text = formatClock(d.departureEpochMs);
-          const key = `${d.tripId}-${d.serviceDayMidnightUtcMs}`;
+          // A loop route passes the stop twice on one trip: the time keeps them apart.
+          const key = `${d.tripId}-${d.serviceDayMidnightUtcMs}-${d.departureEpochMs}`;
           return onPressDeparture ? (
             <View key={key} style={[styles.cell, styles.buttonCell]}>
               <ClockButton text={text} yours={arriving} onPress={() => onPressDeparture(d)} />

@@ -13,6 +13,7 @@ import Animated, {
   FadeIn,
   FadeOut,
   interpolate,
+  LayoutAnimationConfig,
   useAnimatedScrollHandler,
   useAnimatedStyle,
   useReducedMotion,
@@ -277,7 +278,13 @@ export default function TripSheet() {
   // The sections: switching crossfades the body; the sheet keeps its detent.
   const section = currentSection(settings.sheetSection, settings.preferredRouteCode != null);
   return (
-    <SheetScroll key="sections" contentContainerStyle={scrollStyle} scheme={scheme} swap>
+    <SheetScroll
+      key="sections"
+      contentContainerStyle={scrollStyle}
+      scheme={scheme}
+      swap
+      resetKey={section}
+    >
       {whereTo}
       <SectionPicker value={section} onChange={settings.setSheetSection} />
       <SectionBody key={section}>
@@ -293,13 +300,19 @@ export default function TripSheet() {
   );
 }
 
-/** A section's body fades in when you switch to it (no travel); Reduce Motion swaps. */
+/**
+ * A section's body fades in when you switch to it (no travel); Reduce Motion
+ * swaps. The one leaving goes at once: its own exits (the peek card's fade)
+ * are skipped, so two bodies never stack.
+ */
 function SectionBody({ children }: { children: ReactNode }) {
   const reduceMotion = useReducedMotion();
   return (
-    <Animated.View entering={reduceMotion ? undefined : FadeIn.duration(motion.crossfade)}>
-      {children}
-    </Animated.View>
+    <LayoutAnimationConfig skipExiting>
+      <Animated.View entering={reduceMotion ? undefined : FadeIn.duration(motion.crossfade)}>
+        {children}
+      </Animated.View>
+    </LayoutAnimationConfig>
   );
 }
 
@@ -313,15 +326,22 @@ function SheetScroll({
   contentContainerStyle,
   scheme,
   swap = false,
+  resetKey,
   children,
 }: {
   contentContainerStyle: StyleProp<ViewStyle>;
   scheme: 'light' | 'dark';
   /** Slide in and out when the trip and a detail swap (keyed by the caller). */
   swap?: boolean;
+  /** Back to the top when this changes, so a long section's scroll doesn't carry into a short one. */
+  resetKey?: string;
   children: ReactNode;
 }) {
   const reduceMotion = useReducedMotion();
+  const scroll = useRef<Animated.ScrollView>(null);
+  useEffect(() => {
+    scroll.current?.scrollTo({ y: 0, animated: false });
+  }, [resetKey]);
   const y = useSharedValue(0);
   const onScroll = useAnimatedScrollHandler((e) => {
     y.set(e.contentOffset.y);
@@ -337,6 +357,7 @@ function SheetScroll({
       exiting={swap ? (reduceMotion ? SWAP_FADE_OUT : sheetPushOut) : undefined}
     >
       <Animated.ScrollView
+        ref={scroll}
         contentContainerStyle={contentContainerStyle}
         showsVerticalScrollIndicator={false}
         onScroll={onScroll}

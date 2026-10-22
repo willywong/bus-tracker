@@ -22,6 +22,8 @@ const TILE = 76;
 const THUMB = 44;
 /** The paper disc carrying a tile's glyph over its map. */
 const GLYPH_DISC = 22;
+/** Tile labels grow with Dynamic Type only this far: the tile is a fixed 76 pt wide. */
+const LABEL_MAX_SCALE = 1.3;
 
 /**
  * The Saved section (plan 16/04): your places as a strip of map tiles, then
@@ -161,7 +163,7 @@ function PlaceTileView({ tile, onPress }: { tile: PlaceTile; onPress: () => void
         <View style={[styles.thumb, styles.add]}>
           <SymbolView name="plus" size={17} weight="medium" tintColor={color.label} />
         </View>
-        <Text style={styles.label} numberOfLines={1}>
+        <Text style={styles.label} numberOfLines={1} maxFontSizeMultiplier={LABEL_MAX_SCALE}>
           Add
         </Text>
       </TileButton>
@@ -176,7 +178,7 @@ function PlaceTileView({ tile, onPress }: { tile: PlaceTile; onPress: () => void
           <SymbolView name={tile.symbol} size={11} weight="semibold" tintColor={color.label} />
         </View>
       </View>
-      <Text style={styles.label} numberOfLines={1}>
+      <Text style={styles.label} numberOfLines={1} maxFontSizeMultiplier={LABEL_MAX_SCALE}>
         {tile.label}
       </Text>
     </TileButton>
@@ -245,7 +247,8 @@ const styles = StyleSheet.create({
   },
   tile: {
     width: TILE,
-    height: TILE,
+    // Grows with the label at large text sizes, so the thumb never rides up.
+    minHeight: TILE,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
