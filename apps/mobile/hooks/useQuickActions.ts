@@ -6,28 +6,35 @@ import { formatStopName } from '@/components/map/format';
 import { openDb } from '@/db/database';
 import { getStopsByIds } from '@/db/queries';
 import { useSettings } from '@/hooks/useSettings';
-
-type TrackAction = QuickActions.Action & { params: { code: string } };
-
-/** iOS shows up to four dynamic actions under the app icon. */
-const MAX_ACTIONS = 4;
+import { buildQuickActionItems, MAX_QUICK_ACTIONS, PLAN_HREF } from '@/services/quickActions';
+import { usePlanner } from '@/state/PlannerContext';
 
 /**
- * Long-press the app icon → "Track T816 · Hotel Lisa De Inn" for each
- * favourite. Picking one switches the trip sheet to that route, including
+ * Long-press the app icon → "Where to?", then "Track T816 · Hotel Lisa De
+ * Inn" for each favourite. Picking a favourite switches the trip sheet to
+ * that route; "Where to?" opens the planner over the trip sheet. Both work
  * on a cold launch.
  */
 export function useQuickActions(): void {
   const settings = useSettings();
-  const { ready, favoritedRoutes, preferredStopByRoute, setPreferredRouteCode } = settings;
+  const { ready, favoritedRoutes, preferredStopByRoute, savedPlaces, setPreferredRouteCode } =
+    settings;
+  const { requestOpen } = usePlanner();
   const select = useRef(setPreferredRouteCode);
   select.current = setPreferredRouteCode;
+  const open = useRef(requestOpen);
+  open.current = requestOpen;
 
   // Wait for stored settings before applying the launch action, or loading
   // them would overwrite the choice.
   useEffect(() => {
     if (Platform.OS !== 'ios' || !ready) return;
     const handle = (action: QuickActions.Action) => {
+      // The trip sheet opens `plan` once it's on the stack (see trip.tsx).
+      if (action.params?.href === PLAN_HREF) {
+        open.current();
+        return;
+      }
       const code = action.params?.code;
       if (typeof code === 'string' && code) select.current(code);
     };
@@ -40,29 +47,27 @@ export function useQuickActions(): void {
     if (Platform.OS !== 'ios') return;
     let cancelled = false;
     (async () => {
-      const names = new Map<string, string>();
+      // Only the favourites that get a slot need their stop's name.
+      const shown = favoritedRoutes.slice(0, MAX_QUICK_ACTIONS - 1);
+      const stopNames: Record<string, string> = {};
       try {
         const db = await openDb();
-        const ids = favoritedRoutes.slice(0, MAX_ACTIONS).flatMap((code) => preferredStopByRoute[code] ?? []);
+        const ids = shown.flatMap((code) => preferredStopByRoute[code] ?? []);
+        const names = new Map<string, string>();
         for (const s of await getStopsByIds(db, ids)) names.set(s.stop_id, formatStopName(s.stop_name));
+        for (const code of shown) {
+          const name = names.get(preferredStopByRoute[code] ?? '');
+          if (name) stopNames[code] = name;
+        }
       } catch {
         // Stop names are a nicety; the route code alone still works.
       }
       if (cancelled) return;
-      const items: TrackAction[] = favoritedRoutes.slice(0, MAX_ACTIONS).map((code) => {
-        const stopId = preferredStopByRoute[code];
-        return {
-          id: `track-${code}`,
-          title: `Track ${code}`,
-          subtitle: (stopId && names.get(stopId)) || null,
-          icon: 'symbol:bus.fill',
-          params: { code },
-        };
-      });
+      const items = buildQuickActionItems({ favorites: favoritedRoutes, stopNames, saved: savedPlaces });
       await QuickActions.setItems(items).catch(() => {});
     })();
     return () => {
       cancelled = true;
     };
-  }, [favoritedRoutes, preferredStopByRoute]);
+  }, [favoritedRoutes, preferredStopByRoute, savedPlaces]);
 }

@@ -155,3 +155,13 @@
 - `PlannerContext` holds `from`, `to`, `when`, `presented` and `pendingOpen`. `plan` and `itinerary` are registered stubs.
 - `settings.savedPlaces` exists (read-only UI). `itineraryDetents()` and `WHERE_TO_ROW_HEIGHT` are in `theme/design.ts`.
 - The quick action budget is Where to? plus 3 favourites. 07 reworks the split when Home/Work are set.
+
+## Implementation notes
+- **`Place` is local for now.** `packages/shared/src/transit/plan.ts` (phase 14) hasn't landed, so `state/PlannerContext.tsx` declares `Place` with the spec §4.4 shape, plus `HERE` and `toPlace(SavedPlace)`. Swap it for the shared import once 14 ships.
+- **`presented` is a count.** `setPresented(true/false)` increments and decrements; `presented` is `count > 0`. With 05's `router.replace('/itinerary')`, the pin then never drops between one sheet's unmount and the other's mount.
+- **`requestOpen(to)`** also calls `setTo(to)` right away when `to` is given, so `trip.tsx` only pushes `/plan` and clears the pending flag.
+- **Trip pin.** The effect keys on `[pinned, holdPeek]`, so a map drag while `plan` is up still arms the 5 s safety timer for `holdPeek` alone.
+- **Stubs.** `plan` shows "Where to?" (or "To Home") and "From My location" under its transparent header with the xmark. `itinerary` has `headerShown: false`, so a `Stack.Toolbar` would never show; the stub is a title only and closes by swiping down. 05 adds its own close control.
+- **Capsule ink.** `foregroundStyle(secondary)` sits on the inner `HStack`, so the magnifier is secondary along with the placeholder (spec §6.1). The Home/Work circles also fire `haptics.selection()`.
+- **Quick actions.** `services/quickActions.ts` exports `MAX_QUICK_ACTIONS`, `PLAN_HREF` and `buildQuickActionItems({ favorites, stopNames, saved })`. `stopNames` is keyed by route code. `saved` is accepted but unused until 07. 13/05's "Nearest station" item hasn't shipped, so the builder has no `station` path yet.
+- **15/01 probe removed.** The `__DEV__` "MapKit probe" button and `runMapsProbe()` in `app/settings.tsx` are gone. The other temporary dev rows are untouched.

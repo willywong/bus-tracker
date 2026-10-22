@@ -11,9 +11,10 @@ import { useRealtimeRoutes } from '@/hooks/useRealtimeRoutes';
 import { useQuickActions } from '@/hooks/useQuickActions';
 import { SettingsProvider, useSettings } from '@/hooks/useSettings';
 import { StaticGtfsProvider } from '@/hooks/useStaticGtfs';
+import { PlannerProvider } from '@/state/PlannerContext';
 import { RideProvider } from '@/state/RideContext';
 import { TripProvider } from '@/state/TripContext';
-import { color, SHEET_INITIAL_DETENT, sheetDetents } from '@/theme/design';
+import { color, itineraryDetents, SHEET_INITIAL_DETENT, sheetDetents } from '@/theme/design';
 import { configureNotifications } from '@/services/reminders/notifications';
 // Background tasks must be defined at module scope so iOS can run them on a
 // headless launch (commute re-plan, arrival geofence).
@@ -47,9 +48,11 @@ export default function RootLayout() {
         <RealtimeRoutesRunner />
         <PushRegistrationProvider>
           <TripProvider>
-            <RideProvider>
-              <AppStack />
-            </RideProvider>
+            <PlannerProvider>
+              <RideProvider>
+                <AppStack />
+              </RideProvider>
+            </PlannerProvider>
           </TripProvider>
         </PushRegistrationProvider>
       </StaticGtfsProvider>
@@ -100,6 +103,31 @@ function AppStack() {
             headerShown: true,
             headerTransparent: true,
             title: 'Add Route',
+            contentStyle: { backgroundColor: SHEET_BACKGROUND },
+          }}
+        />
+        <Stack.Screen
+          name="plan"
+          options={{
+            presentation: 'formSheet',
+            sheetAllowedDetents: [1],
+            sheetGrabberVisible: true,
+            headerShown: true,
+            headerTransparent: true,
+            title: 'Where to?',
+            contentStyle: { backgroundColor: SHEET_BACKGROUND },
+          }}
+        />
+        <Stack.Screen
+          name="itinerary"
+          options={{
+            presentation: 'formSheet',
+            // Its peek covers the trip peek exactly (the trip is pinned there).
+            sheetAllowedDetents: itineraryDetents(windowHeight, insets.top),
+            sheetInitialDetentIndex: 1,
+            sheetLargestUndimmedDetentIndex: 1,
+            sheetGrabberVisible: true,
+            headerShown: false,
             contentStyle: { backgroundColor: SHEET_BACKGROUND },
           }}
         />

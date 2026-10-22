@@ -133,13 +133,17 @@ export const CSS_EASE_OUT = cubicBezier(0.23, 1, 0.32, 1);
 /** How far the sheet body rises as it fades in out of peek. */
 export const SHEET_REVEAL_SHIFT = 10;
 
+/** The peek's "Where to?" row: a 44pt glass capsule plus 8pt below it. */
+export const WHERE_TO_ROW_HEIGHT = 52;
+
 /**
- * Content height of the peek detent in points: top padding, the two-line
- * header, then the peek card (number and journey, action and next bus). The sheet adds the home indicator inset on
- * top; the strip is allowed to sit in its upper part (about 20pt above the
- * screen edge, like the Apple Maps card) so no empty band shows below it.
+ * Content height of the peek detent in points: top padding, the "Where to?"
+ * row, the two-line header, then the peek card (number and journey, action
+ * and next bus). The sheet adds the home indicator inset on top; the strip is
+ * allowed to sit in its upper part (about 20pt above the screen edge, like
+ * the Apple Maps card) so no empty band shows below it.
  */
-export const PEEK_CONTENT_HEIGHT = 160;
+export const PEEK_CONTENT_HEIGHT = 160 + WHERE_TO_ROW_HEIGHT;
 /** Peek top padding, under the grabber. */
 export const PEEK_TOP = 14;
 
@@ -149,8 +153,21 @@ export const PEEK_TOP = 14;
  * area), so peek is derived from points to hug its content on every phone.
  */
 export function sheetDetents(windowHeight: number, topInset: number): [number, number, number] {
+  return [peekDetent(windowHeight, topInset), 0.5, 1];
+}
+
+/**
+ * Detents for the `itinerary` sheet: the same peek as the trip sheet (so it
+ * covers the trip peek exactly), half, large.
+ */
+export function itineraryDetents(windowHeight: number, topInset: number): [number, number, number] {
+  return [peekDetent(windowHeight, topInset), 0.5, 1];
+}
+
+/** Peek as a fraction of the sheet's largest height. The cap leaves room on an iPhone SE (212 / 647pt). */
+function peekDetent(windowHeight: number, topInset: number): number {
   const max = Math.max(1, windowHeight - topInset);
-  return [Math.min(0.3, PEEK_CONTENT_HEIGHT / max), 0.5, 1];
+  return Math.min(0.35, PEEK_CONTENT_HEIGHT / max);
 }
 export const SHEET_INITIAL_DETENT = 1;
 export type DetentIndex = 0 | 1 | 2;

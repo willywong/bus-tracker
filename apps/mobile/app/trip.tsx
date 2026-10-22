@@ -44,6 +44,7 @@ import { EdgeSwipeBack } from '@/components/trip/EdgeSwipeBack';
 import { TripRows } from '@/components/trip/Notes';
 import { tripStatusItem, tripWarnings, WarningBadges } from '@/components/trip/Warnings';
 import { BusDetailSheet, StopDetailSheet } from '@/components/detail/DetailSheet';
+import { WhereToRow } from '@/components/plan/WhereToRow';
 import { AllStopsButton, OnTheWay } from '@/components/trip/OnTheWay';
 import { PeekCard, TripPeekAction } from '@/components/trip/PeekCard';
 import { PrimaryAction } from '@/components/trip/PrimaryAction';
@@ -55,6 +56,7 @@ import { Timetable } from '@/components/trip/Timetable';
 import type { ScheduledDeparture } from '@/db/queries';
 import { useSettings } from '@/hooks/useSettings';
 import { ensureNotificationPermission } from '@/services/reminders/notifications';
+import { toPlace, usePlanner } from '@/state/PlannerContext';
 import { useRide } from '@/state/RideContext';
 import { useTrip } from '@/state/TripContext';
 import {
@@ -96,6 +98,7 @@ export default function TripSheet() {
   const insets = useSafeAreaInsets();
   const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
   const ride = useRide();
+  const planner = usePlanner();
   const { model } = trip;
   const peek = trip.detent === 0;
   // The live dot leads the capsule beside the number, then any warnings.
@@ -129,13 +132,15 @@ export default function TripSheet() {
   // selected one). Once the map settles, and the snap has landed, all three
   // come back and the sheet stays at peek; restoring mid-drag undoes the
   // snap. UIKit doesn't report a change it didn't see the user make, so the
-  // detent is set here too.
+  // detent is set here too. The same pin holds while `plan` or `itinerary`
+  // is up, so the trip never shows above a shorter sheet.
   const { height: windowHeight } = useWindowDimensions();
   const { holdPeek, setHoldPeek, setDetent } = trip;
+  const pinned = holdPeek || planner.presented;
   const held = useRef(false);
   useEffect(() => {
     const detents = sheetDetents(windowHeight, insets.top);
-    if (holdPeek) {
+    if (pinned) {
       held.current = true;
       // The initial index only matters at presentation, but must stay in range.
       navigation.setOptions({
@@ -144,7 +149,9 @@ export default function TripSheet() {
         sheetLargestUndimmedDetentIndex: 0,
       });
       setDetent(0);
-      // In case the map never reports settling.
+      // In case the map never reports settling. A planner sheet holds the
+      // pin for as long as it's up.
+      if (!holdPeek) return;
       const safety = setTimeout(() => setHoldPeek(false), HOLD_PEEK_MAX_MS);
       return () => clearTimeout(safety);
     }
@@ -161,7 +168,31 @@ export default function TripSheet() {
     );
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [holdPeek]);
+  }, [pinned, holdPeek]);
+
+  // A "Where to?" quick action waits for this sheet: pushed before it, `plan`
+  // would end up underneath the trip on a cold launch.
+  const { pendingOpen, clearPending } = planner;
+  useEffect(() => {
+    if (!pendingOpen) return;
+    clearPending();
+    router.push('/plan');
+  }, [pendingOpen, clearPending, router]);
+
+  // Search is chrome (as in Apple Maps): the row tops every state of the sheet.
+  const home = settings.savedPlaces.find((p) => p.kind === 'home') ?? null;
+  const work = settings.savedPlaces.find((p) => p.kind === 'work') ?? null;
+  const whereTo = (
+    <WhereToRow
+      onOpen={() => router.push('/plan')}
+      home={home}
+      work={work}
+      onPlace={(p) => {
+        planner.setTo(toPlace(p));
+        router.push('/plan');
+      }}
+    />
+  );
 
   const scrollStyle = [styles.scroll, { paddingBottom: insets.bottom + space.xl }];
 
@@ -183,6 +214,7 @@ export default function TripSheet() {
   if (model.state === 'empty') {
     return (
       <SheetScroll contentContainerStyle={scrollStyle} scheme={scheme}>
+        {whereTo}
         <EmptyState
           icon="bus"
           title="Track your bus"
@@ -199,6 +231,7 @@ export default function TripSheet() {
     const p = ride.progress;
     return (
       <SheetScroll contentContainerStyle={scrollStyle} scheme={scheme}>
+        {whereTo}
         <SheetHeader
           routeCode={trip.routeCode}
           title={ride.destination ? `To ${ride.destination.name}` : trip.stopName}
@@ -246,6 +279,7 @@ export default function TripSheet() {
     return (
       <EdgeSwipeBack key={key} onBack={back}>
         <SheetScroll contentContainerStyle={scrollStyle} scheme={scheme} swap>
+          {whereTo}
           {sel.kind === 'stop' ? (
             <StopDetailSheet stopId={sel.stopId} peek={peek} onBack={back} onStopPress={openStop} />
           ) : (
@@ -285,6 +319,7 @@ export default function TripSheet() {
 
   return (
     <SheetScroll key="trip" contentContainerStyle={scrollStyle} scheme={scheme} swap>
+      {whereTo}
       <SheetHeader
         routeCode={trip.routeCode}
         title={trip.stopName}

@@ -18,6 +18,20 @@ export const CLOCK_FORMATS: readonly ClockFormat[] = ['24h', '12h'];
 
 export type MapType = 'standard' | 'satellite';
 
+/** A place you plan to often: Home, Work or a pin (plan 15/07 edits them). */
+export type SavedPlace = {
+  /** 'home' | 'work' | `pin-${createdAt}` */
+  id: string;
+  kind: 'home' | 'work' | 'pin';
+  name: string;
+  address: string | null;
+  lat: number;
+  lng: number;
+  /** When saved from a local result (a bus stop or rail station). */
+  ref: { kind: 'stop' | 'station'; id: string } | null;
+  createdAt: number;
+};
+
 export const MAP_TYPES: readonly MapType[] = ['standard', 'satellite'];
 
 export const NOTIF_BUFFER_CHOICES_MIN: readonly number[] = [0, 1, 2, 3, 5];
@@ -45,6 +59,8 @@ export interface Settings {
   clockFormat: ClockFormat;
   /** Apple Maps base layer for the Map screen. */
   mapType: MapType;
+  /** Home, Work and pinned places for the journey planner. */
+  savedPlaces: SavedPlace[];
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -57,6 +73,7 @@ export const DEFAULT_SETTINGS: Settings = {
   quietEndMin: 6 * 60,
   clockFormat: '24h',
   mapType: 'standard',
+  savedPlaces: [],
 };
 
 export interface SettingsApi extends Settings {
@@ -76,6 +93,7 @@ export interface SettingsApi extends Settings {
   setQuietEndMin: (v: number) => void;
   setClockFormat: (v: ClockFormat) => void;
   setMapType: (v: MapType) => void;
+  setSavedPlaces: (next: SavedPlace[]) => void;
   /**
    * Adds `code` to the favorites list with a default stop. Returns
    * `{ ok: false }` with a reason when blocked (already favorited, or cap
@@ -98,6 +116,7 @@ const STORAGE_KEYS = {
   quietEndMin: 'bt.quietEndMin',
   clockFormat: 'bt.clockFormat',
   mapType: 'bt.mapType',
+  savedPlaces: 'bt.savedPlaces',
 } as const;
 
 const SettingsContext = createContext<SettingsApi | null>(null);
@@ -167,6 +186,53 @@ function parseStopByRoute(raw: string | null): Record<string, string> {
   }
 }
 
+const SAVED_PLACE_KINDS: readonly SavedPlace['kind'][] = ['home', 'work', 'pin'];
+
+function parseSavedPlace(v: unknown): SavedPlace | null {
+  if (!v || typeof v !== 'object') return null;
+  const o = v as Record<string, unknown>;
+  if (typeof o.id !== 'string' || o.id.length === 0) return null;
+  if (!SAVED_PLACE_KINDS.includes(o.kind as SavedPlace['kind'])) return null;
+  if (typeof o.name !== 'string') return null;
+  if (typeof o.lat !== 'number' || !Number.isFinite(o.lat)) return null;
+  if (typeof o.lng !== 'number' || !Number.isFinite(o.lng)) return null;
+  const r = o.ref as Record<string, unknown> | null | undefined;
+  const ref: SavedPlace['ref'] =
+    r && (r.kind === 'stop' || r.kind === 'station') && typeof r.id === 'string'
+      ? { kind: r.kind, id: r.id }
+      : null;
+  return {
+    id: o.id,
+    kind: o.kind as SavedPlace['kind'],
+    name: o.name,
+    address: typeof o.address === 'string' ? o.address : null,
+    lat: o.lat,
+    lng: o.lng,
+    ref,
+    createdAt: typeof o.createdAt === 'number' ? o.createdAt : 0,
+  };
+}
+
+/** Malformed entries and repeated ids are dropped. */
+function parseSavedPlaces(raw: string | null): SavedPlace[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    const out: SavedPlace[] = [];
+    const seen = new Set<string>();
+    for (const v of parsed) {
+      const place = parseSavedPlace(v);
+      if (!place || seen.has(place.id)) continue;
+      seen.add(place.id);
+      out.push(place);
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 async function loadFromStore(): Promise<Settings> {
   const [
     walk,
@@ -178,6 +244,7 @@ async function loadFromStore(): Promise<Settings> {
     quietEnd,
     clockFormat,
     mapType,
+    savedPlacesRaw,
   ] = await Promise.all([
     SecureStore.getItemAsync(STORAGE_KEYS.walkMinutes),
     SecureStore.getItemAsync(STORAGE_KEYS.notifBufferMin),
@@ -188,6 +255,7 @@ async function loadFromStore(): Promise<Settings> {
     SecureStore.getItemAsync(STORAGE_KEYS.quietEndMin),
     SecureStore.getItemAsync(STORAGE_KEYS.clockFormat),
     SecureStore.getItemAsync(STORAGE_KEYS.mapType),
+    SecureStore.getItemAsync(STORAGE_KEYS.savedPlaces),
   ]);
 
   const favoritedRoutes = parseFavoritedRoutes(favoritesRaw);
@@ -204,6 +272,7 @@ async function loadFromStore(): Promise<Settings> {
     quietEndMin: parseIntOr(quietEnd, DEFAULT_SETTINGS.quietEndMin),
     clockFormat: parseClockFormatOr(clockFormat, DEFAULT_SETTINGS.clockFormat),
     mapType: parseMapTypeOr(mapType, DEFAULT_SETTINGS.mapType),
+    savedPlaces: parseSavedPlaces(savedPlacesRaw),
   };
 }
 
@@ -333,6 +402,14 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const setSavedPlaces = useCallback((next: SavedPlace[]) => {
+    setState((prev) => {
+      if (prev.savedPlaces === next) return prev;
+      writeValue(STORAGE_KEYS.savedPlaces, JSON.stringify(next));
+      return { ...prev, savedPlaces: next };
+    });
+  }, []);
+
   const addFavorite = useCallback(
     (code: string, stopId: string): AddFavoriteResult => {
       let result: AddFavoriteResult = { ok: true };
@@ -429,6 +506,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     setQuietEndMin,
     setClockFormat,
     setMapType,
+    setSavedPlaces,
     addFavorite,
     removeFavorite,
     reorderFavorites,
