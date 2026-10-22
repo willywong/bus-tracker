@@ -41,7 +41,7 @@ export function PlacesSection() {
   return (
     <Section
       title="Places"
-      footer={<Text>Home and Work appear next to Where to? and under the app icon.</Text>}
+      footer={<Text>Home and Work appear in Plan and Saved, and under the app icon.</Text>}
     >
       {places.length === 0 ? (
         <Text modifiers={[secondary]}>Save a place from its results with Save.</Text>

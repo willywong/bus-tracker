@@ -39,7 +39,7 @@ import { SavedSection } from '@/components/sheet/SavedSection';
 import { SectionPicker } from '@/components/sheet/SectionPicker';
 import { currentSection } from '@/components/sheet/sections';
 import { useSettings } from '@/hooks/useSettings';
-import { toPlace, usePlanner } from '@/state/PlannerContext';
+import { usePlanner } from '@/state/PlannerContext';
 import { useRide } from '@/state/RideContext';
 import { useTrip } from '@/state/TripContext';
 import { hex, motion, PEEK_TOP, pick, sheetDetents, space, type DetentIndex } from '@/theme/design';
@@ -148,8 +148,6 @@ export default function TripSheet() {
   }, [pendingOpen, clearPending, router]);
 
   // Search is chrome (as in Apple Maps): the row tops every state of the sheet.
-  const home = settings.savedPlaces.find((p) => p.kind === 'home') ?? null;
-  const work = settings.savedPlaces.find((p) => p.kind === 'work') ?? null;
   const whereTo = (
     <View ref={topRow} collapsable={false}>
       <WhereToRow
@@ -158,12 +156,7 @@ export default function TripSheet() {
           planner.setTo(null);
           router.push('/plan');
         }}
-        home={home}
-        work={work}
-        onPlace={(p) => {
-          planner.setTo(toPlace(p));
-          router.push('/plan');
-        }}
+        onProfile={() => router.push('/settings')}
       />
     </View>
   );

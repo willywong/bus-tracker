@@ -13,19 +13,27 @@ import { HERE, usePlanner } from '@/state/PlannerContext';
 /**
  * Long-press the app icon → "Where to?", Home and Work, then "Track T816 ·
  * Hotel Lisa De Inn" for each favourite. Picking a favourite switches the
- * trip sheet to that route; "Where to?" opens the planner over the trip
- * sheet, and Home or Work opens it straight to results from your location.
- * All work on a cold launch.
+ * trip sheet to that route on Nearby; "Where to?" opens the planner over the
+ * trip sheet on Plan, and Home or Work opens it straight to results from your
+ * location. All work on a cold launch.
  */
 export function useQuickActions(): void {
   const settings = useSettings();
-  const { ready, favoritedRoutes, preferredStopByRoute, savedPlaces, setPreferredRouteCode } =
-    settings;
+  const {
+    ready,
+    favoritedRoutes,
+    preferredStopByRoute,
+    savedPlaces,
+    setPreferredRouteCode,
+    setSheetSection,
+  } = settings;
   const { requestOpen, setFrom, setWhen } = usePlanner();
   const select = useRef(setPreferredRouteCode);
   select.current = setPreferredRouteCode;
   const open = useRef(requestOpen);
   open.current = requestOpen;
+  const section = useRef(setSheetSection);
+  section.current = setSheetSection;
   const saved = useRef(savedPlaces);
   saved.current = savedPlaces;
   const replan = useRef({ setFrom, setWhen });
@@ -38,6 +46,7 @@ export function useQuickActions(): void {
     const handle = (action: QuickActions.Action) => {
       // The trip sheet opens `plan` once it's on the stack (see trip.tsx).
       if (action.params?.href === PLAN_HREF) {
+        section.current('plan');
         const to = action.params.to;
         const place = to === 'home' || to === 'work' ? saved.current.find((p) => p.kind === to) : undefined;
         if (place) {
@@ -52,7 +61,10 @@ export function useQuickActions(): void {
         return;
       }
       const code = action.params?.code;
-      if (typeof code === 'string' && code) select.current(code);
+      if (typeof code === 'string' && code) {
+        select.current(code);
+        section.current('nearby');
+      }
     };
     if (QuickActions.initial) handle(QuickActions.initial);
     const sub = QuickActions.addListener(handle);

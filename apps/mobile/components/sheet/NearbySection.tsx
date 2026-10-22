@@ -11,7 +11,7 @@ import { nearbyRailStations } from '@bus-tracker/shared';
 import { SymbolView, type SFSymbol } from 'expo-symbols';
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo } from 'react';
-import { Linking, StyleSheet, Text, View } from 'react-native';
+import { Linking, Share, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, useReducedMotion } from 'react-native-reanimated';
 
 import { formatClockHHMM } from '@/components/tracker/logic';
@@ -32,6 +32,7 @@ import { Timetable } from '@/components/trip/Timetable';
 import type { ScheduledDeparture } from '@/db/queries';
 import { useSettings } from '@/hooks/useSettings';
 import { ensureNotificationPermission } from '@/services/reminders/notifications';
+import { arrivalShareMessage } from '@/services/shareArrival';
 import { useRide } from '@/state/RideContext';
 import { useTrip } from '@/state/TripContext';
 import { color, hex, MARGIN, motion, pick, space, type } from '@/theme/design';
@@ -78,6 +79,10 @@ export function NearbySection({ peek, scheme }: { peek: boolean; scheme: 'light'
       params: { tripId: d.tripId, at: String(d.departureEpochMs) },
     });
   const openStation = (station: string) => router.push({ pathname: '/station', params: { station } });
+  const shareArrival = () => {
+    const message = arrivalShareMessage(trip.routeCode, trip.stopName, model.compact, model.source);
+    if (message) void Share.share({ message });
+  };
 
   if (model.state === 'empty') {
     return (
@@ -206,6 +211,12 @@ export function NearbySection({ peek, scheme }: { peek: boolean; scheme: 'light'
         ) : null}
 
         <View style={styles.options}>
+          {model.compact != null ? (
+            <>
+              <LinkRow icon="square.and.arrow.up" title="Share arrival" onPress={shareArrival} />
+              <Hairline inset={ROW_ICON_INSET} />
+            </>
+          ) : null}
           {model.state === 'arrival' ? (
             <>
               <ToggleRow

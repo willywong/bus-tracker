@@ -18,33 +18,22 @@ import {
   padding,
   symbolEffect,
 } from '@expo/ui/swift-ui/modifiers';
-import type { SFSymbol } from 'expo-symbols';
 import { StyleSheet, useColorScheme } from 'react-native';
 
-import type { SavedPlace } from '@/hooks/useSettings';
 import { hex, MARGIN, pick } from '@/theme/design';
 import { haptics } from '@/utils/haptics';
 
-/** The capsule and the circles. The row below adds 8pt (`WHERE_TO_ROW_HEIGHT`). */
+/** The capsule and the circle. The row below adds 8pt (`WHERE_TO_ROW_HEIGHT`). */
 const ROW_HEIGHT = 44;
 
 /**
  * The peek's "Where to?" row (spec §6.1): a Liquid Glass search capsule,
- * then a glass circle for Home and for Work once they're set. Glass is
- * allowed here because search is chrome, as in Apple Maps; it shows at every
- * detent, so nothing reflows when the sheet moves.
+ * then a glass profile circle that opens Settings. Home and Work live in the
+ * Plan and Saved sections. Glass is allowed here because search is chrome,
+ * as in Apple Maps; it shows at every detent, so nothing reflows when the
+ * sheet moves.
  */
-export function WhereToRow({
-  onOpen,
-  home,
-  work,
-  onPlace,
-}: {
-  onOpen: () => void;
-  home: SavedPlace | null;
-  work: SavedPlace | null;
-  onPlace: (p: SavedPlace) => void;
-}) {
+export function WhereToRow({ onOpen, onProfile }: { onOpen: () => void; onProfile: () => void }) {
   const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
   const bounce = useNativeState(0);
 
@@ -88,50 +77,29 @@ export function WhereToRow({
               <Text modifiers={[font({ size: 17 })]}>Where to?</Text>
             </HStack>
           </Button>
-          {home ? (
-            <PlaceCircle
-              symbol="house.fill"
-              label="Directions home"
-              ink={pick(hex.ink, scheme)}
-              onPress={() => onPlace(home)}
-            />
-          ) : null}
-          {work ? (
-            <PlaceCircle
-              symbol="briefcase.fill"
-              label="Directions to work"
-              ink={pick(hex.ink, scheme)}
-              onPress={() => onPlace(work)}
-            />
-          ) : null}
+          <ProfileCircle ink={pick(hex.ink, scheme)} onPress={onProfile} />
         </HStack>
       </GlassEffectContainer>
     </Host>
   );
 }
 
-/** A 44pt glass circle that plans straight to a saved place. */
-function PlaceCircle({
-  symbol,
-  label,
-  ink,
-  onPress,
-}: {
-  symbol: SFSymbol;
-  label: string;
-  ink: string;
-  onPress: () => void;
-}) {
+/** A 44pt glass circle; it merges with the capsule in the glass container. */
+function ProfileCircle({ ink, onPress }: { ink: string; onPress: () => void }) {
   return (
     <Button
       onPress={() => {
         haptics.selection();
         onPress();
       }}
-      modifiers={[buttonStyle('plain'), accessibilityLabel(label)]}
+      modifiers={[
+        buttonStyle('plain'),
+        accessibilityLabel('Settings'),
+        accessibilityHint('Saved places, routes and preferences'),
+      ]}
     >
       <Image
-        systemName={symbol}
+        systemName="person.crop.circle"
         size={17}
         color={ink}
         modifiers={[

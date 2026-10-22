@@ -2,7 +2,6 @@ import { Stack, useRootNavigationState, useRouter } from 'expo-router';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Easing,
-  Share,
   StyleSheet,
   useColorScheme,
   useWindowDimensions,
@@ -575,19 +574,6 @@ export default function MapScreen() {
     else frameRef.current(true);
   }, []);
 
-  // Stable callback over the latest model so the toolbar doesn't rebuild on
-  // every countdown tick.
-  const shareRef = useRef<() => void>(() => {});
-  shareRef.current = () => {
-    const m = trip.model;
-    if (!m.compact || !trip.stopName) return;
-    const how = m.source === 'scheduled' ? 'scheduled' : 'live estimate';
-    void Share.share({
-      message: `${trip.routeCode} to ${trip.stopName}: ${m.compact} (${how}).`,
-    });
-  };
-  const share = useCallback(() => shareRef.current(), []);
-
   const selectRoute = useCallback(
     (code: string) => {
       if (code === settings.preferredRouteCode) return;
@@ -615,9 +601,7 @@ export default function MapScreen() {
         myBusesOn={layers.myBuses}
         railOn={layers.rail}
         userPanned={userPanned}
-        canShare={trip.model.compact != null}
         onRecenter={recenter}
-        onShare={share}
         onSelectRoute={selectRoute}
         onSetMapType={settings.setMapType}
         onSetMapLayer={settings.setMapLayer}
@@ -746,9 +730,7 @@ interface MapToolbarProps {
   myBusesOn: boolean;
   railOn: boolean;
   userPanned: boolean;
-  canShare: boolean;
   onRecenter: () => void;
-  onShare: () => void;
   onSelectRoute: (code: string) => void;
   onSetMapType: (t: MapType) => void;
   onSetMapLayer: (key: keyof MapLayers, on: boolean) => void;
@@ -756,7 +738,8 @@ interface MapToolbarProps {
 
 /**
  * Native glass toolbar over the map: the route switcher (leading) and the
- * recenter / more cluster (trailing). System-drawn, so it gets Liquid Glass,
+ * layers / recenter cluster (trailing). Settings is the profile circle in the
+ * trip sheet's "Where to?" row. System-drawn, so it gets Liquid Glass,
  * grouping, sizing and accessibility for free. Memoised on primitive props so
  * live data ticks don't rebuild the header items (and close an open menu).
  */
@@ -767,9 +750,7 @@ const MapToolbar = memo(function MapToolbar({
   myBusesOn,
   railOn,
   userPanned,
-  canShare,
   onRecenter,
-  onShare,
   onSelectRoute,
   onSetMapType,
   onSetMapLayer,
@@ -851,16 +832,6 @@ const MapToolbar = memo(function MapToolbar({
           accessibilityLabel="Recenter map"
           onPress={onRecenter}
         />
-        <Stack.Toolbar.Menu icon="ellipsis" accessibilityLabel="More">
-          {canShare ? (
-            <Stack.Toolbar.MenuAction icon="square.and.arrow.up" onPress={onShare}>
-              Share Arrival
-            </Stack.Toolbar.MenuAction>
-          ) : null}
-          <Stack.Toolbar.MenuAction icon="gearshape" onPress={() => router.push('/settings')}>
-            Settings
-          </Stack.Toolbar.MenuAction>
-        </Stack.Toolbar.Menu>
       </Stack.Toolbar>
     </>
   );

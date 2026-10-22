@@ -11,6 +11,7 @@ import { PushRegistrationProvider } from '@/hooks/PushRegistrationContext';
 import { useHomeWidgetPlan } from '@/hooks/useHomeWidgetPlan';
 import { useRealtimeRoutes } from '@/hooks/useRealtimeRoutes';
 import { useQuickActions } from '@/hooks/useQuickActions';
+import { useSectionLinks } from '@/hooks/useSectionLinks';
 import { SettingsProvider, useSettings } from '@/hooks/useSettings';
 import { StaticGtfsProvider } from '@/hooks/useStaticGtfs';
 import { TransitNetworkProvider, useTransitNetwork, whenIdle } from '@/hooks/useTransitNetwork';
@@ -75,6 +76,7 @@ function AppStack() {
   const insets = useSafeAreaInsets();
   const detents = sheetDetents(windowHeight, insets.top);
   useQuickActions();
+  useSectionLinks();
   useHomeWidgetPlan();
 
   useEffect(() => {

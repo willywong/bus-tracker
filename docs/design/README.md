@@ -134,7 +134,7 @@
 >   strip sits over the body's top edge, so nothing reflows mid-fade.
 > - **"Where to?" plans the whole trip** (phases 12–15, spec in
 >   [`transit-and-planner.md`](./transit-and-planner.md)). A glass "Where
->   to?" capsule tops the trip peek, with Home and Work circles once set. It
+>   to?" capsule tops the trip peek, with the profile circle beside it. It
 >   opens `plan`: stations and stops first (offline), then Apple places, then
 >   up to five results, each a row of leg chips, a journey bar and one
 >   Live/Scheduled status line that re-times from live bus positions
@@ -144,6 +144,15 @@
 >   and get-off alerts, and the Live Activity's "Leg 2 of 4". Rail is never
 >   live; it reads "every N min" or "about". Rail lines share the map in
 >   their colours, with `station`, `line` and `network` sheets (§2).
+> - **Sheet sections, still no tab bar** (phase 16; canvas "BusBuddy Rail +
+>   Planner" → artboard **A · Tabs inside the sheet**,
+>   https://claude.ai/artifact/44D6Ds5naNcJd48n4ZqZdA). Under "Where to?" a
+>   segmented control switches the trip sheet between **Plan** (Home, Work,
+>   recents), **Nearby** (your tracked bus, with Share arrival among its
+>   options) and **Saved** (places, your routes). The last section sticks;
+>   Go, a ride and a stop or bus detail hide the control. A 44pt glass
+>   profile circle (`person.crop.circle`) at the end of the "Where to?" row
+>   opens Settings, replacing the Home/Work circles and the map's "…" menu.
 >
 > Sections below describe v2; where they mention glass sheets, blue accent,
 > filled badges or the 88pt rounded bold hero, v3 above wins.
@@ -161,12 +170,15 @@ three research reports kept alongside it in [`research/`](./research):
 
 1. **One job, one screen.** The app answers "when do I leave for my bus?". The
    old Tracker and Map tabs showed the same bus twice; they are merged into one
-   map with a persistent sheet (Apple Maps / Find My pattern). No tab bar.
+   map with one persistent sheet (Apple Maps / Find My pattern). The sheet's
+   Plan · Nearby · Saved sections and a profile button to Settings do the
+   work tabs would. Still no tab bar.
 2. **Glass is chrome, never content.** Liquid Glass is used only for the
    navigation layer: the system sheet, the native toolbar items over the map
-   (route switcher, recenter, more) and system menus. Everything inside the sheet
-   is content: plain text, fills and grouped backgrounds. No glass cards, no
-   glass-on-glass, no aurora backdrops, no bento tiles.
+   (route switcher, layers, recenter), the "Where to?" row and system menus.
+   Everything inside the sheet is content: plain text, fills and grouped
+   backgrounds. No glass cards, no glass-on-glass, no aurora backdrops, no
+   bento tiles.
 3. **One primary number.** Minutes until the next bus at your stop, large,
    rounded, tabular digits. Everything else supports it.
 4. **Honest about live vs scheduled.** The feed only has vehicle positions, so
@@ -247,23 +259,31 @@ them (`services/realtimePlan.ts`).
 
 ## 2. Information architecture
 
+One map, one sheet with Plan · Nearby · Saved, and a profile button to
+Settings. No tab bar. Design canvas: artboard **A · Tabs inside the sheet**
+(https://claude.ai/artifact/44D6Ds5naNcJd48n4ZqZdA).
+
 ```
 Root Stack (no tabs)
 ├─ index      Map canvas (full bleed, Apple Maps muted style)
 │   ├─ toolbar left : Route menu  "T816 ▾"  → favourites · Add Route… · Edit…
-│   └─ toolbar right: Layers ▾ (My buses, Rail lines, Rail map, Satellite) · Recenter · More ▾ (Share Arrival, Settings)
+│   └─ toolbar right: Layers ▾ (My buses, Rail lines, Rail map, Satellite) · Recenter
 ├─ trip       Persistent form sheet over the map (cannot be dismissed)
-│   ├─ peek   (18%)  "Where to?" capsule (+ Home · Work) · route badge · stop name · compact ETA
-│   ├─ glance (50%)  hero countdown · status · primary action
-│   ├─ large  (100%) + approach timeline · today's timetable · Lock Screen toggle · about
-│   └─ Go     a journey in progress replaces the body: current leg · timeline · End
+│   ├─ top    "Where to?" capsule · profile circle (→ settings) · Plan | Nearby | Saved
+│   ├─ Plan   Home · Work (leave HH:MM) · up to 5 recents → plan
+│   ├─ Nearby your tracked bus, by detent:
+│   │   ├─ peek   (18% + 40pt)  route badge · stop name · compact ETA
+│   │   ├─ glance (50%)  hero countdown · status · primary action
+│   │   └─ large  (100%) + approach timeline · today's timetable · Share arrival · Lock Screen toggle · about
+│   ├─ Saved  places strip (Home, Work, pins, Add) · your routes (→ Nearby) · Edit → settings
+│   └─ Go / ride / stop or bus detail replace the sections (no picker)
 ├─ plan       Form sheet: search (stations, stops, places) → up to 5 results
 ├─ itinerary  Form sheet (peek / 0.5 / 1): timeline + legs drawn on the map · Go
 ├─ station    Form sheet (0.5 / 1): departure board · nearby buses · interchanges
 ├─ line       Form sheet (0.6 / 1): whole-line strip map with estimated trains
 ├─ network    Form sheet: schematic rail map (Layers → Rail map)
 ├─ add-route  Form sheet: search → pick boarding stop → saved
-└─ settings   Form sheet: favourites · walking · display · about
+└─ settings   Form sheet (profile circle): favourites · walking · display · about
 ```
 
 ## 3. Screens
