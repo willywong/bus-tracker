@@ -88,3 +88,11 @@
 ## Handoff to next step ([06-mobile-feed-refresh-and-store.md](./06-mobile-feed-refresh-and-store.md))
 - `encodeNetwork` / `decodeNetwork` are ready for SQLite storage. Store `NETWORK_FORMAT_VERSION` in `network_blobs.version`, and treat a `NetworkFormatError` as a missing blob.
 - The measured blob and gzip sizes are recorded in task 00 Results.
+
+## Implementation notes
+- **`patterns.timeStart` gets its own section, `PTMS` i32.** The Step 1 list leaves it out, but `ev()` cannot read trip times without it.
+- **`GCEL` is `json`, not `f32`.** An f32 `0.005` decodes as `0.004999999888…`. That moves cell boundaries in `stopsNear`/`gridKey`, so lookups would miss the stored keys. The JSON number round-trips exactly.
+- **Decode looks sections up by tag, not by position.** It requires every expected tag with its expected kind, and rejects duplicates. Bad JSON, bad string sections, i32/f32 lengths that are not a multiple of 4, and grid cells outside `GSTP` also throw `NetworkFormatError`.
+- **Decoded typed arrays and grid cells are views over the input buffer**, as specified. Don't reuse the buffer after decoding. On an unaligned input, the views are over a one-time copy instead.
+- **Fixture size for 20261028:** 3.51 MB blob (2.92 MB typed arrays), 1.43 MB gzipped. `PARR`/`PDEP` take 2.4 MB of that, and `PKEY` 267 KB. On Node, encode takes ≈ 4 ms and decode ≈ 0.7 ms. The full output is in task 00 Results.
+- **`network-blob-size.ts` resolves `<fixturesDir>` from the cwd, then from the repo root.** `pnpm -C packages/shared` runs from the package, so the Verification command's repo-relative path would not resolve otherwise.

@@ -101,6 +101,63 @@ Measured 2026-10-23 on the **iOS Simulator** (iPhone 17 Pro Max, iOS 27.0, host 
   - Rail windows > 720 s: 1 (`PYL_MonFri_1`, 840 s)
   - See the fixture README for the per-feed table.
 - KTMB filtered to Komuter + bbox: stops 49 / patterns 18 / trips 90.
+- **Estimated network Int32 bytes** (plan 12/05, the compiled and encoded network): 3.51 MB blob, of which 2.92 MB is typed arrays; 1.43 MB gzipped. From `pnpm -C packages/shared exec tsx scripts/network-blob-size.ts packages/shared/src/transit/__fixtures__/2026-10-23 20261028`:
+  ```
+  network 20261028: 6421 stops, 238 routes, 308 patterns, 310491 stop events
+  section  kind      bytes
+  META     json      0.3 KB
+  STNS     json     46.0 KB
+  SID      str      89.7 KB
+  SNAM     str     174.4 KB
+  SLAT     f32      25.1 KB
+  SLON     f32      25.1 KB
+  SFED     u8        6.3 KB
+  SSTN     i32      25.1 KB
+  RID      str       3.0 KB
+  RLAB     str       2.1 KB
+  RLNG     str       6.8 KB
+  RMOD     u8        0.2 KB
+  RCOL     str       2.8 KB
+  RTXC     str       2.8 KB
+  RFED     u8        0.2 KB
+  RSHP     str       3.5 KB
+  PRTE     i32       1.2 KB
+  PHED     str       9.2 KB
+  PSST     i32       1.2 KB
+  PSLN     i32       1.2 KB
+  PSTP     i32      40.1 KB
+  PTST     i32       1.2 KB
+  PTLN     i32       1.2 KB
+  PTMS     i32       1.2 KB
+  PARR     i32    1212.9 KB
+  PDEP     i32    1212.9 KB
+  PKEY     str     267.1 KB
+  PFST     i32       1.2 KB
+  PFLN     i32       1.2 KB
+  FSTA     i32       0.8 KB
+  FEND     i32       0.8 KB
+  FHWY     i32       0.8 KB
+  PROF     i32      40.1 KB
+  XSTA     i32      25.1 KB
+  XLEN     i32      25.1 KB
+  XPAT     i32      40.1 KB
+  XPOS     i32      40.1 KB
+  TSTA     i32      25.1 KB
+  TLEN     i32      25.1 KB
+  TTO      i32      66.6 KB
+  TSEC     i32      66.6 KB
+  TKND     u8       16.6 KB
+  GCEL     json      0.0 KB
+  GLAT     i32       8.3 KB
+  GLON     i32       8.3 KB
+  GSTA     i32       8.3 KB
+  GLEN     i32       8.3 KB
+  GSTP     i32      25.1 KB
+  typed arrays     2988.3 KB
+  total            3596.9 KB  (3.51 MB)
+  gzip             1461.9 KB  (1.43 MB)
+  encode 4.3 ms, decode 0.7 ms (Node, median of 5)
+  ```
 - Rail shapes: `[x] header lon,lat with correct values` / `[ ] values swapped`.
 - **KTMB realtime** at 02:03 MYT on 2026-10-23: 1 entity (ETS219, stationary near Ipoh). Komuter present: **pending**.
   - That run was overnight, so it says nothing about Komuter.
