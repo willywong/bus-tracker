@@ -168,6 +168,11 @@ Measured 2026-10-23 on the **iOS Simulator** (iPhone 17 Pro Max, iOS 27.0, host 
   - The build runs once per service date in the background and is cached in `network_blobs`, so smoothness matters more than the total.
   - **Confirm on a physical iPhone 13 in a release build before task 06.** If the sliced total there is over 5 s, switch to the fallback. Task 06 is the only task that changes.
   - Carry forward: `sliceMs` = 12 for the network build. The scan of bus `stop_times.txt` is the hot path for task 03 to keep lean.
+- **Re-timed with the shipped code (2026-10-23, 15/08).**
+  - Setup: a Release build on the iPhone 17 Pro Max Simulator, nothing else running.
+  - Method: `network_blobs` was cleared before each launch, so `refreshTransitNetwork` reads the four stored feeds and compiles both service dates (today and tomorrow).
+  - Result: `refresh done in` 2145, 2163 and 2173 ms over three runs. That is about 1.1 s per date, inside the 4 s rule.
+  - The physical iPhone 13 check is still open.
 
 **Decision rule:**
 - If the sliced total is **> 4 s**, or the longest frame gap is **> 100 ms**, after one obvious fix (bigger `SCAN_STEP_BYTES`, fewer string allocations), adopt the fallback:
