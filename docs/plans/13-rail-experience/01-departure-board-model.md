@@ -89,3 +89,22 @@ Pure, tested functions in `packages/shared/src/transit/board.ts` that turn the n
 - `stationBoard`, `stopDepartures`, `lineDirections`, `boardText`, `serviceClock`, `HEADWAY_ONLY_MAX_SEC` are exported from `@bus-tracker/shared`.
 - 03 renders `boardText(...).primary/secondary` and uses `spoken` for VoiceOver; 04 reuses `serviceClock` and the active window's `headwaySec` for train spacing.
 - Assumption carried forward: `network.stations[i].id` keeps the slug ids of `RAIL_STATIONS` (`packages/shared/src/data/rail-stations.ts`), so bundled and network station ids agree.
+
+## Implementation notes
+- **Trip times are read through `ev(net, p, t, s)`.** The Context formula `dep[(tripStart + t) * stopLen + s]` is the flat index that 12/03 replaced, because it collides across patterns with different `stopLen`.
+- **`last` is the last departure on the grid, not `fEnd + off`.** A window's trains leave at `fStart + k·h ≤ fEnd`, so KJ's 19:00–23:15 window every 7 min leaves its origin last at 23:12. Using `fEnd` would show "Last 23:15" while the row already says "No more trains today". The two agree wherever `h` divides the window, which is most windows in the fixture.
+- **Headway rule:**
+  - A row is `headway` when `t` lies inside a shifted window `[fStart + off, fEnd + off]` and the next grid departure comes no more than one headway after that window's end. This covers a window whose end falls between grid departures (06:00–09:00 every 7 min ends its grid at 08:55, so at 08:57 the next train is 09:00, from the next window).
+  - `headwaySec` is the headway of the window containing `t`. On an exact boundary, the later window wins. So the headway switches at the boundary itself, never before it.
+  - Outside every window, or in a gap between windows, the row is `closed`, with `reopensAt` set to the next start or `null`.
+  - `nextAboutSec` is never negative and never more than the headway.
+- **Timetabled rows:** a `timetable` row lists the next ≤ 3 scheduled departures, including before the day's first train. Scheduled clock times are honest on their own. The row is `closed` with `reopensAt: null` only once no departure is left.
+- **Directions (`lineDirections`):**
+  - On top of the spec's rule, a tie on the lowest station code prefers the longer pattern before headsign A–Z. KTM Port Klang has three patterns from 17300; without this, dir 0 would be the 25-stop `→ Klang` short working rather than the 30-stop `→ Pel Klang Sel` run.
+  - The result is `[dir 0, every pattern running the other way (longest first), other dir-0 patterns]`, so `[1]` is always the full run the other way. Rail has exactly two entries (`[KJ1→Putra Heights, KJ37→Gombak]`). KTM Seremban has four and Port Klang five.
+  - A row's `dir` is 0 or 1 according to whether its (route, last stop) group runs the same way as dir 0. "Same way" means the first two stops it shares with the dir-0 pattern come in that pattern's order. Without two shared stops, the fallback is whether the group ends nearer dir 0's terminus than its origin.
+- **`pattern` on a row** is the longest pattern of its group that calls at this stop or station (lowest index on a tie). It is not the route-wide representative, which may not call here.
+- **Stale:** `stationBoard` is stale when any feed of the station's own stops (`feedOfStopId` over `stopIds`) is excluded, rather than only when `rail` is excluded. A rail station's result is the same. A KTM station keeps its board when only the rail feed has expired.
+- **Merging:** `stationBoard` groups rows across all of the station's stops in one pass, so the same (route, last stop) on two platforms becomes one row. `stopDepartures` uses the same path for a single stop.
+- **Extra test:** `a window ending off its grid hands over to the next window; a gap is closed` covers the two edges above. The synthetic helper also exports `buildNetwork()` for one-off networks. Its patterns list KJ3 → KJ1 first, so the `lineDirections` test actually reorders them.
+- **Fixture check, 2026-10-28:** Kajang Line at Pasar Seni at 07:30 shows `about 1 min · then every 6 mins` towards Kajang and `about 4 mins · then every 6 mins` towards Kwasa Damansara, matching the 06:00–09:00 / 360 s window.
