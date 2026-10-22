@@ -1,0 +1,45 @@
+diff --git a/ios/AppDelegate.swift b/ios/AppDelegate.swift
+index 37558e006b606eae26e2e5be6e44afee93590547..ed92caf5c50dc98f2885ca5b9a53a5abaa4913c2 100644
+--- a/ios/AppDelegate.swift
++++ b/ios/AppDelegate.swift
+@@ -17,6 +17,11 @@ public class ExpoQuickActionsAppDelegate: ExpoAppDelegateSubscriber {
+   }
+ 
+   public func application(_ application: UIApplication, performActionFor shortcutItem: UIApplicationShortcutItem, completionHandler: @escaping (Bool) -> Void) {
++    // With the scene lifecycle a cold launch never puts the item in
++    // `launchOptions`: it arrives here, before JS listens. Keep it as `initial`.
++    if !quickActionObserving {
++      initialAction = shortcutItem
++    }
+     NotificationCenter.default.post(name: Notification.Name(onQuickAction), object: shortcutItem)
+     completionHandler(true)
+   }
+diff --git a/ios/ExpoQuickActionsModule.swift b/ios/ExpoQuickActionsModule.swift
+index 252da492ce374eef886d574a2c38af242de6d6c3..e2f2fbdb8e0d32e47a1ed2a94da3765df5972635 100644
+--- a/ios/ExpoQuickActionsModule.swift
++++ b/ios/ExpoQuickActionsModule.swift
+@@ -72,6 +72,8 @@ func toActionObject(item: UIApplicationShortcutItem?) -> ActionObject? {
+ }
+ 
+ var initialAction: UIApplicationShortcutItem?
++/// Whether JS listens for quick actions; until then one is kept as `initial`.
++var quickActionObserving = false
+ 
+ public class ExpoQuickActionsModule: Module {
+     
+@@ -103,6 +105,7 @@ public class ExpoQuickActionsModule: Module {
+         Events(onQuickAction)
+         
+         OnStartObserving {
++            quickActionObserving = true
+             NotificationCenter.default.addObserver(
+                 self,
+                 selector: #selector(self.quickActionListener),
+@@ -112,6 +115,7 @@ public class ExpoQuickActionsModule: Module {
+         }
+         
+         OnStopObserving {
++            quickActionObserving = false
+             NotificationCenter.default.removeObserver(
+                 self,
+                 name: Notification.Name(onQuickAction),

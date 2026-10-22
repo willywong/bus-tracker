@@ -170,3 +170,14 @@ The next work starts from those follow-ups. Pick one with `poteto-mode` and give
   - Each Settings → Places row is one element.
 - **Dev harness removed.** `app/dev-network.tsx`, `app/dev-planner.tsx`, `services/devStages.ts`, their routes, Settings rows and stage markers.
 - **Build impact:** JS-only.
+- **Cold-launch quick actions** (native: `patches/expo-quick-actions@6.0.2.patch`). This was not a dev-client artifact; a Release build lost them too. Under the scene lifecycle, a cold-launch shortcut skips `launchOptions`. Expo's `ExpoAppSceneDelegate` forwards it to `performActionFor` before JS listens, and expo-quick-actions only posted an event that nobody received.
+  - The patch keeps the item as `initial` while no JS observer is attached.
+  - Verified in a Release Simulator build: a cold launch from the Home quick action opens the Pavilion results.
+  - Native change: rebuild the app (`pod install` isn't needed, because the pod reads `node_modules`).
+- **Release Simulator run.** Cold launch → Where to? → KLCC: rows are on screen within the first screenshot after the pick. `firstResultMs` is a dev-only log; the dev build measured 320 ms with a fresh fix. The iPhone 13 numbers are still to do on a device.
+- **Dynamic Type.**
+  - At XXXL: the trip peek fits, result rows wrap without overlapping, and the search placeholder truncates.
+  - At AX sizes: the fixed-height trip peek clips the hero. Noted as the spec says, not fixed.
+  - The SwiftUI When menu doesn't grow with text size.
+- **Dark mode.** The peek, plan sheet, Saved thumbnail and destination snapshot all switch.
+- **Reduce Motion.** Reanimated picks it up, and the itinerary opens with every leg already drawn.
