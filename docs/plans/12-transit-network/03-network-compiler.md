@@ -124,3 +124,21 @@
 - `compileNetwork` / `compileNetworkSync` return a complete `TransitNetwork` except for `transfers`, which is empty CSR.
 - `gridKey`, `stopsNear`, `activeServiceIds`, `isTurnUpAndGo`, `BUS_HEADWAY_CUTOFF_SEC` and `GRID_CELL_DEG` are exported from `packages/shared/src/transit/index.ts`.
 - Stations include the KTM stops, and `stops.station` is filled. Task 04 uses it for same-station transfers.
+
+## Implementation notes
+- **Long bus windows expand in the compiler, not through `expandFrequencies`.** Calling it would build a `GtfsStopTime` with two formatted time strings for each of ~213k stop events, then parse them back. The compiler applies the same rules directly:
+  - inclusive ends;
+  - start times deduplicated and sorted across a template's windows;
+  - `frequencyInstanceId` keys;
+  - offsets taken from the template's first departure.
+  A synthetic test checks that the output matches `expandFrequencies`, both trip ids and times.
+- **stop_times times are parsed without the regex.** A private `timeOf` accepts the same grammar as `gtfsTimeToSeconds`. It is about 8× faster on Node and allocates nothing. Window start and end times still go through `gtfsTimeToSeconds`.
+- **Window groups and FIFO sub-patterns pair up by position.** Sub-pattern `i` carries window group `i`, so a group yields `max(subs, window groups)` patterns. Each window group is the set of templates whose run times agree within 60 s.
+- **Pattern counts for 20261028.** Before any split, the (route, direction, stops) groups match task 00 exactly: rail 16, bus-kl 171, feeder 92, KTM 18. After splitting:
+  - bus-kl has 181 patterns (+5.8%): 5 FIFO splits, plus 5 template splits on U6000, whose templates' run times differ by 5–40 min.
+  - The feeder has 93 patterns (one FIFO split).
+  - The network does not store direction, so the fixture test checks that (route, stops) ≤ task 00 ≤ patterns. KTM trip 2169 runs the direction-1 stop sequence as `direction_id=0`, which is why KTM has 17 by (route, stops) and 18 patterns.
+- **Stops count every stop in an included feed, served or not.** bus-kl has 4,068 stops against the 4,036 served in task 00 (+0.8%). In total there are 6,421 stops against 6,389 (+0.5%).
+- **Inclusive windows duplicate some departures.** When one template's window ends at the minute the next template's window starts, both templates run a trip at that minute (`weekday_S0120_S012002_0@08:15` and `…_1@08:15`). This gives 38 duplicate bus-kl trips on 20261028. They are kept, because they match `expandFrequencies` and task 00's counts.
+- **Rail stops missing from `RAIL_STATIONS`** get a station with id `slug(name)`, or `slug(name)-slug(stop_id)` if that id is taken. Its lines come from `RAIL_LINES` by line name. Stations exist only for an included rail or KTM feed. A KTM station's lines are the KTM routes calling there on any day.
+- **The `yieldEvery` default stays at 2,048.** On Node, a warm compile's longest step is 0.4–1 ms, outside GC pauses. That is roughly 3–7 ms on Hermes.
