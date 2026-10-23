@@ -16,8 +16,6 @@ import { toPlace, usePlanner } from '@/state/PlannerContext';
 import { color, MARGIN, space, type } from '@/theme/design';
 import { haptics } from '@/utils/haptics';
 
-/** The rows the peek has room for (two 56pt rows in its 160pt). */
-const PEEK_ROWS = 2;
 /** The leading circle; hairlines start at the title beside it. */
 const CIRCLE = 34;
 const ROW_INSET = CIRCLE + space.sm;
@@ -27,8 +25,9 @@ const ROW_INSET = CIRCLE + space.sm;
  * it's ahead), then recent destinations. Any row plans to it; a missing Home
  * or Work opens the search, whose Save menu sets it. Recents are read here,
  * never written: `plan` is their one writer, so they're re-read when it closes.
+ * Every detent lists them all, cut by the sheet's edge.
  */
-export function PlanSection({ peek, scheme }: { peek: boolean; scheme: 'light' | 'dark' }) {
+export function PlanSection({ scheme }: { scheme: 'light' | 'dark' }) {
   const settings = useSettings();
   const planner = usePlanner();
   const router = useRouter();
@@ -75,10 +74,9 @@ export function PlanSection({ peek, scheme }: { peek: boolean; scheme: 'light' |
     router.push('/plan');
   };
 
-  const shown = peek ? rows.slice(0, PEEK_ROWS) : rows;
   return (
     <View style={styles.body}>
-      {shown.map((row, i) => (
+      {rows.map((row, i) => (
         <Fragment key={row.id}>
           {i > 0 ? <Hairline inset={ROW_INSET} /> : null}
           <PlanRowView row={row} onPress={() => open(row)} />

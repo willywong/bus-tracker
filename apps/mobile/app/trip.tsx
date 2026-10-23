@@ -320,11 +320,11 @@ export default function TripSheet() {
         ) : nearbyView?.kind === 'route' ? (
           <RouteView view={nearbyView} scheme={scheme} />
         ) : section === 'plan' ? (
-          <PlanSection peek={peek} scheme={scheme} />
+          <PlanSection scheme={scheme} />
         ) : section === 'saved' ? (
-          <SavedSection peek={peek} scheme={scheme} />
+          <SavedSection scheme={scheme} />
         ) : (
-          <NearbySection peek={peek} scheme={scheme} />
+          <NearbySection />
         )}
       </SectionBody>
     </SheetScroll>

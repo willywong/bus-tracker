@@ -28,9 +28,10 @@ const LABEL_MAX_SCALE = 1.3;
 /**
  * The Saved section (plan 16/04): your places as a strip of map tiles, then
  * your routes. A place plans to it, a route starts tracking it and switches
- * to Nearby, and Edit opens Settings. Peek shows the strip alone.
+ * to Nearby, and Edit opens Settings. Every detent shows both, cut by the
+ * sheet's edge.
  */
-export function SavedSection({ peek, scheme }: { peek: boolean; scheme: 'light' | 'dark' }) {
+export function SavedSection({ scheme }: { scheme: 'light' | 'dark' }) {
   const settings = useSettings();
   const router = useRouter();
   const planner = usePlanner();
@@ -88,9 +89,8 @@ export function SavedSection({ peek, scheme }: { peek: boolean; scheme: 'light' 
           />
         ))}
       </ScrollView>
-      {/* Mounted at peek but hidden, as the trip body is, so nothing clips under the strip. */}
       {rows.length > 0 ? (
-        <SheetBody peek={peek}>
+        <SheetBody peek={false}>
           <View>
             <View style={styles.titleRow}>
               <SectionLabel>Your routes</SectionLabel>

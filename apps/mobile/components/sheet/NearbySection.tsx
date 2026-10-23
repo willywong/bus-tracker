@@ -13,10 +13,10 @@ import { color, MARGIN, space, type } from '@/theme/design';
 /**
  * The Nearby section (plan 17/02): your bus in one row, then the bus stops
  * and stations around you, nearest first. A stop opens its routes in the
- * sheet; a station opens its sheet. Peek shows your bus and the nearest
- * place; the rest waits in the body, as the other sections' rows do.
+ * sheet; a station opens its sheet. Every detent shows the whole list, cut
+ * by the sheet's edge.
  */
-export function NearbySection({ peek }: { peek: boolean; scheme: 'light' | 'dark' }) {
+export function NearbySection() {
   const nearby = useNearby();
   const router = useRouter();
   const { places } = nearby;
@@ -42,7 +42,7 @@ export function NearbySection({ peek }: { peek: boolean; scheme: 'light' | 'dark
         {first ? <PlaceRow place={first} onPress={() => open(first)} /> : <Status />}
       </View>
       {rest.length > 0 ? (
-        <SheetBody peek={peek}>
+        <SheetBody peek={false}>
           <View>
             {rest.map((place) => (
               <Fragment key={place.key}>
