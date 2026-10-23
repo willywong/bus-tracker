@@ -40,7 +40,9 @@ yarn-error.*
 /ios
 /android
 
-# 3D Warehouse bus model (HALIM3D) and the map sprites rendered from it: not
-# ours to publish until the author agrees. Rebuild them with
-# modules/bus-model/scripts/prepare-rapid-bus.py.
-/modules/bus-model/ios/Assets/
+# The bus model and its sprites are ours (scripts/build-feeder-bus.py) and
+# committed; the reference photos beside them are others' and stay local.
+/modules/bus-model/ios/Assets/*
+!/modules/bus-model/ios/Assets/RapidBus.usdz
+!/modules/bus-model/ios/Assets/map-bus-*.png
+!/modules/bus-model/ios/Assets/pill-bus.png

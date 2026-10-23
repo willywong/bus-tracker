@@ -6,7 +6,7 @@ import UIKit
 /// textures), plus the textures the app draws itself: the headsign and the
 /// soft contact shadow under the bus.
 ///
-/// The asset follows the contract in `scripts/prepare-rapid-bus.py`: Y-up,
+/// The asset follows the contract in `scripts/build-feeder-bus.py`: Y-up,
 /// metres, ground at y = 0, centred, front facing +Z, and a quad named
 /// `Headsign` for the destination sign.
 @MainActor

@@ -21,6 +21,6 @@ Pod::Spec.new do |s|
   }
 
   s.source_files = "**/*.{h,m,mm,swift,hpp,cpp}"
-  # Built by scripts/prepare-rapid-bus.py; see that script for the asset contract.
+  # Built by scripts/build-feeder-bus.py; see that script for the asset contract.
   s.resource_bundles = { 'BusModelAssets' => ['Assets/*.{usdz,png}'] }
 end

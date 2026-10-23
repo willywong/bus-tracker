@@ -4,7 +4,7 @@ import { Platform, type ViewProps } from 'react-native';
 
 /**
  * The RealityKit bus (iOS only). The model lives in `ios/Assets/RapidBus.usdz`,
- * built by `scripts/prepare-rapid-bus.py`; any replacement must follow that
+ * built by `scripts/build-feeder-bus.py`; any replacement must follow that
  * script's contract (Y-up, metres, front to +Z, a `Headsign` quad).
  */
 export type BusModelViewProps = ViewProps & {
