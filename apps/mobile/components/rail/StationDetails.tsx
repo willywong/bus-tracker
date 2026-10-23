@@ -70,10 +70,12 @@ export function useStation(stationId: string): {
 export function StationLineBadges({
   lines,
   onOpenLine,
+  size = 'regular',
   style,
 }: {
   lines: readonly StationLine[];
   onOpenLine: (routeId: string, dir: 0 | 1) => void;
+  size?: 'regular' | 'small';
   style?: StyleProp<ViewStyle>;
 }) {
   return (
@@ -84,6 +86,7 @@ export function StationLineBadges({
           <LineBadge
             key={l.line.name}
             line={l.line}
+            size={size}
             onPress={routeId ? () => onOpenLine(routeId, 0) : undefined}
           />
         );

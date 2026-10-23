@@ -57,11 +57,29 @@ export function SheetBody({ peek, children }: { peek: boolean; children: ReactNo
   );
 }
 
-/** A titled section under a full-width rule. */
-export function Section({ title, children }: { title: string; children: ReactNode }) {
+/**
+ * A titled section under a full-width rule. `accessory` sits on the title's
+ * line, trailing (a line's running hours beside its name).
+ */
+export function Section({
+  title,
+  accessory,
+  children,
+}: {
+  title: string;
+  accessory?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <View style={styles.section}>
-      <SectionLabel>{title}</SectionLabel>
+      {accessory ? (
+        <View style={styles.titleRow}>
+          <SectionLabel>{title}</SectionLabel>
+          {accessory}
+        </View>
+      ) : (
+        <SectionLabel>{title}</SectionLabel>
+      )}
       {children}
     </View>
   );
@@ -83,5 +101,12 @@ const styles = StyleSheet.create({
     paddingTop: space.lg,
     borderTopWidth: SECTION_RULE,
     borderTopColor: color.hairline,
+  },
+  titleRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    columnGap: space.sm,
   },
 });

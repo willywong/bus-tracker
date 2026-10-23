@@ -139,6 +139,7 @@ test('headway ≤ 300 s rows have rolling null and primary "every 3 mins"', () =
   );
   assert.equal(m.boards[0].footer, 'First 6:02 · Last 23:30');
   assert.equal(m.boards[0].footerSpoken, 'First train 6:02, last train 23:30');
+  assert.deepEqual([m.boards[0].first, m.boards[0].last], ['6:02', '23:30']);
 });
 
 test('headway > 300 s rows roll the minute count', () => {

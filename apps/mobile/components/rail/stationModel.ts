@@ -75,6 +75,9 @@ export interface StationBoardView {
   footer: string | null;
   /** "First train 06:00, last train 23:25". */
   footerSpoken: string | null;
+  /** The footer's two clock times on their own ("06:00", "23:25"), for icons beside them. */
+  first: string | null;
+  last: string | null;
 }
 
 export interface InterchangeView {
@@ -236,17 +239,23 @@ function rowView(row: BoardRow, lineName: string, clock: (ms: number) => string)
   };
 }
 
-function footerOf(rows: readonly BoardRow[], clock: (ms: number) => string): { footer: string | null; footerSpoken: string | null } {
+type BoardFooter = Pick<StationBoardView, 'footer' | 'footerSpoken' | 'first' | 'last'>;
+
+const NO_FOOTER: BoardFooter = { footer: null, footerSpoken: null, first: null, last: null };
+
+function footerOf(rows: readonly BoardRow[], clock: (ms: number) => string): BoardFooter {
   let first: number | null = null;
   let last: number | null = null;
   for (const r of rows) {
     if (r.first != null && (first == null || r.first < first)) first = r.first;
     if (r.last != null && (last == null || r.last > last)) last = r.last;
   }
-  if (first == null || last == null) return { footer: null, footerSpoken: null };
+  if (first == null || last == null) return NO_FOOTER;
   return {
     footer: `First ${clock(first)} · Last ${clock(last)}`,
     footerSpoken: `First train ${clock(first)}, last train ${clock(last)}`,
+    first: clock(first),
+    last: clock(last),
   };
 }
 
@@ -444,7 +453,7 @@ export function buildStationSheet(i: StationSheetInput): StationSheetModel | nul
     return {
       line,
       rows: rows.map((r) => rowView(r, line.name, clock)),
-      ...(unavailable ? { footer: null, footerSpoken: null } : footerOf(rows, clock)),
+      ...(unavailable ? NO_FOOTER : footerOf(rows, clock)),
     };
   });
 
