@@ -5,8 +5,9 @@ Gemilang-bodied Scania K250UB in the older red / cream / blue rapidKL
 livery, plus its map sprites and the bus pill's icon.
 
 Our own work, so it is committed. Measurements come from the CC0 / CC BY-SA
-photos in ios/Assets/lrt-feeder-reference/ (gitignored); the livery leaves
-out every trademark (the rapidKL wordmark, slogans, badges, plates).
+photos in ios/Assets/lrt-feeder-reference/ (gitignored). The rapidKL name is
+set in plain type (paint_lettering), not the logotype; slogans, badges and
+plates stay out.
 
 The same body also runs the LRT feeders in the pink "Bas Perantara LRT"
 livery, bus by bus rather than route by route, so this one stands for them.
@@ -141,12 +142,27 @@ def paint_rear(a):
     a.rrect(r, HW - 0.26, 0.31, HW + 0.26, 0.42, 0.01, BLACK)  # plate, left blank
 
 
+def paint_lettering(a):
+    """The operator's name, in plain type as kit.FONTS sets it: large on the
+    fascia and low on both sides ahead of the middle door, small and white in
+    the red band at the four top corners; the chassis maker's under the
+    windscreen."""
+    name = [('rapid', RED), ('KL', BLUE)]
+    a.text('front', name, HW, 0.66, 0.19, 'bold-italic')
+    a.text('front', [('SCANIA', kit.CHROME)], HW, 1.02, 0.04, 'bold')
+    for side, flip in (('near', False), ('off', True)):
+        a.text(side, name, 5.0, 1.06, 0.19, 'bold-italic', flip=flip)
+        for d in (0.75, L - 0.75):
+            a.text(side, [('rapidKL', kit.WHITE)], d, 2.80, 0.07, 'bold-italic', flip=flip)
+
+
 def paint_atlas():
     a = kit.Atlas()
     paint_side(a, 'near')
     paint_side(a, 'off')
     paint_front(a)
     paint_rear(a)
+    paint_lettering(a)
     a.rect('roof', -0.1, -0.1, L + 0.1, W + 0.1, RED)
     a.rect('bottom', 0, 0, 2.6, 0.6, '#141416')
     return a.pixels()

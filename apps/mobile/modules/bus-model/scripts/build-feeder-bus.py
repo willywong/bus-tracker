@@ -1,11 +1,12 @@
 """
 Builds ios/Assets/RapidBus.usdz from scratch: the Rapid KL MRT feeder bus
-(Gemilang-bodied Volvo B7RLE, the kind that runs T816) in its plain livery,
-plus the map sprites and the bus pill's icon rendered from it.
+(Gemilang-bodied Volvo B7RLE, the kind that runs T816) in its livery, plus
+the map sprites and the bus pill's icon rendered from it.
 
 Our own work, so it is committed. Measurements come from the CC0 / CC BY-SA
-photos and notes in ios/Assets/mrt-feeder-reference/ (gitignored); the
-livery leaves out every trademark (MRT and rapidKL logos, slogans, badges).
+photos and notes in ios/Assets/mrt-feeder-reference/ (gitignored). The
+operators' names and slogans are set in plain type (paint_lettering); their
+logo artwork (the MRT swoosh, the rapidKL logotype) and plates stay out.
 
 Usage, from modules/bus-model (macOS; usdcat, usdzip, usdrecord and sips ship
 with the OS), then `pod install` and rebuild:
@@ -161,12 +162,70 @@ class Atlas:
         inside = (d2 <= (r * PX * SS) ** 2) & (d2 >= (inner * PX * SS) ** 2)
         self.img[sl][inside] = srgb(color)
 
+    def text(self, region, runs, u, y, cap, font='bold', anchor=0.5, flip=False):
+        """Sets `runs` ([(text, colour), …]) on one line: cap height `cap`, on
+        the baseline y, with the fraction `anchor` of its width at u (0 puts
+        its low-u end there). `flip` mirrors it for faces whose u runs against
+        the reading direction (the offside and the rear). Returns its u span."""
+        tris = lettering(runs, font)
+        xs = [p[0] for _, tri in tris for p in tri]
+        x0, x1 = min(xs), max(xs)
+        s = cap / CAP_HEIGHT
+        width = (x1 - x0) * s
+        lo = u - anchor * width
+        for color, tri in tris:
+            pts = [((x - x0) * s, y + v * s) for x, v in tri]
+            self.poly(region, [(lo + (width - a if flip else a), b) for a, b in pts], color)
+        return lo, lo + width
+
     def pixels(self):
         n = SIZE
         small = self.img.reshape(n, SS, n, SS, 3).mean((1, 3))
         rgba = np.ones((n, n, 4), np.float32)
         rgba[..., :3] = small
         return rgba  # row 0 at the bottom, as Blender stores images
+
+
+# The operators' lettering is plain type, Arial from macOS (Blender's own
+# font where it's missing), never their logo artwork.
+FONTS = {
+    'regular': '/System/Library/Fonts/Supplemental/Arial.ttf',
+    'italic': '/System/Library/Fonts/Supplemental/Arial Italic.ttf',
+    'bold': '/System/Library/Fonts/Supplemental/Arial Bold.ttf',
+    'bold-italic': '/System/Library/Fonts/Supplemental/Arial Bold Italic.ttf',
+}
+CAP_HEIGHT = 0.716  # Arial's, in em
+
+
+def lettering(runs, font):
+    """`runs` set at 1 em on the baseline y = 0, as filled triangles:
+    [(colour, [(x, y)] * 3)]. Blender fills the glyph outlines, counters and all."""
+    curve = bpy.data.curves.new('Lettering', 'FONT')
+    if os.path.exists(FONTS[font]):
+        curve.font = bpy.data.fonts.load(FONTS[font], check_existing=True)
+    curve.body = ''.join(text for text, _ in runs)
+    slots = [bpy.data.materials.new(f'Lettering{i}') for i in range(len(runs))]
+    for m in slots:
+        curve.materials.append(m)
+    i = 0
+    for k, (text, _) in enumerate(runs):
+        for _ in text:
+            curve.body_format[i].material_index = k
+            i += 1
+    ob = bpy.data.objects.new('Lettering', curve)
+    bpy.context.scene.collection.objects.link(ob)
+    bpy.context.view_layer.update()
+    evaluated = ob.evaluated_get(bpy.context.evaluated_depsgraph_get())
+    mesh = evaluated.to_mesh()
+    mesh.calc_loop_triangles()
+    tris = [(runs[t.material_index][1], [tuple(mesh.vertices[v].co.xy) for v in t.vertices])
+            for t in mesh.loop_triangles]
+    evaluated.to_mesh_clear()
+    bpy.data.objects.remove(ob)
+    bpy.data.curves.remove(curve)
+    for m in slots:
+        bpy.data.materials.remove(m)
+    return tris
 
 
 def paint_side(atlas, side):
@@ -295,6 +354,43 @@ def paint_roof(a):
         a.poly(r, [(5.6, 0.55 + off), (10.35, 1.80 + off), (10.35, 1.92 + off), (5.6, 0.67 + off)], color)
 
 
+CHROME = '#A9ABB1'
+CONTACT = '03 7885 2585    suggest@rapidkl.com.my    myrapid    MyRapidKL'
+
+
+def paint_lettering(a):
+    """The feeder's lettering, as the reference photos place it: the slogan
+    low on both sides, the service name and contacts in the cantrail band,
+    the MRT and rapidKL names on the fascia and engine cover."""
+    jom = [('JOM NAIK ', BLUE), ('MRT', RED)]
+    operator = [('rapid', RED), ('KL', BLUE)]
+    for side, flip in (('near', False), ('off', True)):
+        # Offside from the red wedge back. Nearside behind the middle door,
+        # over the rear arch, so smaller and higher to clear its cut-out.
+        if side == 'near':
+            a.text(side, jom, 6.05, 1.015, 0.18, 'bold-italic', 0)
+        else:
+            a.text(side, jom, 3.40, 0.95, 0.23, 'bold-italic', 0, flip)
+        # "BAS PERANTARA" nearest the front, "FEEDER BUS" after it.
+        _, hi = a.text(side, [('BAS PERANTARA', WHITE)], 1.35 if side == 'near' else 0.90, 2.745, 0.085,
+                       'bold', 0, flip)
+        a.text(side, [('FEEDER BUS', WHITE)], hi + 0.08, 2.745, 0.065, 'regular', 0, flip)
+        a.text(side, [(CONTACT, WHITE)], 10.10, 2.745, 0.05, 'regular', 1, flip)
+
+    a.text('front', [('VOLVO', CHROME)], HW, 1.035, 0.045, 'bold')
+    a.text('front', [('MRT', RED)], HW, 0.78, 0.10, 'bold-italic')
+    a.text('front', [('operated by', BLUE)], HW, 0.735, 0.028, 'italic')
+    a.text('front', operator, HW, 0.665, 0.055, 'bold-italic')
+
+    r = 'rear'  # u runs right to left seen from behind, so all of it flips
+    a.text(r, [(CONTACT, WHITE)], HW, 1.965, 0.045, 'regular', flip=True)
+    a.text(r, [('MRT', RED)], HW - 0.14, 0.97, 0.22, 'bold-italic', flip=True)
+    a.text(r, [('operated by', BLUE)], HW - 0.14, 0.84, 0.055, 'italic', flip=True)
+    a.text(r, operator, HW - 0.14, 0.67, 0.13, 'bold-italic', flip=True)
+    a.text(r, [('VOLVO', CHROME)], W - 0.52, 0.76, 0.05, 'bold', flip=True)
+    a.text(r, [('B7R', CHROME)], 0.32, 0.76, 0.05, 'bold', flip=True)
+
+
 def paint_atlas():
     a = Atlas()
     paint_side(a, 'near')
@@ -302,6 +398,7 @@ def paint_atlas():
     paint_front(a)
     paint_rear(a)
     paint_roof(a)
+    paint_lettering(a)
     a.rect('bottom', 0, 0, 2.6, 0.6, '#141416')
     return a.pixels()
 
