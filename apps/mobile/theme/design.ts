@@ -39,6 +39,8 @@ export const color = {
   /** Outline of the route chip. */
   outline: dynamic('rgba(17,17,20,0.4)', 'rgba(245,245,247,0.4)'),
   live: ios('systemGreen', '#34C759'),
+  /** Live text on glass or paper: green deep enough to read. */
+  liveText: dynamic('#1B7A34', '#4ADE7B'),
   warning: ios('systemOrange', '#FF9500'),
   /** Wash behind a warning tile: orange at low strength. */
   warningFill: dynamic('rgba(255,149,0,0.12)', 'rgba(255,159,10,0.18)'),
@@ -66,8 +68,6 @@ export const hex = {
   secondaryLabel: { light: '#8A8A8E', dark: '#98989F' },
   casing: { light: 'rgba(255,255,255,0.9)', dark: 'rgba(0,0,0,0.6)' },
   stopFill: { light: '#FFFFFF', dark: '#141416' },
-  /** The bus bar's section glyph: its one touch of blue. */
-  section: { light: '#007AFF', dark: '#0A84FF' },
 } as const;
 
 export type Scheme = 'light' | 'dark';

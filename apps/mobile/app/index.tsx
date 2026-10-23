@@ -291,10 +291,16 @@ export default function MapScreen() {
     previewKey ?? '',
   );
 
-  // Pins: the list on screen, nothing drawn over it (an itinerary, Go, a
-  // ride, a stop or bus open in the sheet).
+  // Pins: the list on screen (the sheet up on it, not put away to the bar),
+  // nothing drawn over it (an itinerary, Go, a ride, a stop or bus open in
+  // the sheet).
   const pinsShown =
-    onNearby && nearbyTop.kind === 'list' && !itShown && !ride.active && trip.selection == null;
+    sheetUp && onNearby && nearbyTop.kind === 'list' && !itShown && !ride.active && trip.selection == null;
+  // Your stop has its own pin: Nearby's pins skip it.
+  const pinsSkip = useMemo(
+    () => (route?.userStop ? { lat: route.userStop.stop_lat, lng: route.userStop.stop_lon } : null),
+    [route?.userStop],
+  );
   // Nearby's push and pop are new each time its state changes (every poll
   // while previewing): held in a ref, so the pins and the toolbar's chip
   // don't re-render with them.
@@ -918,7 +924,14 @@ export default function MapScreen() {
           />
         ) : null}
         {pinsShown && nearby.places && network ? (
-          <PlacePins places={nearby.places} network={network} ink={ink} paper={mapPaper} onPress={openPlace} />
+          <PlacePins
+            places={nearby.places}
+            network={network}
+            ink={ink}
+            paper={mapPaper}
+            onPress={openPlace}
+            userStop={pinsSkip}
+          />
         ) : null}
         {/* Unkeyed and always mapped: they empty themselves a render after
             the preview closes, with their glides stopped (useGlidingMarkers). */}

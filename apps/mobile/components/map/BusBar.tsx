@@ -18,6 +18,7 @@ import {
   type SheetSection,
 } from '@/components/sheet/sections';
 import { SourceMark } from '@/components/trip/Hero';
+import type { SourceKind } from '@/components/trip/model';
 import { useSettings } from '@/hooks/useSettings';
 import { useTrip } from '@/state/TripContext';
 import { color, hex, pick, space, type } from '@/theme/design';
@@ -66,7 +67,7 @@ export function BusBar({
             <Image
               systemName={SECTION_SYMBOL[section]}
               size={21}
-              color={pick(hex.section, scheme)}
+              color={pick(hex.ink, scheme)}
               modifiers={[
                 frame({ width: BUS_BAR_HEIGHT, height: BUS_BAR_HEIGHT }),
                 glassEffect({ ...GLASS, shape: 'circle' }),
@@ -90,7 +91,7 @@ export function BusBar({
             />
           ))}
           <Divider />
-          <Button label="Settings" systemImage="person.crop.circle" onPress={onSettings} />
+          <Button label="Settings" systemImage="gearshape" onPress={onSettings} />
         </Menu>
       </Host>
       <View style={styles.pillSlot}>
@@ -170,25 +171,54 @@ function BusPill({ onBus, onTrack }: { onBus: () => void; onTrack: () => void })
         ) : (
           <>
             <View style={styles.square}>
-              <Text style={styles.code} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={1}>
+              <SymbolView name="bus.fill" size={18} weight="semibold" tintColor={color.onAccent} />
+            </View>
+            <View style={styles.lines}>
+              <Text style={styles.route} numberOfLines={1} maxFontSizeMultiplier={PILL_MAX_SCALE}>
                 {trip.routeCode}
               </Text>
+              <Text style={styles.stop} numberOfLines={1} maxFontSizeMultiplier={PILL_MAX_SCALE}>
+                {stopName}
+              </Text>
             </View>
-            <Text style={styles.stop} numberOfLines={1} maxFontSizeMultiplier={PILL_MAX_SCALE}>
-              {stopName}
-            </Text>
             {model.compact ? (
-              <View style={styles.countdown}>
-                <SourceMark source={model.source} size={10} />
-                <Text style={styles.compact} numberOfLines={1} maxFontSizeMultiplier={PILL_MAX_SCALE}>
-                  {model.compact}
-                </Text>
-              </View>
+              <Eta source={model.source} text={model.compact} at={model.sourceLine.arrivesAt} />
             ) : null}
           </>
         )}
       </GlassGuard>
     </Pressable>
+  );
+}
+
+/**
+ * The wait, mirroring the route and stop on the left: the minutes on top,
+ * the clock time it arrives under them (under an hour; past that the minutes
+ * are a clock already). Live minutes are green, the only colour in the bar;
+ * scheduled or aging data marks the time with the clock or the orange dot.
+ */
+function Eta({ source, text, at }: { source: SourceKind; text: string; at: string | null }) {
+  const live = source === 'live';
+  return (
+    <View style={styles.eta}>
+      <Text
+        style={[styles.minutes, live && styles.minutesLive]}
+        numberOfLines={1}
+        maxFontSizeMultiplier={PILL_MAX_SCALE}
+      >
+        {text}
+      </Text>
+      {at || !live ? (
+        <View style={styles.atRow}>
+          {live ? null : <SourceMark source={source} size={10} />}
+          {at ? (
+            <Text style={styles.at} numberOfLines={1} maxFontSizeMultiplier={PILL_MAX_SCALE}>
+              {at}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
+    </View>
   );
 }
 
@@ -212,7 +242,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
     paddingLeft: 6,
-    paddingRight: space.sm,
+    paddingRight: 14,
     overflow: 'hidden',
   },
   square: {
@@ -228,29 +258,48 @@ const styles = StyleSheet.create({
   plus: {
     backgroundColor: color.fill,
   },
-  code: {
-    color: color.onAccent,
-    fontSize: 11,
+  lines: {
+    flex: 1,
+    minWidth: 0,
+  },
+  route: {
+    ...type.body,
+    fontSize: 15,
+    lineHeight: 19,
     fontWeight: '700',
-    letterSpacing: 0.2,
+    color: color.label,
     fontVariant: ['tabular-nums'],
   },
   stop: {
     ...type.body,
-    fontSize: 15,
-    fontWeight: '600',
-    color: color.label,
-    flex: 1,
+    fontSize: 12,
+    lineHeight: 15,
+    color: color.secondaryLabel,
   },
-  countdown: {
+  eta: {
+    alignItems: 'flex-end',
+  },
+  minutes: {
+    ...type.body,
+    fontSize: 16,
+    lineHeight: 19,
+    fontWeight: '700',
+    color: color.label,
+    fontVariant: ['tabular-nums'],
+  },
+  minutesLive: {
+    color: color.liveText,
+  },
+  atRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
+    gap: 4,
   },
-  compact: {
-    ...type.headline,
-    fontSize: 16,
-    color: color.label,
+  at: {
+    ...type.body,
+    fontSize: 12,
+    lineHeight: 15,
+    color: color.secondaryLabel,
     fontVariant: ['tabular-nums'],
   },
 });

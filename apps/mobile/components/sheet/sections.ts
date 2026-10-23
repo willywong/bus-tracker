@@ -17,7 +17,7 @@ export const SECTION_LABEL: Record<SheetSection, string> = {
 /** Each section's glyph: the menu's items, and the bar's button while it's current. */
 export const SECTION_SYMBOL: Record<SheetSection, SFSymbol> = {
   plan: 'arrow.triangle.turn.up.right.diamond',
-  nearby: 'scope',
+  nearby: 'mappin.and.ellipse',
   saved: 'bookmark',
 };
 

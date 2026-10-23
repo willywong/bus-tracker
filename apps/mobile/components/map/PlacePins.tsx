@@ -1,4 +1,5 @@
 import type { LatLng, TransitNetwork } from '@bus-tracker/shared';
+import { SymbolView } from 'expo-symbols';
 import { memo, useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Marker, Polyline } from 'react-native-maps';
@@ -6,10 +7,12 @@ import { Marker, Polyline } from 'react-native-maps';
 import { MAX_PLACES, type NearbyPlace } from '@/components/sheet/nearby/model';
 
 /** Fixed sizes, glyph centred (Apple Maps ignores `anchor`). */
-const PIN = 16;
+const PIN = 20;
 /** Invisible tap frame around a pin. */
 const PIN_HIT = 32;
-const SELECTED = 18;
+const SELECTED = 22;
+/** A place this close to your stop is your stop: its pin already marks it. */
+const SAME_STOP_M = 40;
 
 /** Where a place is on the map: a stop's nearest member stop, a station's own point. */
 export function placeCoord(net: TransitNetwork, place: NearbyPlace): LatLng | null {
@@ -28,26 +31,37 @@ interface PlacePinsProps {
   paper: string;
   /** A stop pushes its view in the sheet; a station opens its sheet, as the rows do. */
   onPress: (place: NearbyPlace) => void;
+  /** Your stop, drawn by `RouteLayer`: no second pin on it. */
+  userStop?: LatLng | null;
 }
 
 /**
  * Small pins for the places Nearby lists (plan 17/05; board A): a stop as a
- * white rounded square with an ink border, a station as a ring in its first
- * line's colour. One per listed place (at most `MAX_PLACES`); tapping one
+ * paper disc with a bus glyph (round like the route's stops, the glyph saying
+ * it's one of the list's), a station as a ring in its first line's colour.
+ * Your stop is skipped: its own pin marks it. One per listed place (at most `MAX_PLACES`); tapping one
  * opens it as its row does. Pins never move the camera.
  *
  * Markers only: no overlay, so their stacking against `RailLayer` doesn't
  * matter. Keyed by the place, so the list refreshing its times leaves them
  * mounted.
  */
-export const PlacePins = memo(function PlacePins({ places, network, ink, paper, onPress }: PlacePinsProps) {
+export const PlacePins = memo(function PlacePins({
+  places,
+  network,
+  ink,
+  paper,
+  onPress,
+  userStop = null,
+}: PlacePinsProps) {
   const pins = useMemo(
     () =>
       places.slice(0, MAX_PLACES).flatMap((place) => {
         const at = placeCoord(network, place);
-        return at ? [{ place, coord: { latitude: at.lat, longitude: at.lng } }] : [];
+        if (!at || (userStop && metresBetween(at, userStop) < SAME_STOP_M)) return [];
+        return [{ place, coord: { latitude: at.lat, longitude: at.lng } }];
       }),
-    [places, network],
+    [places, network, userStop],
   );
   return (
     <>
@@ -63,7 +77,9 @@ export const PlacePins = memo(function PlacePins({ places, network, ink, paper, 
         >
           <View collapsable={false} style={styles.hit}>
             {place.kind === 'stop' ? (
-              <View style={[styles.stop, { borderColor: ink, backgroundColor: paper }]} />
+              <View style={[styles.stop, { borderColor: ink, backgroundColor: paper }]}>
+                <SymbolView name="bus.fill" size={10} weight="semibold" tintColor={ink} />
+              </View>
             ) : (
               <View
                 style={[
@@ -122,12 +138,21 @@ export const PlaceWalk = memo(function PlaceWalk({ from, to, name, ink, paper }:
         accessibilityLabel={`${name}, bus stop`}
       >
         <View collapsable={false} style={styles.hit}>
-          <View style={[styles.selected, { borderColor: paper, backgroundColor: ink }]} />
+          <View style={[styles.selected, { borderColor: paper, backgroundColor: ink }]}>
+            <SymbolView name="bus.fill" size={11} weight="semibold" tintColor={paper} />
+          </View>
         </View>
       </Marker>
     </>
   );
 });
+
+/** Straight-line metres, flat-earth: plenty at a stop's scale. */
+function metresBetween(a: LatLng, b: LatLng): number {
+  const dLat = (a.lat - b.lat) * 111_320;
+  const dLng = (a.lng - b.lng) * 111_320 * Math.cos((a.lat * Math.PI) / 180);
+  return Math.hypot(dLat, dLng);
+}
 
 const styles = StyleSheet.create({
   hit: {
@@ -139,8 +164,10 @@ const styles = StyleSheet.create({
   stop: {
     width: PIN,
     height: PIN,
-    borderRadius: 4,
-    borderWidth: 2,
+    borderRadius: PIN / 2,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
     boxShadow: '0 1px 2px rgba(0, 0, 0, 0.25)',
   },
   station: {
@@ -153,8 +180,10 @@ const styles = StyleSheet.create({
   selected: {
     width: SELECTED,
     height: SELECTED,
-    borderRadius: 4,
-    borderWidth: 3,
+    borderRadius: SELECTED / 2,
+    borderWidth: 2.5,
+    alignItems: 'center',
+    justifyContent: 'center',
     boxShadow: '0 1px 3px rgba(0, 0, 0, 0.35)',
   },
 });

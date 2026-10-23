@@ -141,6 +141,8 @@ export interface SourceLine {
   updated: string | null;
   /** "Arrives 10:56 AM" beside the minutes; null when the hero is a clock. */
   arrives: string | null;
+  /** The bare clock time of `arrives` ("10:56 AM"), for the bus bar. */
+  arrivesAt: string | null;
 }
 
 export interface TripModel {
@@ -293,6 +295,7 @@ function base(
       note: null,
       updated: null,
       arrives: null,
+      arrivesAt: null,
     },
     facts: [],
     ...patch,
@@ -355,14 +358,21 @@ function statusFor(source: SourceKind, input: TripModelInput): string {
 
 function sourceLineFor(source: SourceKind, input: TripModelInput): SourceLine {
   const primary = input.primaryArrival;
-  const arrives =
+  const arrivesAt =
     primary && input.minutesToStop != null && input.minutesToStop < 60
-      ? `Arrives ${input.formatClock(primary.epochMs)}`
+      ? input.formatClock(primary.epochMs)
       : null;
-  return { ...sourceLineCore(source, input), arrives };
+  return {
+    ...sourceLineCore(source, input),
+    arrives: arrivesAt ? `Arrives ${arrivesAt}` : null,
+    arrivesAt,
+  };
 }
 
-function sourceLineCore(source: SourceKind, input: TripModelInput): Omit<SourceLine, 'arrives'> {
+function sourceLineCore(
+  source: SourceKind,
+  input: TripModelInput,
+): Omit<SourceLine, 'arrives' | 'arrivesAt'> {
   if (source === 'scheduled') {
     return { label: 'Scheduled', note: null, updated: null };
   }

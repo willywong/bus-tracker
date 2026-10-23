@@ -317,19 +317,27 @@ test('source line: live with timing and freshness, scheduled plain (the reason i
     buildTripModel(
       input({ lastUpdated: min(-1) + 30_000, delay: { delayMinutes: 8, onTimeWindow: 'late' } }),
     ).sourceLine,
-    { label: 'Live', note: '8 mins late', updated: 'Updated 01:59', arrives: 'Arrives 02:14' },
+    {
+      label: 'Live',
+      note: '8 mins late',
+      updated: 'Updated 01:59',
+      arrives: 'Arrives 02:14',
+      arrivesAt: '02:14',
+    },
   );
   assert.deepEqual(buildTripModel(input({ mode: 'schedule', liveBusCount: 0 })).sourceLine, {
     label: 'Scheduled',
     note: null,
     updated: null,
     arrives: 'Arrives 02:14',
+    arrivesAt: '02:14',
   });
   assert.deepEqual(buildTripModel(input({ lastUpdated: min(-3) })).sourceLine, {
     label: 'Live',
     note: null,
     updated: 'Updated 3 mins ago',
     arrives: 'Arrives 02:14',
+    arrivesAt: '02:14',
   });
 });
 
