@@ -475,11 +475,36 @@ export default function MapScreen() {
 
   // --- Selection ------------------------------------------------------------
   // Tapping a stop or bus swaps the sheet to its detail; tapping your own
-  // stop goes back to the trip.
+  // stop opens Your bus, as the bus bar does. Tapping what's open again, or
+  // moving the map, puts the sheet back down to the bar.
   const { select, selection } = trip;
+  const { mode: sheetMode } = useSheetMode();
+  const openYourBus = useCallback(() => {
+    // Your bus is Nearby's trip view; wanting it puts the sheet up.
+    select(null);
+    if (settings.sheetSection !== 'nearby') settings.setSheetSection('nearby');
+    nearbyNav.current.push({ kind: 'trip' });
+  }, [select, settings]);
+  const minimizeSheet = useCallback(() => {
+    select(null);
+    nearbyNav.current.reset();
+    trip.setSheetOpen(false);
+  }, [select, trip]);
+  // What the sheet shows, read by the map's taps without re-rendering its markers.
+  const shownRef = useRef({ mode: sheetMode, selection, userStopId: route?.userStop?.stop_id });
+  shownRef.current = { mode: sheetMode, selection, userStopId: route?.userStop?.stop_id };
   const selectStop = useCallback(
-    (stopId: string) => select({ kind: 'stop', stopId }),
-    [select],
+    (stopId: string) => {
+      const shown = shownRef.current;
+      const open =
+        stopId === shown.userStopId
+          ? shown.mode === 'trip'
+          : shown.selection?.kind === 'stop' && shown.selection.stopId === stopId;
+      if (open) minimizeSheet();
+      else if (stopId === shown.userStopId) openYourBus();
+      else select({ kind: 'stop', stopId });
+    },
+    [select, minimizeSheet, openYourBus],
   );
   const selectBus = useCallback(
     (vehicleId: string) => select({ kind: 'bus', vehicleId }),
@@ -882,9 +907,11 @@ export default function MapScreen() {
           if (!userPanned) setUserPanned(true);
           if (riding) setRiding(false);
           lastPanAt.current = Date.now();
-          // Moving the map means looking at it: get the sheet out of the way
-          // until the map settles.
-          if (sheetUp && trip.detent === 1 && !trip.holdPeek) trip.setHoldPeek(true);
+          // Moving the map means looking at it. A stop, a bus or Your bus,
+          // opened from the map, goes back down to the bar; anything else
+          // gets out of the way until the map settles.
+          if (sheetUp && (sheetMode === 'detail' || sheetMode === 'trip')) minimizeSheet();
+          else if (sheetUp && trip.detent === 1 && !trip.holdPeek) trip.setHoldPeek(true);
         }}
         onRegionChange={onRegionChange}
         onRegionChangeComplete={onRegionChangeComplete}
@@ -920,7 +947,7 @@ export default function MapScreen() {
             inkMuted={`${ink}59`}
             casing={casing}
             paper={mapPaper}
-            selectedStopId={selectedStopId}
+            selectedStopId={sheetMode === 'trip' ? (route.userStop?.stop_id ?? null) : selectedStopId}
             onStopPress={selectStop}
             close={close}
             terminus={terminus}
@@ -1049,11 +1076,7 @@ export default function MapScreen() {
             trip.setSheetOpen(true);
           }}
           onSettings={() => router.push('/settings')}
-          onBus={() => {
-            // Your bus is Nearby's trip view; wanting it puts the sheet up.
-            if (settings.sheetSection !== 'nearby') settings.setSheetSection('nearby');
-            nearby.push({ kind: 'trip' });
-          }}
+          onBus={openYourBus}
           onTrack={() => router.push('/add-route')}
           onSearch={() => {
             planner.setTo(null);
