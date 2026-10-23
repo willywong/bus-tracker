@@ -14,7 +14,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import type { BoardRowView, StationBoardView } from '@/components/rail/stationModel';
 import { Hairline, NoteRow } from '@/components/trip/Rows';
 import { Section } from '@/components/trip/SheetBody';
-import { RowButton } from '@/components/ui/RowButton';
+import { GLASS_ROW_GAP, GlassRow } from '@/components/ui/GlassRow';
 import { color, space, type } from '@/theme/design';
 
 /**
@@ -22,8 +22,9 @@ import { color, space, type } from '@/theme/design';
  * on the left and the honest wait on the right ("every 3 mins", or "about
  * 4 mins" rolling down with "then every 6 mins" under it), then the first
  * and last train. Each row is one VoiceOver element reading its `spoken`
- * line and opens the whole line. When the timetable is unavailable the rows
- * become one note; the section title still names the line.
+ * line and opens the whole line, on a glass card so it reads as a button.
+ * When the timetable is unavailable the rows become one note; the section
+ * title still names the line.
  */
 export function StationBoard({
   board,
@@ -44,24 +45,27 @@ export function StationBoard({
         <NoteRow icon="clock.badge.exclamationmark" text={unavailableText} />
       ) : board.rows.length === 0 ? (
         <NoteRow icon="moon.zzz" text="No trains from here today" />
+      ) : routeId ? (
+        <View style={styles.cards}>
+          {board.rows.map((row) => (
+            <GlassRow
+              key={`${row.dir}:${row.towards}`}
+              onPress={() => onOpenLine(routeId, row.dir)}
+              style={styles.row}
+              accessibilityLabel={row.spoken}
+              accessibilityHint="Shows the whole line"
+            >
+              <BoardRowContent row={row} />
+            </GlassRow>
+          ))}
+        </View>
       ) : (
         board.rows.map((row, i) => (
           <Fragment key={`${row.dir}:${row.towards}`}>
             {i > 0 ? <Hairline /> : null}
-            {routeId ? (
-              <RowButton
-                onPress={() => onOpenLine(routeId, row.dir)}
-                style={styles.row}
-                accessibilityLabel={row.spoken}
-                accessibilityHint="Shows the whole line"
-              >
-                <BoardRowContent row={row} />
-              </RowButton>
-            ) : (
-              <View style={styles.row} accessible accessibilityLabel={row.spoken}>
-                <BoardRowContent row={row} />
-              </View>
-            )}
+            <View style={[styles.row, styles.plain]} accessible accessibilityLabel={row.spoken}>
+              <BoardRowContent row={row} />
+            </View>
           </Fragment>
         ))
       )}
@@ -109,6 +113,9 @@ function BoardRowContent({ row }: { row: BoardRowView }) {
 }
 
 const styles = StyleSheet.create({
+  cards: {
+    gap: GLASS_ROW_GAP,
+  },
   row: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -116,6 +123,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     columnGap: space.sm,
     rowGap: 2,
+    minHeight: 56,
+    paddingVertical: space.sm,
+  },
+  // Without a card the row sits on the sheet, between hairlines.
+  plain: {
     minHeight: 52,
     paddingVertical: space.xs,
   },

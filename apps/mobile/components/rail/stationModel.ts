@@ -96,6 +96,9 @@ export interface NearbyStopView {
   name: string;
   /** The route shown on the row's chip. */
   routeLabel: string;
+  /** That route's index and the direction boarding here: what the row's preview opens. */
+  route: number;
+  pattern: number;
   /** Every other route departing here, for the caption. */
   others: string[];
   /** "3 min walk". */
@@ -389,6 +392,8 @@ function nearbyOf(
       stopId,
       name,
       routeLabel: pick,
+      route: row.route,
+      pattern: row.pattern,
       others,
       walk: `${walkMin} min walk`,
       next: next.text,

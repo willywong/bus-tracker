@@ -8,8 +8,9 @@ import { StationBoard } from '@/components/rail/StationBoard';
 import { StationPhoto } from '@/components/rail/StationPhoto';
 import { InterchangeRows, NearbyRows, type TripLive } from '@/components/rail/StationRows';
 import type { RailFocus } from '@/components/rail/railFocus';
-import { buildStationSheet } from '@/components/rail/stationModel';
+import { buildStationSheet, type NearbyStopView } from '@/components/rail/stationModel';
 import { Section } from '@/components/trip/SheetBody';
+import { useOpenRoutePreview } from '@/hooks/useOpenRoutePreview';
 import { useRailFocus } from '@/hooks/useRailFocus';
 import { useTransitNetwork } from '@/hooks/useTransitNetwork';
 import { useTrip } from '@/state/TripContext';
@@ -77,6 +78,12 @@ export default function StationScreen() {
       };
     },
     [routeStops, router, trip],
+  );
+  // Any other bus opens its route's preview from that stop, as a search does.
+  const openRoutePreview = useOpenRoutePreview();
+  const openRoute = useCallback(
+    (n: NearbyStopView) => openRoutePreview({ route: n.route, pattern: n.pattern, fromStopIndex: n.stopIndex }),
+    [openRoutePreview],
   );
   const tripLive: TripLive | null = trip.model.compact
     ? { compact: trip.model.compact, source: trip.model.source }
@@ -153,7 +160,12 @@ export default function StationScreen() {
 
         {model.nearby.length > 0 ? (
           <Section title="Buses nearby">
-            <NearbyRows items={model.nearby} tripLive={tripLive} onRouteStop={onRouteStop} />
+            <NearbyRows
+              items={model.nearby}
+              tripLive={tripLive}
+              onRouteStop={onRouteStop}
+              onOpenRoute={openRoute}
+            />
           </Section>
         ) : null}
       </ScrollView>

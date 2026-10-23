@@ -233,6 +233,12 @@ test('nearby keeps bus-kl and feeder stops within 250 m, max 4, nearest first', 
     assert.match(n.walk, /^\d+ min walk$/);
     assert.ok(n.routeLabel.length > 0);
     assert.ok(!n.others.includes(n.routeLabel));
+    // The preview the row opens is the chip's route, boarding at this stop.
+    assert.equal(net.routes.label[n.route], n.routeLabel);
+    assert.equal(net.patterns.route[n.pattern], n.route);
+    const start = net.patterns.stopStart[n.pattern];
+    const stops = Array.from(net.patterns.stops.subarray(start, start + net.patterns.stopLen[n.pattern]));
+    assert.ok(stops.includes(n.stopIndex));
     // Timetable times are marked scheduled; headways read "every N mins".
     if (n.scheduled) {
       assert.match(n.next, /^(next|first) \d/);

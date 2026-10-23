@@ -27,14 +27,13 @@ import { NoteRow, SuggestionRow, SUGGESTION_INSET, THUMB_INSET } from '@/compone
 import { useNear } from '@/components/plan/useNear';
 import { Hairline, SectionLabel } from '@/components/trip/Rows';
 import { usePlaceSearch } from '@/hooks/usePlaceSearch';
+import { useOpenRoutePreview } from '@/hooks/useOpenRoutePreview';
 import { useSettings } from '@/hooks/useSettings';
 import { useTransitNetwork } from '@/hooks/useTransitNetwork';
 import { mapsErrorCode, resolve, type ResolvedPlace } from '@/modules/transit-maps';
 import { mergeRecent, type RecentPlace } from '@/services/places/recents';
 import { loadRecents, saveRecents } from '@/services/places/recentsStore';
-import { useNearby } from '@/state/NearbyContext';
 import { HERE, usePlanner, type Place } from '@/state/PlannerContext';
-import { useTrip } from '@/state/TripContext';
 import { MARGIN, space } from '@/theme/design';
 import { haptics } from '@/utils/haptics';
 
@@ -74,8 +73,6 @@ export default function PlanScreen() {
   const planner = usePlanner();
   const { setPresented } = planner;
   const settings = useSettings();
-  const nearby = useNearby();
-  const trip = useTrip();
   const { network } = useTransitNetwork();
   const [permission, requestPermission] = Location.useForegroundPermissions();
   const locationOff = permission != null && !permission.granted;
@@ -236,14 +233,9 @@ export default function PlanScreen() {
   };
 
   // The route's preview from its nearest stop, in Nearby; back returns to the list.
-  const openRoute = (hit: RouteHit) => {
-    haptics.selection();
-    trip.select(null);
-    settings.setSheetSection('nearby');
-    nearby.reset();
-    nearby.push({ kind: 'route', route: hit.route, pattern: hit.pattern, fromStopIndex: hit.fromStopIndex });
-    router.back();
-  };
+  const openRoutePreview = useOpenRoutePreview();
+  const openRoute = (hit: RouteHit) =>
+    openRoutePreview({ route: hit.route, pattern: hit.pattern, fromStopIndex: hit.fromStopIndex });
 
   const pick = async (target: PickTarget) => {
     switch (target.kind) {
