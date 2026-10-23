@@ -76,13 +76,17 @@ export {
   type OutlierFilterOptions,
 } from "./outlier.js";
 export {
+  bearingDegrees,
   distanceAlongRoute,
   pointAlongRoute,
   polylineLength,
   projectOntoRoute,
+  routeLegs,
   SNAP_MAX_OFF_ROUTE_M,
   snapToRoute,
   type LatLng,
+  type RouteLeg,
+  type RoutePlace,
   type RouteProjection,
   type RouteSnap,
 } from "./route.js";

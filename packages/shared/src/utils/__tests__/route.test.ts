@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { haversineMeters } from "../outlier.js";
 import {
+  bearingDegrees,
   distanceAlongRoute,
   pointAlongRoute,
   polylineLength,
   projectOntoRoute,
+  routeLegs,
   snapToRoute,
   type LatLng,
 } from "../route.js";
@@ -186,4 +188,67 @@ test("snapToRoute: on a two-way road, picks the side running with the bus", () =
 test("snapToRoute: a degenerate polyline leaves the point alone", () => {
   const raw = { lat: 3.1, lng: 101.6 };
   assert.equal(snapToRoute(raw, [raw]).snapped, false);
+});
+
+test("snapToRoute: reports the segment it drew the bus on", () => {
+  assert.equal(snapToRoute({ lat: 3.0998, lng: 101.605 }, POLY).segmentIndex, 0);
+  assert.equal(snapToRoute({ lat: 3.105, lng: 101.6102 }, POLY).segmentIndex, 1);
+  assert.equal(snapToRoute({ lat: 3.095, lng: 101.605 }, POLY).segmentIndex, null);
+});
+
+test("routeLegs: turns the corner instead of cutting across it", () => {
+  const legs = routeLegs(
+    POLY,
+    { point: { lat: 3.1, lng: 101.605 }, segmentIndex: 0 },
+    { point: { lat: 3.105, lng: 101.61 }, segmentIndex: 1 },
+  );
+  assert.ok(legs);
+  assert.equal(legs.length, 2);
+  assert.deepEqual(legs[0].to, POLY[1]);
+  assert.ok(Math.abs(legs[0].bearing - 90) < 0.5, `east, got ${legs[0].bearing}`);
+  assert.ok(Math.abs(legs[1].bearing - 0) < 0.5, `north, got ${legs[1].bearing}`);
+  assert.ok(Math.abs(legs[0].meters - 555) < 10, `~555 m, got ${legs[0].meters}`);
+});
+
+test("routeLegs: a step forward on one segment is a single leg", () => {
+  const legs = routeLegs(
+    POLY,
+    { point: { lat: 3.1, lng: 101.602 }, segmentIndex: 0 },
+    { point: { lat: 3.1, lng: 101.604 }, segmentIndex: 0 },
+  );
+  assert.equal(legs?.length, 1);
+});
+
+test("routeLegs: null when the new fix is behind the last", () => {
+  const back = { point: { lat: 3.1, lng: 101.602 }, segmentIndex: 0 };
+  const ahead = { point: { lat: 3.1, lng: 101.604 }, segmentIndex: 0 };
+  assert.equal(routeLegs(POLY, ahead, back), null);
+  assert.equal(
+    routeLegs(POLY, { point: { lat: 3.105, lng: 101.61 }, segmentIndex: 1 }, back),
+    null,
+  );
+});
+
+test("routeLegs: null when the way round is implausibly long", () => {
+  const long: LatLng[] = [
+    { lat: 3.1, lng: 101.6 },
+    { lat: 3.1, lng: 101.63 },
+    { lat: 3.1001, lng: 101.6 },
+  ];
+  assert.equal(
+    routeLegs(
+      long,
+      { point: { lat: 3.1, lng: 101.601 }, segmentIndex: 0 },
+      { point: { lat: 3.10009, lng: 101.602 }, segmentIndex: 1 },
+    ),
+    null,
+  );
+});
+
+test("bearingDegrees: compass headings", () => {
+  const o = { lat: 3.1, lng: 101.6 };
+  assert.ok(Math.abs(bearingDegrees(o, { lat: 3.11, lng: 101.6 }) - 0) < 0.01);
+  assert.ok(Math.abs(bearingDegrees(o, { lat: 3.1, lng: 101.61 }) - 90) < 0.01);
+  assert.ok(Math.abs(bearingDegrees(o, { lat: 3.09, lng: 101.6 }) - 180) < 0.01);
+  assert.ok(Math.abs(bearingDegrees(o, { lat: 3.1, lng: 101.59 }) - 270) < 0.01);
 });

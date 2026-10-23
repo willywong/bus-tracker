@@ -1,6 +1,6 @@
 import { SymbolView } from 'expo-symbols';
-import { memo, useCallback } from 'react';
-import { Animated, StyleSheet, View } from 'react-native';
+import { memo, useCallback, useSyncExternalStore } from 'react';
+import { Animated, Image, StyleSheet, View } from 'react-native';
 import {
   AnimatedRegion,
   MapMarker,
@@ -8,6 +8,8 @@ import {
   MarkerAnimated as RawMarkerAnimated,
   type MapMarkerProps,
 } from 'react-native-maps';
+
+import { spriteForBearing } from '@/modules/bus-model';
 
 // react-native-maps types MarkerAnimated as `AnimatedComponent<typeof MapMarker>`,
 // but RN 0.88's `AnimatedComponent` is generic over props, not the component.
@@ -29,6 +31,19 @@ const WEDGE_H = 7;
 /** Gap between the disc's edge and its heading wedge. */
 const WEDGE_GAP = 1.5;
 const HALO = 50;
+/** The model's sprites: your (or the open) bus, then the rest. */
+const SPRITE_SOLID = 44;
+const SPRITE = 36;
+/** Facing east, a side view, when a bus reports no heading. */
+const SIDE_ON = 90;
+
+/** A heading that changes mid-glide, read without re-rendering the map. */
+export interface HeadingSource {
+  get(): number | undefined;
+  subscribe(onChange: () => void): () => void;
+}
+
+const NO_HEADING: HeadingSource = { get: () => undefined, subscribe: () => () => {} };
 
 interface BusMarkerProps {
   /** Animated region that glides between position fixes. */
@@ -41,6 +56,8 @@ interface BusMarkerProps {
   /** Already past your stop — faded so it doesn't read as "your bus". */
   passed: boolean;
   bearing?: number | null;
+  /** While gliding along the route, its heading at each corner (wins over `bearing`). */
+  heading?: HeadingSource;
   accessibilityLabel: string;
   /** Open in the sheet: solid, with a halo so it stands out from the rest. */
   selected?: boolean;
@@ -50,10 +67,12 @@ interface BusMarkerProps {
 }
 
 /**
- * A live bus in Calm Mono: a disc with an upright bus glyph and a heading
- * wedge just outside it, rotated to the bus's bearing (the glyph never
- * turns, so it always reads as a bus). Your bus is solid ink with the green
- * live dot (the app's only colour); other buses are smaller paper discs.
+ * A live bus. With the 3D model bundled, a tiny RapidKL bus seen from above,
+ * turned to its heading; your bus is larger with the green live dot. Without
+ * it, Calm Mono: a disc with an upright bus glyph and a heading wedge just
+ * outside it, rotated to the bus's bearing (the glyph never turns, so it
+ * always reads as a bus). Your bus is solid ink with the live dot (the app's
+ * only colour); other buses are smaller paper discs.
  */
 export const BusMarker = memo(function BusMarker({
   region,
@@ -62,19 +81,24 @@ export const BusMarker = memo(function BusMarker({
   live,
   primary,
   passed,
-  bearing,
+  bearing: fixBearing,
+  heading = NO_HEADING,
   accessibilityLabel,
   selected = false,
   vehicleId,
   onSelect,
 }: BusMarkerProps) {
   const onPress = useCallback(() => onSelect?.(vehicleId), [onSelect, vehicleId]);
+  const gliding = useSyncExternalStore(heading.subscribe, heading.get);
+  const bearing = gliding ?? fixBearing;
   const solid = primary || selected;
   const size = solid ? 34 : 28;
   const fill = solid ? ink : paper;
   const glyph = solid ? paper : ink;
   const hasHeading = typeof bearing === 'number' && Number.isFinite(bearing);
   const inset = (FRAME - size) / 2;
+  // The bus model seen from above at its heading, when the model is bundled.
+  const sprite = spriteForBearing(hasHeading ? bearing : SIDE_ON);
 
   return (
     <MarkerAnimated
@@ -92,7 +116,21 @@ export const BusMarker = memo(function BusMarker({
         collapsable={false}
       >
         {selected ? <View style={[styles.halo, { backgroundColor: ink }]} /> : null}
-        {hasHeading ? (
+        {sprite ? (
+          <Image
+            source={{ uri: sprite }}
+            style={[
+              styles.sprite,
+              {
+                left: (FRAME - (solid ? SPRITE_SOLID : SPRITE)) / 2,
+                top: (FRAME - (solid ? SPRITE_SOLID : SPRITE)) / 2,
+                width: solid ? SPRITE_SOLID : SPRITE,
+                height: solid ? SPRITE_SOLID : SPRITE,
+              },
+            ]}
+          />
+        ) : null}
+        {!sprite && hasHeading ? (
           <View style={[styles.frameFill, { transform: [{ rotate: `${bearing}deg` }] }]}>
             <View
               style={[
@@ -102,35 +140,37 @@ export const BusMarker = memo(function BusMarker({
             />
           </View>
         ) : null}
-        <View
-          style={[
-            styles.disc,
-            {
-              left: inset,
-              top: inset,
-              width: size,
-              height: size,
-              borderRadius: size / 2,
-              borderColor: solid ? paper : ink,
-              borderWidth: solid ? 2.5 : 2,
-              backgroundColor: fill,
-            },
-          ]}
-        >
-          <SymbolView
-            name="bus.fill"
-            size={solid ? 16 : 13}
-            tintColor={glyph}
-            resizeMode="scaleAspectFit"
-          />
-        </View>
+        {sprite ? null : (
+          <View
+            style={[
+              styles.disc,
+              {
+                left: inset,
+                top: inset,
+                width: size,
+                height: size,
+                borderRadius: size / 2,
+                borderColor: solid ? paper : ink,
+                borderWidth: solid ? 2.5 : 2,
+                backgroundColor: fill,
+              },
+            ]}
+          >
+            <SymbolView
+              name="bus.fill"
+              size={solid ? 16 : 13}
+              tintColor={glyph}
+              resizeMode="scaleAspectFit"
+            />
+          </View>
+        )}
         {primary && !passed ? (
           <View
             style={[
               styles.liveDot,
               {
-                left: inset + size - 10,
-                top: inset - 2,
+                left: sprite ? FRAME - 15 : inset + size - 10,
+                top: sprite ? 4 : inset - 2,
                 backgroundColor: live,
                 borderColor: paper,
               },
@@ -210,6 +250,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     boxShadow: '0 1px 3px rgba(0, 0, 0, 0.35)',
+  },
+  // iOS draws a layer's shadow from its contents' alpha: it hugs the bus.
+  sprite: {
+    position: 'absolute',
+    shadowColor: '#000',
+    shadowOpacity: 0.35,
+    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 1 },
   },
   liveDot: {
     position: 'absolute',

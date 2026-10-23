@@ -115,11 +115,35 @@ export function useStopDetail(stopId: string): StopDetail {
   return { model, stop, departures: sched.upcoming, otherRoutes };
 }
 
+/**
+ * Where a trip runs to, as its headsign reads (live or scheduled trip id),
+ * formatted like a stop name; null until looked up or without a trip.
+ */
+export function useTripHeadsign(tripId: string | null, routeCode: string): string | null {
+  const [headsign, setHeadsign] = useState<string | null>(null);
+  useEffect(() => {
+    if (!tripId) return;
+    let cancelled = false;
+    openDb()
+      .then((db) => getLiveTripHeadsign(db, tripId, routeCode))
+      .then((h) => {
+        if (!cancelled) setHeadsign(h ? formatStopName(h) : null);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [tripId, routeCode]);
+  return tripId ? headsign : null;
+}
+
 export interface BusDetail {
   model: DetailModel;
   vehicle: VehiclePosition | null;
   /** Its stops from here to yours, for the timeline; not ready once passed. */
   journey: JourneyData;
+  /** Where this trip runs to, for the bus's own headsign; null until looked up. */
+  destination: string | null;
 }
 
 /** Everything the bus sheet shows, for a live bus on the active route. */
@@ -139,21 +163,7 @@ export function useBusDetail(vehicleId: string): BusDetail {
   }, [current]);
   const vehicle = current ?? lastSeen;
 
-  const [headsign, setHeadsign] = useState<string | null>(null);
-  const tripId = vehicle?.tripId ?? null;
-  useEffect(() => {
-    if (!tripId) return;
-    let cancelled = false;
-    openDb()
-      .then((db) => getLiveTripHeadsign(db, tripId, routeCode))
-      .then((h) => {
-        if (!cancelled) setHeadsign(h);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [tripId, routeCode]);
+  const destination = useTripHeadsign(vehicle?.tripId ?? null, routeCode);
 
   const passed = trip.eta.passedVehicleIds.has(vehicleId);
 
@@ -233,7 +243,7 @@ export function useBusDetail(vehicleId: string): BusDetail {
     () =>
       buildBusDetail({
         routeCode,
-        headsign: headsign ? formatStopName(headsign) : null,
+        headsign: destination,
         reporting: current != null,
         isYourBus: trip.eta.primaryArrival?.live?.vehicleId === vehicleId,
         speedKmh: vehicle?.speed ?? null,
@@ -246,8 +256,8 @@ export function useBusDetail(vehicleId: string): BusDetail {
         passed,
         yourStopName: trip.stopName,
       }),
-    [routeCode, headsign, current, trip.eta.primaryArrival, vehicleId, vehicle, derived, passed, trip.stopName],
+    [routeCode, destination, current, trip.eta.primaryArrival, vehicleId, vehicle, derived, passed, trip.stopName],
   );
 
-  return { model, vehicle, journey };
+  return { model, vehicle, journey, destination };
 }

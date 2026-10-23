@@ -7,7 +7,14 @@ import {
   glassEffect,
 } from '@expo/ui/swift-ui/modifiers';
 import { SymbolView } from 'expo-symbols';
-import { Pressable, StyleSheet, Text, useColorScheme, View } from 'react-native';
+import {
+  Image as RNImage,
+  Pressable,
+  StyleSheet,
+  Text,
+  useColorScheme,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { GlassGuard } from '@/components/GlassGuard';
@@ -19,6 +26,7 @@ import {
 } from '@/components/sheet/sections';
 import { SourceMark } from '@/components/trip/Hero';
 import type { SourceKind } from '@/components/trip/model';
+import { pillIcon } from '@/modules/bus-model';
 import { useSettings } from '@/hooks/useSettings';
 import { useTrip } from '@/state/TripContext';
 import { color, hex, pick, space, type } from '@/theme/design';
@@ -170,9 +178,13 @@ function BusPill({ onBus, onTrack }: { onBus: () => void; onTrack: () => void })
           </>
         ) : (
           <>
-            <View style={styles.square}>
-              <SymbolView name="bus.fill" size={18} weight="semibold" tintColor={color.onAccent} />
-            </View>
+            {pillIcon ? (
+              <RNImage source={{ uri: pillIcon }} style={styles.busArt} />
+            ) : (
+              <View style={styles.square}>
+                <SymbolView name="bus.fill" size={18} weight="semibold" tintColor={color.onAccent} />
+              </View>
+            )}
             <View style={styles.lines}>
               <Text style={styles.route} numberOfLines={1} maxFontSizeMultiplier={PILL_MAX_SCALE}>
                 {trip.routeCode}
@@ -254,6 +266,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 3,
+  },
+  // The 3D bus, when bundled, in place of the squircle: a little wider, so
+  // it reads at a glance. iOS draws its shadow from the bus's own outline.
+  busArt: {
+    width: 44,
+    height: 36,
+    marginHorizontal: -2,
+    shadowColor: '#000',
+    shadowOpacity: 0.25,
+    shadowRadius: 1.5,
+    shadowOffset: { width: 0, height: 1 },
   },
   plus: {
     backgroundColor: color.fill,

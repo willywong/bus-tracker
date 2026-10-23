@@ -203,6 +203,8 @@ export interface RouteSnap {
    */
   bearing: number | undefined;
   snapped: boolean;
+  /** The polyline segment (polyline[i] → polyline[i+1]) it was drawn on; null when not snapped. */
+  segmentIndex: number | null;
 }
 
 /**
@@ -224,33 +226,93 @@ export function snapToRoute(
   const maxOff = opts.maxOffMeters ?? SNAP_MAX_OFF_ROUTE_M;
   const heading =
     typeof opts.heading === "number" && Number.isFinite(opts.heading) ? opts.heading : undefined;
-  const unsnapped: RouteSnap = { point, bearing: heading, snapped: false };
+  const unsnapped: RouteSnap = { point, bearing: heading, snapped: false, segmentIndex: null };
   if (polyline.length < 2) return unsnapped;
 
-  let nearest: { at: LatLng; dist: number } | null = null;
-  let aligned: { at: LatLng; dist: number; bearing: number } | null = null;
+  let nearest: { at: LatLng; dist: number; i: number } | null = null;
+  let aligned: { at: LatLng; dist: number; bearing: number; i: number } | null = null;
   for (let i = 0; i < polyline.length - 1; i++) {
     const a = polyline[i];
     const b = polyline[i + 1];
     const { at, dist, bearing } = projectOntoSegment(point, a, b);
-    if (!nearest || dist < nearest.dist) nearest = { at, dist };
+    if (!nearest || dist < nearest.dist) nearest = { at, dist, i };
     if (
       heading != null &&
       bearing != null &&
       angleBetween(bearing, heading) <= 90 &&
       (!aligned || dist < aligned.dist)
     ) {
-      aligned = { at, dist, bearing };
+      aligned = { at, dist, bearing, i };
     }
   }
 
   if (aligned && aligned.dist <= maxOff) {
-    return { point: aligned.at, bearing: aligned.bearing, snapped: true };
+    return { point: aligned.at, bearing: aligned.bearing, snapped: true, segmentIndex: aligned.i };
   }
   if (nearest && nearest.dist <= maxOff) {
-    return { point: nearest.at, bearing: heading, snapped: true };
+    return { point: nearest.at, bearing: heading, snapped: true, segmentIndex: nearest.i };
   }
   return unsnapped;
+}
+
+/** A point on the route line and the segment it lies on. */
+export interface RoutePlace {
+  point: LatLng;
+  segmentIndex: number;
+}
+
+/** One straight stretch of a glide along the route. */
+export interface RouteLeg {
+  to: LatLng;
+  meters: number;
+  /** Degrees clockwise from north. */
+  bearing: number;
+}
+
+/** Longer than a bus covers between two fixes: the snap jumped somewhere else. */
+const MAX_LEG_PATH_M = 2000;
+
+/**
+ * The way from `from` to `to` along the route, as straight legs through every
+ * vertex in between, so a bus drawn moving between two fixes follows the road
+ * around a corner instead of cutting across the block. Null when `to` is
+ * behind `from` (GPS jitter, or a loop wrapping round) or the way is
+ * implausibly long; the caller then moves straight.
+ */
+export function routeLegs(
+  polyline: readonly LatLng[],
+  from: RoutePlace,
+  to: RoutePlace,
+): RouteLeg[] | null {
+  const a = from.segmentIndex;
+  const b = to.segmentIndex;
+  if (b < a || a < 0 || b >= polyline.length - 1) return null;
+  if (
+    a === b &&
+    haversineMeters(polyline[a], to.point) < haversineMeters(polyline[a], from.point)
+  ) {
+    return null;
+  }
+  const corners = [...polyline.slice(a + 1, b + 1), to.point];
+  const legs: RouteLeg[] = [];
+  let at = from.point;
+  let total = 0;
+  for (const next of corners) {
+    const meters = haversineMeters(at, next);
+    if (meters > 0) {
+      legs.push({ to: next, meters, bearing: bearingDegrees(at, next) });
+      total += meters;
+    }
+    at = next;
+  }
+  return total <= MAX_LEG_PATH_M ? legs : null;
+}
+
+/** Initial heading from `a` to `b`, degrees clockwise from north. */
+export function bearingDegrees(a: LatLng, b: LatLng): number {
+  const dx = (b.lng - a.lng) * lngDegMeters((a.lat + b.lat) / 2);
+  const dy = (b.lat - a.lat) * LAT_DEG_METERS;
+  return ((Math.atan2(dx, dy) * 180) / Math.PI + 360) % 360;
 }
 
 function projectOntoSegment(

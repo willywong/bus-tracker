@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import { useMemo, type ReactNode } from 'react';
 import { Linking, StyleSheet, View } from 'react-native';
 
+import { Bus3D } from '@/components/detail/Bus3D';
 import type { DetailModel } from '@/components/detail/model';
 import { openStreetView, StopPhoto } from '@/components/detail/StopPhoto';
 import { formatClockHHMM } from '@/components/tracker/logic';
@@ -143,7 +144,7 @@ export function BusDetailSheet({
 }: DetailSheetProps & { vehicleId: string }) {
   const trip = useTrip();
   const router = useRouter();
-  const { model, journey } = useBusDetail(vehicleId);
+  const { model, journey, destination } = useBusDetail(vehicleId);
   const stopCount = trip.route?.stops.length ?? 0;
   const openAllStops = () => router.push('/stops');
   const journeyShown = !!(model.hero && journey.ready && journey.userStop && journey.busStop);
@@ -180,6 +181,8 @@ export function BusDetailSheet({
       <SheetBody peek={peek}>
         <DetailHero model={model} />
         <Facts facts={model.facts} />
+        {/* Mounted only above peek, so the 3D scene never renders unseen. */}
+        {!peek ? <Bus3D routeCode={trip.routeCode} destination={destination} /> : null}
 
         {journeyShown ? (
           <Section title="On the way to your stop">

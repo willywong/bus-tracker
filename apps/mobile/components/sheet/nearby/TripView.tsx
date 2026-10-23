@@ -4,6 +4,7 @@ import { useCallback, useMemo } from 'react';
 import { Linking, Share, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, useReducedMotion } from 'react-native-reanimated';
 
+import { Bus3D } from '@/components/detail/Bus3D';
 import { formatClockHHMM } from '@/components/tracker/logic';
 import { Connections } from '@/components/trip/Connections';
 import { BusPosition } from '@/components/trip/BusPosition';
@@ -20,6 +21,7 @@ import { Section, SECTION_RULE, SheetBody } from '@/components/trip/SheetBody';
 import { SheetHeader } from '@/components/trip/SheetHeader';
 import { Timetable } from '@/components/trip/Timetable';
 import type { ScheduledDeparture } from '@/db/queries';
+import { useTripHeadsign } from '@/hooks/useMapDetail';
 import { useSettings } from '@/hooks/useSettings';
 import { ensureNotificationPermission } from '@/services/reminders/notifications';
 import { arrivalShareMessage } from '@/services/shareArrival';
@@ -41,6 +43,7 @@ export function TripView({ scheme }: { scheme: 'light' | 'dark' }) {
   const router = useRouter();
   const ride = useRide();
   const { model } = trip;
+  const destination = useTripHeadsign(trip.eta.primaryArrival?.tripId ?? null, trip.routeCode);
   const userStop = trip.route?.userStop ?? null;
   const stopPoint = useMemo(
     () => (userStop ? { lat: userStop.stop_lat, lng: userStop.stop_lon } : null),
@@ -125,6 +128,10 @@ export function TripView({ scheme }: { scheme: 'light' | 'dark' }) {
             onStartWalking={trip.startWalking}
             onCancelWalking={trip.cancelWalking}
           />
+        ) : null}
+
+        {showsHero(model.state) ? (
+          <Bus3D routeCode={trip.routeCode} destination={destination} />
         ) : null}
 
         {journeyShown ? (

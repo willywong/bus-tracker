@@ -52,8 +52,10 @@ import { devNow } from '@/utils/devClock';
 import { haptics } from '@/utils/haptics';
 import {
   nearbyRailStations,
+  routeLegs,
   snapToRoute,
   type LatLng,
+  type RouteLeg,
   type VehiclePosition,
 } from '@bus-tracker/shared';
 
@@ -65,14 +67,14 @@ const KL_REGION = {
   longitudeDelta: 0.25,
 };
 
-/** Markers glide between fixes over one poll interval. */
+/** Markers glide between fixes over one poll interval, along the route's own corners. */
 const POSITION_TWEEN_MS = 30_000;
 /** No pan events for this long means the finger is off the map. */
 const PAN_QUIET_MS = 250;
 /** Half-size (degrees, ~280 m) of the box framed around a lone point. */
 const SINGLE_POINT_SPAN = 0.0025;
 const EMPTY_STOPS = new Map<string, { lat: number; lng: number }>();
-const NO_POSITIONS: VehiclePosition[] = [];
+const NO_POSITIONS: SnappedPosition[] = [];
 const NO_RAIL_STATIONS: RailStationMark[] = [];
 /** The station sheet's resting detent (`_layout.tsx`): a focused station is framed above it. */
 const STATION_SHEET_DETENT = 0.5;
@@ -345,7 +347,7 @@ export default function MapScreen() {
     () => snapPositions(feedPositions, routeLine),
     [feedPositions, routeLine],
   );
-  const markers = useGlidingMarkers(positions, trip.routeCode);
+  const markers = useGlidingMarkers(positions, trip.routeCode, routeLine);
   // My buses off: stop every glide first and unmount the markers on the next
   // render. Unmounting one mid-animation trips Fabric (see useGlidingMarkers).
   // An open itinerary (or a journey in Go, or a route preview) hides them the same way.
@@ -856,7 +858,7 @@ export default function MapScreen() {
             background={mapPaper}
           />
         ) : null}
-        {(busMarkersShown ? markers : []).map(({ vehicle, region }) => {
+        {(busMarkersShown ? markers : []).map(({ vehicle, region, heading }) => {
           const primary = vehicle.vehicleId === primaryVehicleId;
           const passed = trip.eta.passedVehicleIds.has(vehicle.vehicleId);
           return (
@@ -869,6 +871,7 @@ export default function MapScreen() {
               primary={primary}
               passed={passed}
               bearing={vehicle.bearing}
+              heading={heading}
               selected={vehicle.vehicleId === selectedBusId}
               vehicleId={vehicle.vehicleId}
               onSelect={selectBus}
@@ -935,7 +938,7 @@ export default function MapScreen() {
         ) : null}
         {/* Unkeyed and always mapped: they empty themselves a render after
             the preview closes, with their glides stopped (useGlidingMarkers). */}
-        {previewMarkers.map(({ vehicle, region }) => (
+        {previewMarkers.map(({ vehicle, region, heading }) => (
           <BusMarker
             key={`preview-${vehicle.vehicleId}`}
             region={region}
@@ -945,6 +948,7 @@ export default function MapScreen() {
             primary
             passed={false}
             bearing={vehicle.bearing}
+            heading={heading}
             vehicleId={vehicle.vehicleId}
             accessibilityLabel={`Route ${preview?.label ?? ''} bus, live`}
           />
@@ -1155,13 +1159,54 @@ function useTripSheet(): boolean {
   return up;
 }
 
+/** A fix, drawn on the route line when it's near enough: `segmentIndex` is where. */
+type SnappedPosition = VehiclePosition & { segmentIndex: number | null };
+
 interface GlidingMarker {
   vehicle: VehiclePosition;
   region: AnimatedRegion;
+  /** Its heading mid-glide, turning at each corner of the route. */
+  heading: HeadingFeed;
+}
+
+/** Below this, a turn isn't worth redrawing the marker (the map's sprites step every 15°). */
+const HEADING_STEP_DEG = 7.5;
+
+/**
+ * A marker's heading while it glides. Set at each corner it turns; only that
+ * marker redraws (BusMarker subscribes), not this screen.
+ */
+interface HeadingFeed {
+  get(): number | undefined;
+  subscribe(onChange: () => void): () => void;
+  set(bearing: number | undefined): void;
+}
+
+function headingFeed(initial: number | undefined): HeadingFeed {
+  let value = initial;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => value,
+    subscribe(onChange) {
+      listeners.add(onChange);
+      return () => listeners.delete(onChange);
+    },
+    set(bearing) {
+      if (bearing === value) return;
+      if (bearing != null && value != null) {
+        const turn = Math.abs(((((bearing - value) % 360) + 540) % 360) - 180);
+        if (turn < HEADING_STEP_DEG) return;
+      }
+      value = bearing;
+      for (const listener of listeners) listener();
+    },
+  };
 }
 
 /**
- * One AnimatedRegion per vehicle so markers glide linearly between fixes.
+ * One AnimatedRegion per vehicle so markers glide between fixes: along the
+ * route through each of its corners when both ends are on the line, else in
+ * a straight line.
  *
  * A bus that drops out of the feed keeps its marker for one more commit: its
  * animation is stopped first, then it's removed on the following render.
@@ -1170,10 +1215,12 @@ interface GlidingMarker {
  * change.
  */
 function useGlidingMarkers(
-  positions: VehiclePosition[],
+  positions: readonly (VehiclePosition | SnappedPosition)[],
   routeCode: string,
+  polyline?: readonly LatLng[],
 ): GlidingMarker[] {
   const regions = useRef(new Map<string, AnimatedRegion>());
+  const headings = useRef(new Map<string, HeadingFeed>());
   const lastSeen = useRef(new Map<string, VehiclePosition>());
   /** Where each marker is gliding to, so a repeated fix doesn't restart it. */
   const targets = useRef(new Map<string, LatLng>());
@@ -1191,6 +1238,7 @@ function useGlidingMarkers(
           longitudeDelta: 0,
         }),
       );
+      headings.current.set(p.vehicleId, headingFeed(p.bearing));
     }
   }
 
@@ -1204,23 +1252,23 @@ function useGlidingMarkers(
       const target = targets.current.get(p.vehicleId);
       if (target && target.lat === p.lat && target.lng === p.lng) continue;
       targets.current.set(p.vehicleId, { lat: p.lat, lng: p.lng });
-      regions.current
-        .get(p.vehicleId)
-        ?.timing({
-          latitude: p.lat,
-          longitude: p.lng,
-          latitudeDelta: 0,
-          longitudeDelta: 0,
-          duration: POSITION_TWEEN_MS,
-          easing: Easing.linear,
-          useNativeDriver: false,
-        } as Parameters<AnimatedRegion['timing']>[0])
-        .start();
+      const region = regions.current.get(p.vehicleId);
+      const heading = headings.current.get(p.vehicleId);
+      if (!region || !heading) continue;
+      // From wherever the marker is now, mid-glide or not.
+      region.stopAnimation((now) => {
+        const at = { lat: now.latitude, lng: now.longitude };
+        const legs = legsAlongRoute(polyline, at, heading.get(), p) ?? [
+          { to: { lat: p.lat, lng: p.lng }, meters: 1, bearing: p.bearing ?? heading.get() },
+        ];
+        glide(region, heading, legs);
+      });
     }
     for (const id of Array.from(regions.current.keys())) {
       if (live.has(id)) continue;
       stopAnimation(regions.current.get(id));
       regions.current.delete(id);
+      headings.current.delete(id);
       lastSeen.current.delete(id);
       targets.current.delete(id);
       pruned = true;
@@ -1237,6 +1285,7 @@ function useGlidingMarkers(
     return () => {
       for (const r of regions.current.values()) stopAnimation(r);
       regions.current.clear();
+      headings.current.clear();
       lastSeen.current.clear();
       targets.current.clear();
     };
@@ -1245,9 +1294,63 @@ function useGlidingMarkers(
   const out: GlidingMarker[] = [];
   for (const [id, region] of regions.current) {
     const vehicle = lastSeen.current.get(id);
-    if (vehicle) out.push({ vehicle, region });
+    const heading = headings.current.get(id);
+    if (vehicle && heading) out.push({ vehicle, region, heading });
   }
   return out;
+}
+
+/**
+ * The route between the marker and its new fix, corner by corner. Null when
+ * either end is off the line, the fix is behind it, or the way round is
+ * implausible: the glide then goes straight.
+ */
+function legsAlongRoute(
+  polyline: readonly LatLng[] | undefined,
+  at: LatLng,
+  movingAt: number | undefined,
+  fix: VehiclePosition | SnappedPosition,
+): RouteLeg[] | null {
+  if (!polyline || !('segmentIndex' in fix) || fix.segmentIndex == null) return null;
+  // The way it's moving picks its own side of a road the route runs both ways.
+  const from = snapToRoute(at, polyline, { heading: movingAt });
+  if (from.segmentIndex == null) return null;
+  return routeLegs(
+    polyline,
+    { point: from.point, segmentIndex: from.segmentIndex },
+    { point: { lat: fix.lat, lng: fix.lng }, segmentIndex: fix.segmentIndex },
+  );
+}
+
+/** A stretch of a glide; a straight one may not know its heading. */
+type GlideLeg = Omit<RouteLeg, 'bearing'> & { bearing: number | undefined };
+
+/**
+ * Glides through `legs` in one poll interval, each leg's share of it by its
+ * length, turning the marker as each starts. Stopping the region (a new fix,
+ * a route change) ends the chain: the running leg reports unfinished.
+ */
+function glide(region: AnimatedRegion, heading: HeadingFeed, legs: readonly GlideLeg[]) {
+  const total = legs.reduce((sum, leg) => sum + leg.meters, 0);
+  const run = (i: number) => {
+    const leg = legs[i];
+    if (!leg) return;
+    if (leg.bearing != null) heading.set(leg.bearing);
+    region
+      .timing({
+        latitude: leg.to.lat,
+        longitude: leg.to.lng,
+        latitudeDelta: 0,
+        longitudeDelta: 0,
+        duration: (POSITION_TWEEN_MS * leg.meters) / total,
+        easing: Easing.linear,
+        useNativeDriver: false,
+      } as Parameters<AnimatedRegion['timing']>[0])
+      .start(({ finished }) => {
+        if (finished) run(i + 1);
+      });
+  };
+  run(0);
 }
 
 /**
@@ -1262,13 +1365,21 @@ function useGlidingMarkers(
 function snapPositions(
   positions: VehiclePosition[],
   polyline: readonly LatLng[] | undefined,
-): VehiclePosition[] {
-  if (!polyline || polyline.length < 2 || positions.length === 0) return positions;
+): SnappedPosition[] {
+  if (!polyline || polyline.length < 2 || positions.length === 0) {
+    return positions.map((p) => ({ ...p, segmentIndex: null }));
+  }
   return positions.map((p) => {
     const snap = snapToRoute({ lat: p.lat, lng: p.lng }, polyline, { heading: p.bearing });
     return snap.snapped
-      ? { ...p, lat: snap.point.lat, lng: snap.point.lng, bearing: snap.bearing }
-      : p;
+      ? {
+          ...p,
+          lat: snap.point.lat,
+          lng: snap.point.lng,
+          bearing: snap.bearing,
+          segmentIndex: snap.segmentIndex,
+        }
+      : { ...p, segmentIndex: null };
   });
 }
 

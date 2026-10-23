@@ -39,3 +39,8 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# 3D Warehouse bus model (HALIM3D) and the map sprites rendered from it: not
+# ours to publish until the author agrees. Rebuild them with
+# modules/bus-model/scripts/prepare-rapid-bus.py.
+/modules/bus-model/ios/Assets/
