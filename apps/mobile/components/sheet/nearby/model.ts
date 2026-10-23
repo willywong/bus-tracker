@@ -173,26 +173,41 @@ function soonestMs(next: NextDeparture, now: number): number {
   }
 }
 
+const MYT_OFFSET_MS = 8 * 3_600_000;
+const DAY_MS = 86_400_000;
+
+/** Whether `ms` falls on a later Malaysian calendar day than `now`: a 0:15 bus seen at 23:50. */
+export function isTomorrow(ms: number, now: number): boolean {
+  return Math.floor((ms + MYT_OFFSET_MS) / DAY_MS) > Math.floor((now + MYT_OFFSET_MS) / DAY_MS);
+}
+
+/** A clock time, with "tmrw" / "tomorrow" when it falls after midnight. */
+function dayClock(ms: number, now: number, clock: (ms: number) => string): { text: string; spoken: string } {
+  const at = clock(ms);
+  return isTomorrow(ms, now) ? { text: `${at} tmrw`, spoken: `${at} tomorrow` } : { text: at, spoken: at };
+}
+
 /** A bus departure in a few characters, plus its spoken form. */
-function busShort(next: NextDeparture, clock: (ms: number) => string): { text: string; spoken: string } {
+function busShort(next: NextDeparture, now: number, clock: (ms: number) => string): { text: string; spoken: string } {
   switch (next.kind) {
     case 'headway': {
       const every = Math.max(1, Math.round(next.headwaySec / 60));
       return { text: `every ${every} min`, spoken: `every ${spokenMins(every)}` };
     }
     case 'timetable': {
-      const at = clock(next.times[0]);
-      return { text: at, spoken: `next at ${at}, scheduled` };
+      const at = dayClock(next.times[0], now, clock);
+      return { text: at.text, spoken: `next at ${at.spoken}, scheduled` };
     }
-    case 'closed':
-      return next.reopensAt == null
-        ? { text: 'No more today', spoken: 'no more buses today' }
-        : { text: `first ${clock(next.reopensAt)}`, spoken: `first bus at ${clock(next.reopensAt)}` };
+    case 'closed': {
+      if (next.reopensAt == null) return { text: 'No more today', spoken: 'no more buses today' };
+      const at = dayClock(next.reopensAt, now, clock);
+      return { text: `first ${at.text}`, spoken: `first bus at ${at.spoken}` };
+    }
   }
 }
 
 /** A train departure: headways only as "every"/"about", never a clock time (spec §6.4). */
-function railShort(next: NextDeparture, clock: (ms: number) => string): { text: string; spoken: string } {
+function railShort(next: NextDeparture, now: number, clock: (ms: number) => string): { text: string; spoken: string } {
   switch (next.kind) {
     case 'headway': {
       const every = Math.max(1, Math.round(next.headwaySec / 60));
@@ -201,13 +216,14 @@ function railShort(next: NextDeparture, clock: (ms: number) => string): { text: 
       return { text: `about ${about} min`, spoken: `next train in about ${spokenMins(about)}` };
     }
     case 'timetable': {
-      const at = clock(next.times[0]);
-      return { text: at, spoken: `next train at ${at}, scheduled` };
+      const at = dayClock(next.times[0], now, clock);
+      return { text: at.text, spoken: `next train at ${at.spoken}, scheduled` };
     }
-    case 'closed':
-      return next.reopensAt == null
-        ? { text: 'No more today', spoken: 'no more trains today' }
-        : { text: `first ${clock(next.reopensAt)}`, spoken: `first train at ${clock(next.reopensAt)}` };
+    case 'closed': {
+      if (next.reopensAt == null) return { text: 'No more today', spoken: 'no more trains today' };
+      const at = dayClock(next.reopensAt, now, clock);
+      return { text: `first ${at.text}`, spoken: `first train at ${at.spoken}` };
+    }
   }
 }
 
@@ -258,7 +274,7 @@ export function aroundYou(
       (b, r) => (b == null || soonestMs(r.next, now) < soonestMs(b.next, now) ? r : b),
       null,
     );
-    const next = best ? railShort(best.next, o.clock) : { text: 'Timetable unavailable', spoken: 'timetable unavailable' };
+    const next = best ? railShort(best.next, now, o.clock) : { text: 'Timetable unavailable', spoken: 'timetable unavailable' };
     const walkMin = Math.max(1, walkingMinutes(d));
     const lineNames = [...new Set(station.lines.map(lineDisplayName))];
     places.push({
@@ -310,7 +326,7 @@ export function aroundYou(
     const yourLive = isYourStop && o.yourRouteCode != null && o.yourLiveNext != null && routes.includes(o.yourRouteCode);
     const next = yourLive
       ? { text: o.yourLiveNext!, spoken: `route ${o.yourRouteCode} in ${o.yourLiveNext}, live` }
-      : busShort(best.next, o.clock);
+      : busShort(best.next, now, o.clock);
     const walkMin = Math.max(1, walkingMinutes(g.d));
     const routeWords = routes.length === 1 ? `route ${routes[0]}` : `routes ${routes.slice(0, -1).join(', ')} and ${routes[routes.length - 1]}`;
     places.push({
@@ -374,7 +390,7 @@ export function stopRoutes(
     const towards = placeName(row.towards);
     const n = row.next;
     const ended = n.kind === 'closed' && n.reopensAt == null;
-    const short = busShort(n, o.clock);
+    const short = busShort(n, now, o.clock);
     const nextAt = n.kind === 'closed' ? n.reopensAt : soonestMs(n, now);
     let then: string | null = null;
     if (n.kind === 'timetable' && n.times.length > 1) then = `then ${n.times.slice(1).map(o.clock).join(' · ')}`;

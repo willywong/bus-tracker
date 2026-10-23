@@ -57,7 +57,7 @@ export const PlacePins = memo(function PlacePins({ places, network, ink, paper, 
           coordinate={coord}
           flat
           zIndex={1}
-          displayPriority="high"
+          displayPriority="required"
           onPress={() => onPress(place)}
           accessibilityLabel={place.kind === 'stop' ? `${place.name}, bus stop` : `${place.name} station`}
         >

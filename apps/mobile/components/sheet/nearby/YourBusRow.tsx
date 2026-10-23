@@ -63,7 +63,7 @@ export function YourBusRow({
     `Your bus, route ${trip.routeCode}, ${stopName}`,
     distanceM != null ? `${Math.round(distanceM)} metres away` : null,
     model.compact
-      ? `${model.source === 'scheduled' ? 'scheduled' : 'live'}, ${model.compact}`
+      ? `${model.source === 'live' ? 'live' : model.source === 'aging' ? 'live, last updated over a minute ago' : 'scheduled'}, ${model.compact}`
       : null,
   ]
     .filter(Boolean)

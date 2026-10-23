@@ -141,7 +141,7 @@ export function StopView({
         {rest.length > 0 ? (
           <View>
             {rest.map((face) => (
-              <Fragment key={`${face.row.route}|${face.row.towards}`}>
+              <Fragment key={`${face.row.route}|${face.row.pattern}|${face.row.stopIndex}`}>
                 <Hairline inset={STOP_ROUTE_ROW_INSET} />
                 <StopRouteRowView {...face} onPress={() => open(face.row)} />
               </Fragment>

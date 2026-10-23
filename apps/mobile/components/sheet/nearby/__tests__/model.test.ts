@@ -10,6 +10,7 @@ import { fixtureNetwork } from '../../../../../../packages/shared/src/transit/__
 
 import {
   aroundYou,
+  isTomorrow,
   MAX_PLACES,
   mergeName,
   MIN_STATIONS,
@@ -214,6 +215,35 @@ test('routePreview is null off the pattern or at its terminus', () => {
   assert.equal(routePreview(net, 0, 4, myt(7), { clock }), null);
   assert.equal(routePreview(net, 0, 2, myt(7), { clock }), null);
   assert.equal(routePreview(net, 99, 0, myt(7), { clock }), null);
+});
+
+test('a bus after midnight reads as tomorrow until midnight passes', () => {
+  // One feeder route with a late trip past 24:00 on the service day.
+  const net = buildNetwork({
+    stops: [
+      { id: '9101', name: 'Late Stop', station: -1 },
+      { id: '9102', name: 'End Stop', station: -1 },
+    ],
+    stations: [],
+    routes: [{ id: 'T901', label: 'T901', mode: 'feeder', feed: 'feeder' }],
+    patterns: [{ route: 0, headsign: 'End Stop', stops: [0, 1], trips: [[at(23, 40), at(23, 50)], [at(24, 15), at(24, 25)]] }],
+  });
+  net.stops.feed[0] = net.stops.feed[1] = 2; // feeder
+
+  assert.equal(isTomorrow(myt(24, 15), myt(23, 50)), true);
+  assert.equal(isTomorrow(myt(24, 15), myt(24, 5)), false);
+  assert.equal(isTomorrow(myt(23, 59), myt(0, 1)), false);
+
+  const late = stopRoutes(net, [0], myt(23, 45), { clock });
+  assert.equal(late.length, 1);
+  assert.equal(late[0].next, '0:15 tmrw');
+  assert.match(late[0].whenSpoken, /^next at 0:15 tomorrow, scheduled$/);
+  assert.ok(!late[0].ended);
+
+  // Past midnight, the same 24:15 trip is today's.
+  const after = stopRoutes(net, [0], myt(24, 5), { clock });
+  assert.equal(after.length, 1);
+  assert.equal(after[0].next, '0:15');
 });
 
 test('placeName drops the stop code and feeder marker, never the whole name', () => {

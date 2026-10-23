@@ -18,7 +18,7 @@ import { Alert, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, useReducedMotion } from 'react-native-reanimated';
 
 import { EmptyState } from '@/components/sheet/EmptyState';
-import { distanceText, routePreview, type RoutePreview, type RoutePreviewStop } from '@/components/sheet/nearby/model';
+import { distanceText, isTomorrow, routePreview, type RoutePreview, type RoutePreviewStop } from '@/components/sheet/nearby/model';
 import { openWalkingDirections } from '@/components/sheet/nearby/TripView';
 import { trackPlan } from '@/components/sheet/nearby/track';
 import { formatClockHHMM } from '@/components/tracker/logic';
@@ -269,10 +269,14 @@ function Header({
 function Countdown({ preview, now, stopsAway }: { preview: RoutePreview; now: number; stopsAway: number | null }) {
   const lead = `Route ${preview.label} to ${preview.towards}`;
   if (preview.nextAt == null) {
-    const first = preview.firstAt == null ? null : formatClockHHMM(preview.firstAt);
+    // After midnight the first bus is later today, not tomorrow.
+    const first =
+      preview.firstAt == null
+        ? null
+        : `${formatClockHHMM(preview.firstAt)}${isTomorrow(preview.firstAt, now) ? ' tomorrow' : ''}`;
     return (
-      <View accessible accessibilityLabel={`${lead}, no more today${first ? `, first bus at ${first} tomorrow` : ''}`}>
-        <StatusLine source="scheduled" lead="No more today" rest={first ? [`first ${first} tomorrow`] : []} />
+      <View accessible accessibilityLabel={`${lead}, no more today${first ? `, first bus at ${first}` : ''}`}>
+        <StatusLine source="scheduled" lead="No more today" rest={first ? [`first ${first}`] : []} />
       </View>
     );
   }
@@ -351,7 +355,7 @@ function ActionButton({
           ]}
         >
           <SwiftImage systemName={icon} size={15} />
-          <SwiftText modifiers={[font({ size: 17, weight: filled ? 'semibold' : 'regular' })]}>{label}</SwiftText>
+          <SwiftText modifiers={[font({ textStyle: 'body', weight: filled ? 'semibold' : 'regular' })]}>{label}</SwiftText>
         </HStack>
       </Button>
     </Host>
