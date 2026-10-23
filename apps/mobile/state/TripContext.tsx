@@ -96,6 +96,15 @@ export interface TripContextValue {
   /** You opened a section from the bus bar; at rest the sheet is down and the map shows the bar. */
   sheetOpen: boolean;
   setSheetOpen: (open: boolean) => void;
+  /**
+   * The sheet is going down to the bus bar showing what it shows now; what
+   * it shows is cleared once it's gone (the map does that), so it never
+   * redraws as the list on its way down.
+   */
+  closing: boolean;
+  putAway: () => void;
+  /** Gone: clears what it showed. */
+  putAwayDone: () => void;
   /** True while the map is being dragged from glance: the trip sheet holds at peek. */
   holdPeek: boolean;
   setHoldPeek: (on: boolean) => void;
@@ -143,6 +152,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
   const [detent, setDetent] = useState<DetentIndex>(SHEET_INITIAL_DETENT);
   const [holdPeek, setHoldPeek] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [closing, setClosing] = useState(false);
   const [selection, setSelection] = useState<MapSelection | null>(null);
   const selectionRef = useRef<MapSelection | null>(null);
   const select = useCallback((s: MapSelection | null) => {
@@ -154,6 +164,13 @@ export function TripProvider({ children }: { children: ReactNode }) {
     // Tell the sheet's slide which way to go before the swap renders.
     sheetNavDirection.set(next ? 1 : -1);
     setSelection(next);
+  }, []);
+  const putAway = useCallback(() => setClosing(true), []);
+  const putAwayDone = useCallback(() => {
+    setClosing(false);
+    setSheetOpen(false);
+    selectionRef.current = null;
+    setSelection(null);
   }, []);
   // A new route or stop starts from the trip view.
   useEffect(() => {
@@ -381,6 +398,9 @@ export function TripProvider({ children }: { children: ReactNode }) {
       setDetent,
       sheetOpen,
       setSheetOpen,
+      closing,
+      putAway,
+      putAwayDone,
       holdPeek,
       setHoldPeek,
       selection,
@@ -413,6 +433,9 @@ export function TripProvider({ children }: { children: ReactNode }) {
       side.setLastBusReminder,
       detent,
       sheetOpen,
+      closing,
+      putAway,
+      putAwayDone,
       holdPeek,
       selection,
       select,

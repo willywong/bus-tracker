@@ -7,7 +7,7 @@ import {
   glassEffect,
 } from '@expo/ui/swift-ui/modifiers';
 import { SymbolView } from 'expo-symbols';
-import { useRef } from 'react';
+import { useEffect, useRef, useSyncExternalStore } from 'react';
 import {
   type HostInstance,
   Image as RNImage,
@@ -28,7 +28,14 @@ import {
 } from '@/components/sheet/sections';
 import { SourceMark } from '@/components/trip/Hero';
 import type { SourceKind } from '@/components/trip/model';
-import { busKindOf, launchBusFlight, pillIconFor } from '@/modules/bus-model';
+import {
+  BUS_HOME_MS,
+  busKindOf,
+  flyBusHome,
+  launchBusFlight,
+  pillIconFor,
+  type BusKind,
+} from '@/modules/bus-model';
 import { useSettings } from '@/hooks/useSettings';
 import { useTrip } from '@/state/TripContext';
 import { color, hex, pick, space, type } from '@/theme/design';
@@ -42,6 +49,32 @@ const PILL_RADIUS = 20;
 const PILL_MAX_SCALE = 1.3;
 
 const GLASS = { glass: { variant: 'regular', interactive: true } } as const;
+
+/*
+ * The pill's bus, last drawn: where (window points) and which, so the trip
+ * sheet's bus can fly back into it as the sheet goes down, before the pill
+ * is back on screen. While it flies the pill leaves its bus out, and draws
+ * it again as it lands.
+ */
+let pillArt: { frame: { x: number; y: number; width: number; height: number }; kind: BusKind } | null =
+  null;
+let homingUntil = 0;
+const homingListeners = new Set<() => void>();
+const subscribeHoming = (listener: () => void) => {
+  homingListeners.add(listener);
+  return () => homingListeners.delete(listener);
+};
+const homing = () => homingUntil > Date.now();
+
+/** The trip sheet is going down: its bus flies back into the pill. */
+export function busHome() {
+  if (!pillArt || homing() || !flyBusHome(pillArt.frame, pillArt.kind)) return;
+  homingUntil = Date.now() + BUS_HOME_MS;
+  for (const listener of homingListeners) listener();
+  setTimeout(() => {
+    for (const listener of homingListeners) listener();
+  }, BUS_HOME_MS);
+}
 
 /**
  * The map's bottom bar at rest, as Apple Music's: three separate Liquid
@@ -152,7 +185,13 @@ function BusPill({ onBus, onTrack }: { onBus: () => void; onTrack: () => void })
   const measureArt = () =>
     art.current?.measureInWindow((x, y, width, height) => {
       artFrame.current = { x, y, width, height };
+      pillArt = { frame: artFrame.current, kind };
     });
+  const artAway = useSyncExternalStore(subscribeHoming, homing);
+  // Laid out before the sheet came up, but a bus kind can change under it.
+  useEffect(() => {
+    if (pillArt) pillArt = { ...pillArt, kind };
+  }, [kind]);
 
   const stopName = trip.stopName ?? 'Your stop';
   const spoken = empty
@@ -169,6 +208,9 @@ function BusPill({ onBus, onTrack }: { onBus: () => void; onTrack: () => void })
   return (
     <Pressable
       onPressIn={measureArt}
+      // The pill moves as the buttons beside it size up, which its bus's own
+      // layout doesn't see.
+      onLayout={measureArt}
       onPress={() => {
         haptics.selection();
         if (empty) return onTrack();
@@ -193,7 +235,10 @@ function BusPill({ onBus, onTrack }: { onBus: () => void; onTrack: () => void })
           <>
             {pillIcon ? (
               <View ref={art} onLayout={measureArt} style={styles.busArt} collapsable={false}>
-                <RNImage source={{ uri: pillIcon }} style={styles.busArtImage} />
+                <RNImage
+                  source={{ uri: pillIcon }}
+                  style={[styles.busArtImage, artAway && styles.away]}
+                />
               </View>
             ) : (
               <View style={styles.square}>
@@ -288,6 +333,9 @@ const styles = StyleSheet.create({
     width: 44,
     height: 36,
     marginHorizontal: -2,
+  },
+  away: {
+    opacity: 0,
   },
   busArtImage: {
     width: 44,

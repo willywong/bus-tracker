@@ -51,6 +51,14 @@ public class BusModelModule: Module {
       }
     }.runOnQueue(.main)
 
+    // The sheet going down: its bus flies back into the pill's bus at this frame.
+    AsyncFunction("home") { (x: Double, y: Double, width: Double, height: Double, kind: String) in
+      MainActor.assumeIsolated {
+        BusFlight.home(
+          to: CGRect(x: x, y: y, width: width, height: height), kind: BusKind(rawValue: kind) ?? .feeder)
+      }
+    }.runOnQueue(.main)
+
     // Ride along: the map camera follows the bus marker with this identifier.
     AsyncFunction("rideAlong") { (identifier: String, heading: Double, bottomInset: Double) in
       MainActor.assumeIsolated {

@@ -74,11 +74,21 @@ final class BusModelView: ExpoView {
   /// The bus's outline in the scene at the pill's pose, in this view's points.
   private var flightOutline: CGRect = .zero
   private var flightMask: CALayer?
+  /// A flight back into the pill as the sheet goes down, and where it left from.
+  private var homing: BusFlight?
+  private var homeFrom: CGRect = .zero
+  private var homeClip: CGRect = .zero
+  private var homeYaw: Float = 0
+  private var homeTurn: Float = 0
+
+  /// Every bus view alive, to find the one on screen when the sheet goes.
+  private static let all = NSHashTable<BusModelView>.weakObjects()
 
   private let key = DirectionalLight()
 
   required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
+    Self.all.add(self)
     clipsToBounds = true
     backgroundColor = paper
 
@@ -105,7 +115,10 @@ final class BusModelView: ExpoView {
   func apply() {
     loadBus()
     backgroundColor = paper
-    arView?.environment.background = .color(paper)
+    // Clear while it flies over the map.
+    if flightLink == nil {
+      arView?.environment.background = .color(paper)
+    }
     if !spins, !dragging, UIAccessibility.isReduceMotionEnabled {
       spin = 0
     }
@@ -469,6 +482,116 @@ final class BusModelView: ExpoView {
     flight?.stage.layer.mask = nil
     flightMask = nil
     flight?.end(animated: false)
+  }
+
+  // MARK: Going back to the pill
+
+  /// The bus view showing the most of its bus on screen, drawing, if any.
+  static func onScreen() -> BusModelView? {
+    var best: (view: BusModelView, area: CGFloat)?
+    for view in all.allObjects {
+      guard view.window != nil, view.rendering, view.arView != nil, view.bus != nil,
+        view.flightLink == nil
+      else { continue }
+      let shown = view.convert(view.bounds, to: nil).intersection(view.sheetClip())
+      let area = shown.isNull ? 0 : shown.width * shown.height
+      guard area >= view.bounds.width * view.bounds.height * 0.25 else { continue }
+      if area > best?.area ?? 0 { best = (view, area) }
+    }
+    return best?.view
+  }
+
+  /// Flies the scene out of the sheet, as it goes down, into the pill's bus:
+  /// the way it came, backwards. False if there's nothing here to fly.
+  func flyHome(_ flight: BusFlight) -> Bool {
+    guard let arView, let bus, flightLink == nil, arrival == nil else { return false }
+    homeFrom = convert(bounds, to: nil)
+    homeClip = sheetClip()
+    // The bus's outline as the pill draws it, posed there for a moment to measure.
+    homeYaw = yaw
+    turntable.orientation = simd_quatf(angle: Self.pillYaw, axis: [0, 1, 0])
+    let outline = outline(of: bus)
+    turntable.orientation = simd_quatf(angle: yaw, axis: [0, 1, 0])
+    guard let outline else { return false }
+    flightOutline = outline
+    // Back round to the pill's pose the short way.
+    let turn = (Self.pillYaw - homeYaw).truncatingRemainder(dividingBy: 2 * .pi)
+    homeTurn = turn > .pi ? turn - 2 * .pi : turn < -.pi ? turn + 2 * .pi : turn
+    homing = flight
+    spin = 0
+    arView.environment.background = .color(.clear)
+    arView.backgroundColor = .clear
+    flight.stage.insertSubview(arView, belowSubview: flight.picture)
+    arView.bounds = CGRect(origin: .zero, size: bounds.size)
+    arView.center = CGPoint(x: homeFrom.midX, y: homeFrom.midY)
+    let mask = CALayer()
+    mask.backgroundColor = UIColor.black.cgColor
+    mask.frame = homeClip
+    flight.stage.layer.mask = mask
+    flightMask = mask
+    // The sheet shows its last frame where the bus was.
+    still.isHidden = true
+    flightStart = CACurrentMediaTime() + BusFlight.homeDelay
+    let link = CADisplayLink(target: self, selector: #selector(homeFrame))
+    link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
+    link.add(to: .main, forMode: .common)
+    flightLink = link
+    homeFrame()
+    return true
+  }
+
+  /// One frame home: the bus shrinks from its place on the sheet into the
+  /// pill's bus on the sheet's own curve, turning back to the pill's pose,
+  /// and hands over to the pill's picture as it lands.
+  @objc private func homeFrame() {
+    guard let flight = homing, let arView else { return }
+    let p = max(0, min(1, (CACurrentMediaTime() - flightStart) / BusFlight.homeDuration))
+    let move = CGFloat(Easing.sheet(p))
+    yaw = homeYaw + homeTurn * Float(Easing.out(p))
+    turntable.orientation = simd_quatf(angle: yaw, axis: [0, 1, 0])
+
+    let center = CGPoint(x: homeFrom.midX, y: homeFrom.midY)
+    let offset = CGPoint(x: flightOutline.midX - bounds.midX, y: flightOutline.midY - bounds.midY)
+    let pill = CGPoint(x: flight.busRect.midX, y: flight.busRect.midY)
+    let endScale = flight.busRect.width / max(flightOutline.width, 1)
+    let scale = 1 + (endScale - 1) * move
+    let shift = CGPoint(
+      x: (pill.x - center.x - endScale * offset.x) * move,
+      y: (pill.y - center.y - endScale * offset.y) * move)
+    arView.transform = CGAffineTransform(a: scale, b: 0, c: 0, d: scale, tx: shift.x, ty: shift.y)
+
+    // The pill's own picture takes over for the last stretch.
+    let fade = CGFloat(max(0, min(1, (p - 0.8) / 0.2)))
+    arView.alpha = 1 - fade
+    flight.picture.alpha = fade
+
+    // Clipped to the sheet as it leaves, free of it on the way down.
+    let full = flight.stage.bounds
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    flightMask?.frame = CGRect(
+      x: homeClip.minX + (full.minX - homeClip.minX) * move,
+      y: homeClip.minY + (full.minY - homeClip.minY) * move,
+      width: homeClip.width + (full.width - homeClip.width) * move,
+      height: homeClip.height + (full.height - homeClip.height) * move)
+    CATransaction.commit()
+
+    if p >= 1 { arrivedHome() }
+  }
+
+  /// Landed in the pill: the scene goes, and is made again if this view is
+  /// ever back in sight.
+  private func arrivedHome() {
+    flightLink?.invalidate()
+    flightLink = nil
+    homing?.stage.layer.mask = nil
+    homing = nil
+    flightMask = nil
+    detach()
+    rendering = false
+    yaw = Self.restYaw
+    turntable.orientation = simd_quatf(angle: yaw, axis: [0, 1, 0])
+    if window != nil { checkVisibility() }
   }
 
   /// What the sheet shows of its content: the nearest scroll view's visible

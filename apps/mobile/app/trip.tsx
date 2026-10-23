@@ -204,7 +204,15 @@ export default function TripSheet() {
     (id: string) => select(id === trip.stopId ? null : { kind: 'stop', stopId: id }),
     [select, trip.stopId],
   );
-  const back = useCallback(() => select(null), [select]);
+  // Back from a detail, or from Your bus, to the bar (nothing else open
+  // under it) puts the sheet away as it is, so it never redraws as the list
+  // on its way down.
+  const toBar = !trip.sheetOpen;
+  const back = useCallback(
+    () => (toBar && (nearbyView == null || nearbyView.kind === 'list') ? trip.putAway() : select(null)),
+    [toBar, nearbyView, trip, select],
+  );
+  const backFromYourBus = toBar && nearby.stack.length <= 2 ? trip.putAway : nearby.pop;
 
 
   // Go (15/06): the journey, leg by leg. It doesn't need a tracked route.
@@ -338,8 +346,8 @@ export default function TripSheet() {
               title="Your bus"
               subtitle={null}
               peek={false}
-              onBack={nearby.pop}
-              backLabel="Back to around you"
+              onBack={backFromYourBus}
+              backLabel={toBar ? 'Back to the map' : 'Back to around you'}
             />
             <TripView scheme={scheme} />
           </>

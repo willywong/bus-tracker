@@ -63,6 +63,39 @@ final class BusFlight {
     pending = flight
   }
 
+  /// Down from the sheet into the pill: as long as the sheet's own fall,
+  /// leaving with it (UIKit starts the dismissal a beat after it's asked).
+  static let homeDelay: CFTimeInterval = 0.1
+  static let homeDuration: CFTimeInterval = 0.5
+  /// The pill shows its own bus again once the flight has landed (JS waits
+  /// `homeDelay + homeDuration`); the picture holds a moment past that, so
+  /// the pill never shows bare.
+  private static let homeHold: TimeInterval = homeDelay + homeDuration + 0.15
+
+  /// The sheet going down: its bus flies back into the pill's bus at `frame`
+  /// (window points), where the pill's picture takes over. With no bus on
+  /// screen to fly, or under Reduce Motion, the picture just appears there
+  /// as the sheet clears it.
+  static func home(to frame: CGRect, kind: BusKind = .feeder) {
+    guard frame.width > 0, frame.height > 0, let picture = picture(kind),
+      let window = Overlay.shared.window
+    else { return }
+    pending?.end(animated: false)
+    window.isHidden = false
+    let flight = BusFlight(origin: frame, image: picture.image, outline: picture.outline, stage: window.stage)
+    flight.picture.alpha = 0
+    let flying =
+      !UIAccessibility.isReduceMotionEnabled && (BusModelView.onScreen()?.flyHome(flight) ?? false)
+    if !flying {
+      UIView.animate(withDuration: 0.15, delay: homeDelay + homeDuration - 0.15) {
+        flight.picture.alpha = 1
+      }
+    }
+    Timer.scheduledTimer(withTimeInterval: homeHold, repeats: false) { _ in
+      MainActor.assumeIsolated { flight.end(animated: false) }
+    }
+  }
+
   /// A sheet's bus taking the flight; it starts flying once it's drawing.
   static func claim(by view: BusModelView) -> BusFlight? {
     guard let flight = pending, flight.claimant == nil else { return nil }

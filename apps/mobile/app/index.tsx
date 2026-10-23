@@ -10,7 +10,7 @@ import MapView, { PROVIDER_DEFAULT, type Region } from 'react-native-maps';
 import { useReducedMotion } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { BUS_BAR_HEIGHT, BusBar } from '@/components/map/BusBar';
+import { BUS_BAR_HEIGHT, BusBar, busHome } from '@/components/map/BusBar';
 import { isFeederRoute } from '@/components/detail/fares';
 import { BusMarker, GhostBusMarker } from '@/components/map/BusMarker';
 import { LANDMARKS_FROM_ZOOM } from '@/components/map/Landmark';
@@ -486,10 +486,8 @@ export default function MapScreen() {
     nearbyNav.current.push({ kind: 'trip' });
   }, [select, settings]);
   const minimizeSheet = useCallback(() => {
-    select(null);
-    nearbyNav.current.reset();
-    trip.setSheetOpen(false);
-  }, [select, trip]);
+    if (sheetUp) trip.putAway();
+  }, [sheetUp, trip]);
   // What the sheet shows, read by the map's taps without re-rendering its markers.
   const shownRef = useRef({ mode: sheetMode, selection, userStopId: route?.userStop?.stop_id });
   shownRef.current = { mode: sheetMode, selection, userStopId: route?.userStop?.stop_id };
@@ -507,8 +505,12 @@ export default function MapScreen() {
     [select, minimizeSheet, openYourBus],
   );
   const selectBus = useCallback(
-    (vehicleId: string) => select({ kind: 'bus', vehicleId }),
-    [select],
+    (vehicleId: string) => {
+      const open = shownRef.current.selection;
+      if (open?.kind === 'bus' && open.vehicleId === vehicleId) minimizeSheet();
+      else select({ kind: 'bus', vehicleId });
+    },
+    [select, minimizeSheet],
   );
   const selectedStopId = selection?.kind === 'stop' ? selection.stopId : null;
   const selectedBusId = selection?.kind === 'bus' ? selection.vehicleId : null;
@@ -1249,7 +1251,8 @@ function useTripSheet(): boolean {
   const nearby = useNearby();
   const { mode } = useSheetMode();
   const ready = nav?.key != null;
-  const want = wantsSheet(mode, trip.sheetOpen);
+  // Going down to the bar: its view stays as it is until the sheet is gone.
+  const want = wantsSheet(mode, trip.sheetOpen) && !trip.closing;
   const up = containsRoute(nav, 'trip');
   const top = topRoute(nav);
   const wasUp = useRef(up);
@@ -1259,6 +1262,11 @@ function useTripSheet(): boolean {
     wasUp.current = up;
     if (was && !up) {
       trip.setDetent(0);
+      if (trip.closing) {
+        trip.putAwayDone();
+        nearby.reset();
+        return;
+      }
       if (want && mode !== 'go' && mode !== 'ride') {
         trip.setSheetOpen(false);
         trip.select(null);
@@ -1267,7 +1275,14 @@ function useTripSheet(): boolean {
       }
     }
     if (want && shouldPresentTrip(nav)) router.push('/trip');
-    else if (!want && top === 'trip') router.back();
+    else if (!want && top === 'trip') {
+      // Put away with a bus on show (Your bus, or a bus picked on the map):
+      // it flies back into the pill it came from as the sheet goes.
+      if (trip.closing && (mode === 'trip' || (mode === 'detail' && trip.selection?.kind === 'bus'))) {
+        busHome();
+      }
+      router.back();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, want, up, top]);
   return up;

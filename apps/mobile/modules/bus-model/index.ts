@@ -49,6 +49,7 @@ const native =
         nightPillIcons?: Partial<Record<BusKind, string>>;
         landmarks?: Partial<Record<Landmark, string>>;
         launch(x: number, y: number, width: number, height: number, kind: BusKind): Promise<void>;
+        home?(x: number, y: number, width: number, height: number, kind: BusKind): Promise<void>;
         rideAlong?(identifier: string, heading: number, bottomInset: number): Promise<void>;
         rideAlongTurn?(heading: number): Promise<void>;
         rideAlongInset?(bottomInset: number): Promise<void>;
@@ -118,6 +119,24 @@ export function launchBusFlight(
   kind: BusKind,
 ) {
   void native?.launch(frame.x, frame.y, frame.width, frame.height, kind);
+}
+
+/** How long the sheet's bus takes to land in the pill (BusFlight.homeDelay + homeDuration). */
+export const BUS_HOME_MS = 600;
+
+/**
+ * The trip sheet going down: its 3D bus flies back into the pill's bus (at
+ * this frame, window points), where the pill's picture takes over until the
+ * pill draws its own bus again, `BUS_HOME_MS` from now. False where the
+ * module isn't built (the pill then just shows its bus).
+ */
+export function flyBusHome(
+  frame: { x: number; y: number; width: number; height: number },
+  kind: BusKind,
+): boolean {
+  if (!native?.home) return false;
+  void native.home(frame.x, frame.y, frame.width, frame.height, kind);
+  return true;
 }
 
 /** The sprite of this bus facing closest to a compass bearing (degrees). */
