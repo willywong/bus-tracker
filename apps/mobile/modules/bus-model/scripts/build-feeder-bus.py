@@ -324,7 +324,7 @@ def material(name, color=None, rough=0.5, metal=0.0, coat=0.0, alpha=1.0, emit=N
         bsdf.inputs['Coat Roughness'].default_value = 0.06
     if alpha < 1:
         bsdf.inputs['Alpha'].default_value = alpha
-        m.blend_method = 'BLEND' if hasattr(m, 'blend_method') else None
+        m.surface_render_method = 'BLENDED'
     if emit is not None:
         bsdf.inputs['Emission Color'].default_value = (*linear(emit), 1)
         bsdf.inputs['Emission Strength'].default_value = emit_strength
@@ -339,14 +339,14 @@ def make_materials(livery_image):
     M['AC'] = material('AC', '#E4E5E2', rough=0.55)
     M['Trim'] = material('Trim', BLACK, rough=0.55)
     M['Rubber'] = material('Rubber', '#1A1B1E', rough=0.8)
-    M['Glass'] = material('Glass', '#141B2A', rough=0.04, coat=1.0, alpha=0.55)
-    M['Windscreen'] = material('Windscreen', '#1E2A2A', rough=0.03, coat=1.0, alpha=0.35)
+    M['Glass'] = material('Glass', '#0B1018', rough=0.04, coat=1.0, alpha=0.86)
+    M['Windscreen'] = material('Windscreen', '#101818', rough=0.03, coat=1.0, alpha=0.8)
     M['Chrome'] = material('Chrome', '#D8DADD', rough=0.15, metal=1.0)
     M['Tyre'] = material('Tyre', '#1C1D1F', rough=0.92)
     M['Hub'] = material('Hub', '#8C8F94', rough=0.32, metal=0.9)
     M['Lamp'] = material('Lamp', '#E8ECEF', rough=0.08, emit='#FFF6E8', emit_strength=0.04)
     M['Amber'] = material('Amber', '#E8A33A', rough=0.2, emit='#FF9A1E', emit_strength=0.3)
-    M['Interior'] = material('Interior', '#D3D5D8', rough=0.7)
+    M['Interior'] = material('Interior', '#7C8086', rough=0.7)
     M['Floor'] = material('Floor', '#3A3D42', rough=0.85)
     M['Seat'] = material('Seat', '#8A9096', rough=0.6)
     M['Cushion'] = material('Cushion', '#2A64C8', rough=0.8)
@@ -584,8 +584,8 @@ def build_glass(M):
     def pane(side, d0, d1, y0, y1):
         xx = side * x
         corners = [(xx, y0, z_of(d0)), (xx, y0, z_of(d1)), (xx, y1, z_of(d1)), (xx, y1, z_of(d0))]
-        f = add_quad(bm, corners if side < 0 else list(reversed(corners)))
-        return f
+        # Wound to face outward: RealityKit doesn't draw a pane from behind.
+        return add_quad(bm, corners if side > 0 else list(reversed(corners)))
 
     for d0, d1 in NEAR_WINDOWS:
         sill = SILL_FRONT if d1 < MIDDLE_FLOOR_STEP else SILL_REAR
@@ -872,6 +872,14 @@ def export(out_dir):
     text = re.sub(r'metersPerUnit = [\d.e-]+', 'metersPerUnit = 1', text)
     # Blender writes the coat as clearcoat; the specular tint is not RealityKit's.
     text = re.sub(r'\n\s*(color3f inputs:specularColor)[^\n]*', '', text)
+    # The exporter writes every material opaque; carry the glass's alpha over.
+    for m in bpy.data.materials:
+        bsdf = m.node_tree.nodes.get('Principled BSDF') if m.node_tree else None
+        alpha = bsdf.inputs['Alpha'].default_value if bsdf else 1
+        if alpha < 1:
+            text, n = re.subn(rf'(def Material "{m.name}"(?:(?!def Material).)*?float inputs:opacity = )1\b',
+                              rf'\g<1>{alpha:.2f}', text, count=1, flags=re.S)
+            assert n == 1, m.name
     text = text.replace('token inputs:varname = "st"', 'string inputs:varname = "st"')
     open(usda, 'w').write(text)
 
