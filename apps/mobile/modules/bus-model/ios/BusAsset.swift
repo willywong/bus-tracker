@@ -2,79 +2,91 @@ import Combine
 import RealityKit
 import UIKit
 
-/// The bus model, loaded once and cloned per view (clones share meshes and
-/// textures), plus the textures the app draws itself: the headsign and the
-/// soft contact shadow under the bus.
+/// Which bus the app draws: the MRT feeder bus on MRT feeder routes, the
+/// rapidKL city bus (which also works the LRT feeders) everywhere else.
+enum BusKind: String, CaseIterable, Sendable {
+  case feeder
+  case rapid
+
+  /// The asset names, as the build scripts write them.
+  var model: String { self == .feeder ? "RapidBus" : "RapidKLBus" }
+  var sprite: String { self == .feeder ? "map-bus" : "map-rapid" }
+  var icon: String { self == .feeder ? "pill-bus" : "pill-rapid" }
+}
+
+/// The bus models, each loaded once and cloned per view (clones share meshes
+/// and textures), plus the textures the app draws itself: the headsign and
+/// the soft contact shadow under the bus.
 ///
-/// The asset follows the contract in `scripts/build-feeder-bus.py`: Y-up,
+/// Each asset follows the contract in `scripts/build-feeder-bus.py`: Y-up,
 /// metres, ground at y = 0, centred, front facing +Z, and a quad named
 /// `Headsign` for the destination sign.
 @MainActor
 enum BusAsset {
-  private static var template: Entity?
-  private static var waiting: [(Entity?) -> Void] = []
-  private static var request: AnyCancellable?
-  private static var failed = false
+  private static var templates: [BusKind: Entity] = [:]
+  private static var waiting: [BusKind: [(Entity?) -> Void]] = [:]
+  private static var requests: [BusKind: AnyCancellable] = [:]
+  private static var failed: Set<BusKind> = []
 
   /// Calls back on the main thread with a fresh clone, or nil if the asset is
   /// missing or unreadable (the view then stays plain paper).
-  static func load(_ done: @escaping (Entity?) -> Void) {
-    if let template {
+  static func load(_ kind: BusKind = .feeder, _ done: @escaping (Entity?) -> Void) {
+    if let template = templates[kind] {
       done(template.clone(recursive: true))
       return
     }
-    if failed {
+    if failed.contains(kind) {
       done(nil)
       return
     }
-    waiting.append(done)
-    guard request == nil else { return }
-    guard let url = assetURL() else {
-      finish(nil)
+    waiting[kind, default: []].append(done)
+    guard requests[kind] == nil else { return }
+    guard let url = assetURL(kind) else {
+      finish(kind, nil)
       return
     }
-    request = Entity.loadAsync(contentsOf: url).sink(
+    requests[kind] = Entity.loadAsync(contentsOf: url).sink(
       receiveCompletion: { completion in
         if case .failure = completion {
-          MainActor.assumeIsolated { finish(nil) }
+          MainActor.assumeIsolated { finish(kind, nil) }
         }
       },
       receiveValue: { entity in
-        MainActor.assumeIsolated { finish(entity) }
+        MainActor.assumeIsolated { finish(kind, entity) }
       }
     )
   }
 
-  private static func finish(_ entity: Entity?) {
-    template = entity
-    failed = entity == nil
-    request = nil
-    let callbacks = waiting
-    waiting = []
+  private static func finish(_ kind: BusKind, _ entity: Entity?) {
+    templates[kind] = entity
+    if entity == nil { failed.insert(kind) }
+    requests[kind] = nil
+    let callbacks = waiting[kind] ?? []
+    waiting[kind] = nil
     for callback in callbacks {
       callback(entity?.clone(recursive: true))
     }
   }
 
-  /// The bundled model. It is gitignored until its author agrees, so a fresh
-  /// clone builds without it; JS then shows nothing (`hasModel`).
-  nonisolated static func assetURL() -> URL? {
-    assets()?.url(forResource: "RapidBus", withExtension: "usdz")
+  /// The bundled model; nil in a build without it, and JS then shows nothing
+  /// (`hasModel`).
+  nonisolated static func assetURL(_ kind: BusKind = .feeder) -> URL? {
+    assets()?.url(forResource: kind.model, withExtension: "usdz")
   }
 
   /// The map's tiny buses rendered from the model, one per 15° of heading
   /// (frame k heads k × 15° clockwise from north); empty unless all are there.
-  nonisolated static func mapSpriteURLs() -> [URL] {
+  nonisolated static func mapSpriteURLs(_ kind: BusKind = .feeder) -> [URL] {
     guard let assets = assets() else { return [] }
     let urls = (0..<24).compactMap {
-      assets.url(forResource: String(format: "map-bus-%02d", $0), withExtension: "png")
+      assets.url(forResource: String(format: "\(kind.sprite)-%02d", $0), withExtension: "png")
     }
     return urls.count == 24 ? urls : []
   }
 
   /// The bus pill's icon: the bus three-quarters on, 44 × 36 pt.
-  nonisolated static func pillIconURL() -> URL? {
-    assets()?.url(forResource: "pill-bus", withExtension: "png")
+  nonisolated static func pillIconURL(_ kind: BusKind = .feeder) -> URL? {
+    assets()?.url(forResource: kind.icon, withExtension: "png")
   }
 
   nonisolated private static func assets() -> Bundle? {

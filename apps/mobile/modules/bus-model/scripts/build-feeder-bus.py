@@ -66,6 +66,8 @@ OFF_WINDOWS = [(1.55, 3.05), (3.05, 4.50), (4.50, 6.00), (6.00, 7.60), (7.60, 9.
 DRIVER_WINDOW = (0.30, 1.55, 1.00)  # from d, to d, sill
 FRONT_DOOR, MIDDLE_DOOR = (0.55, 1.50), (4.50, 5.85)
 DOOR_TOP = 2.55
+WINDSCREEN = (1.15, 2.48)  # bottom, top
+REAR_WINDOW = (1.06, 2.10, 2.82)  # half width, bottom, top
 MIDDLE_FLOOR_STEP = 5.90  # floor rises behind the middle door
 FLOOR_LOW, FLOOR_HIGH = 0.34, 0.64
 
@@ -538,8 +540,9 @@ def build_body(M):
         for d0, d1 in (FRONT_DOOR, MIDDLE_DOOR):
             side_box(bm, 1, d0, d1, BODY_Y0 - 0.1, DOOR_TOP)
         # Windscreen and rear window.
-        add_box(bm, -HW + 0.09, HW - 0.09, 1.16, 2.47, HZ - 0.35, HZ + 0.3)
-        add_box(bm, -1.06, 1.06, 2.10, 2.82, -HZ - 0.3, -HZ + 0.3)
+        (y0, y1), (rx, ry0, ry1) = WINDSCREEN, REAR_WINDOW
+        add_box(bm, -HW + 0.09, HW - 0.09, y0 + 0.01, y1 - 0.01, HZ - 0.35, HZ + 0.3)
+        add_box(bm, -rx, rx, ry0, ry1, -HZ - 0.3, -HZ + 0.3)
 
     apply_boolean(body, cutter('openings', openings, M['Trim']))
 
@@ -597,12 +600,13 @@ def build_glass(M):
     pane(-1, d0 + 0.04, d1 - 0.03, sill + 0.02, GLASS_TOP - 0.02)
     # Rear window.
     zr = -HZ + 0.012
-    add_quad(bm, [(1.07, 2.09, zr), (-1.07, 2.09, zr), (-1.07, 2.83, zr), (1.07, 2.83, zr)])
+    rx, ry0, ry1 = REAR_WINDOW[0] + 0.01, REAR_WINDOW[1] - 0.01, REAR_WINDOW[2] + 0.01
+    add_quad(bm, [(rx, ry0, zr), (-rx, ry0, zr), (-rx, ry1, zr), (rx, ry1, zr)])
     side_glass = new_object('Glass', bm, [M['Glass']])
 
     bm = bmesh.new()
     for x0, x1 in ((-HW + 0.08, -0.025), (0.025, HW - 0.08)):
-        y0, y1 = 1.15, 2.48
+        y0, y1 = WINDSCREEN
         z0, z1 = front_z(y0) - 0.015, front_z(y1) - 0.015
         add_quad(bm, [(x0, y0, z0), (x1, y0, z0), (x1, y1, z1), (x0, y1, z1)])
     windscreen = new_object('Windscreen', bm, [M['Windscreen']])
@@ -631,7 +635,8 @@ def build_doors(M):
             p.flip()
     # Mullion down the middle of the windscreen.
     bm = bmesh.new()
-    add_box(bm, -0.025, 0.025, 1.15, 2.48, front_z(1.8) - 0.03, front_z(1.8) + 0.002)
+    y0, y1 = WINDSCREEN
+    add_box(bm, -0.025, 0.025, y0, y1, front_z((y0 + y1) / 2) - 0.03, front_z((y0 + y1) / 2) + 0.002)
     new_object('Mullion', bm, [M['Trim']])
 
 
@@ -830,6 +835,10 @@ def smooth(ob, angle=35):
 
 # MARK: Export
 
+# What the app looks the asset up by (BusAsset.swift): the model, the map
+# sprites' prefix and the pill's icon.
+MODEL_NAME, SPRITE_NAME, ICON_NAME = 'RapidBus', 'map-bus', 'pill-bus'
+
 
 def run(*args, **kw):
     subprocess.run(args, check=True, **kw)
@@ -883,13 +892,13 @@ def export(out_dir):
     text = text.replace('token inputs:varname = "st"', 'string inputs:varname = "st"')
     open(usda, 'w').write(text)
 
-    usdc = os.path.join(unpacked, 'RapidBus.usdc')
+    usdc = os.path.join(unpacked, f'{MODEL_NAME}.usdc')
     run('usdcat', usda, '--out', usdc)
     textures = [n for n in names if not n.endswith(('.usdc', '.usda'))]
-    out = os.path.join(out_dir, 'RapidBus.usdz')
+    out = os.path.join(out_dir, f'{MODEL_NAME}.usdz')
     if os.path.exists(out):
         os.remove(out)
-    run('usdzip', os.path.abspath(out), 'RapidBus.usdc', *textures, cwd=unpacked)
+    run('usdzip', os.path.abspath(out), f'{MODEL_NAME}.usdc', *textures, cwd=unpacked)
     shutil.rmtree(work)
     return os.path.abspath(out)
 
@@ -971,7 +980,7 @@ def render_map_sprites(usdz, out_dir):
         frame = os.path.join(work, f'heading{k:02d}.png')
         record(stage_text(180 - k * 360 / SPRITE_FRAMES, SPRITE_ELEVATION, 1.5, span, span, -35, -55, 0.9),
                usdz, frame, SPRITE_PX * 3)
-        run('sips', '-Z', str(SPRITE_PX), frame, '--out', os.path.join(out_dir, f'map-bus-{k:02d}.png'),
+        run('sips', '-Z', str(SPRITE_PX), frame, '--out', os.path.join(out_dir, f'{SPRITE_NAME}-{k:02d}.png'),
             stdout=subprocess.DEVNULL)
     shutil.rmtree(work)
 
@@ -991,7 +1000,7 @@ def render_icon(usdz, out_dir):
     frame = os.path.join(work, 'icon.png')
     record(stage_text(ICON_YAW, ICON_ELEVATION, 1.4, ICON_SPAN_M * 10, ICON_SPAN_M * 10 * h / w, 35, -40, 1),
            usdz, frame, w * 9)
-    run('sips', '-z', str(h * 3), str(w * 3), frame, '--out', os.path.join(out_dir, 'pill-bus.png'),
+    run('sips', '-z', str(h * 3), str(w * 3), frame, '--out', os.path.join(out_dir, f'{ICON_NAME}.png'),
         stdout=subprocess.DEVNULL)
     shutil.rmtree(work)
 

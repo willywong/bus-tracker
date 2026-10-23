@@ -40,9 +40,13 @@ yarn-error.*
 /ios
 /android
 
-# The bus model and its sprites are ours (scripts/build-feeder-bus.py) and
-# committed; the reference photos beside them are others' and stay local.
+# The bus models and their sprites are ours (scripts/build-feeder-bus.py,
+# scripts/build-lrt-bus.py) and committed; the reference photos beside them
+# are others' and stay local.
 /modules/bus-model/ios/Assets/*
 !/modules/bus-model/ios/Assets/RapidBus.usdz
 !/modules/bus-model/ios/Assets/map-bus-*.png
 !/modules/bus-model/ios/Assets/pill-bus.png
+!/modules/bus-model/ios/Assets/RapidKLBus.usdz
+!/modules/bus-model/ios/Assets/map-rapid-*.png
+!/modules/bus-model/ios/Assets/pill-rapid.png
