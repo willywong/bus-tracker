@@ -251,4 +251,5 @@ test('placeName drops the stop code and feeder marker, never the whole name', ()
   assert.equal(placeName('(m) KL2147 Midvalley North Court'), 'Midvalley North Court');
   assert.equal(placeName('Komersial Seksyen 17/45'), 'Komersial Seksyen 17/45');
   assert.equal(placeName('PJ210'), 'PJ210');
+  assert.equal(placeName('KL SENTRAL'), 'KL Sentral');
 });

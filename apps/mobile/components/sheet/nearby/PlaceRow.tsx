@@ -1,5 +1,5 @@
 import { SymbolView, type SFSymbol } from 'expo-symbols';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { distanceText, type LineChip, type NearbyPlace } from '@/components/sheet/nearby/model';
 import { RowButton } from '@/components/ui/RowButton';
@@ -11,6 +11,10 @@ const LEAD = 34;
 export const PLACE_ROW_INSET = LEAD + space.sm;
 /** At most this many line chips lead a station row; the rest are counted. */
 const MAX_CHIPS = 2;
+/** The time on the right grows with Dynamic Type up to this, so the name keeps room at AX sizes. */
+export const TIME_MAX_SCALE = 1.6;
+/** The first accessibility text size: names may take a second line from here. */
+export const AX_FONT_SCALE = 1.6;
 
 /**
  * One place around you (plan 17/02). A bus stop: a disc with the bus glyph,
@@ -19,6 +23,7 @@ const MAX_CHIPS = 2;
  * come. One VoiceOver element reading `spoken`.
  */
 export function PlaceRow({ place, onPress }: { place: NearbyPlace; onPress: () => void }) {
+  const { fontScale } = useWindowDimensions();
   const caption =
     place.kind === 'stop'
       ? [place.isYourStop ? 'Your stop' : null, distanceText(place.distanceM), ...place.routes]
@@ -34,7 +39,7 @@ export function PlaceRow({ place, onPress }: { place: NearbyPlace; onPress: () =
     >
       {place.kind === 'stop' ? <Disc icon="bus" /> : <Chips lines={place.lines} />}
       <View style={styles.titles}>
-        <Text style={styles.name} numberOfLines={1}>
+        <Text style={styles.name} numberOfLines={fontScale >= AX_FONT_SCALE ? 2 : 1}>
           {place.name}
         </Text>
         <Text style={styles.caption} numberOfLines={1}>
@@ -43,7 +48,7 @@ export function PlaceRow({ place, onPress }: { place: NearbyPlace; onPress: () =
       </View>
       <View style={styles.next}>
         {place.kind === 'stop' && place.live ? <View style={styles.liveDot} /> : null}
-        <Text style={styles.nextText} numberOfLines={1}>
+        <Text style={styles.nextText} numberOfLines={1} maxFontSizeMultiplier={TIME_MAX_SCALE}>
           {place.next}
         </Text>
       </View>

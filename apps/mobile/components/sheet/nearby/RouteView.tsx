@@ -14,11 +14,12 @@ import {
 import { SymbolView } from 'expo-symbols';
 import { useRouter } from 'expo-router';
 import { Fragment, useEffect, useMemo, useState } from 'react';
-import { Alert, StyleSheet, Text, View } from 'react-native';
+import { Alert, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import Animated, { FadeIn, useReducedMotion } from 'react-native-reanimated';
 
 import { EmptyState } from '@/components/sheet/EmptyState';
 import { distanceText, isTomorrow, routePreview, type RoutePreview, type RoutePreviewStop } from '@/components/sheet/nearby/model';
+import { AX_FONT_SCALE } from '@/components/sheet/nearby/PlaceRow';
 import { openWalkingDirections } from '@/components/sheet/nearby/TripView';
 import { trackPlan } from '@/components/sheet/nearby/track';
 import { formatClockHHMM } from '@/components/tracker/logic';
@@ -63,6 +64,8 @@ export function RouteView({
   const nearby = useNearby();
   const settings = useSettings();
   const router = useRouter();
+  // At accessibility sizes the two buttons stack, full width, so their labels fit.
+  const stacked = useWindowDimensions().fontScale >= AX_FONT_SCALE;
   const { network } = useTransitNetwork();
   const now = useNow();
 
@@ -140,13 +143,14 @@ export function RouteView({
         <Countdown preview={preview} now={now} stopsAway={stopsAway} />
       </View>
       <SheetBody peek={peek}>
-        <View style={styles.actions}>
+        <View style={stacked ? styles.actionsStacked : styles.actions}>
           <ActionButton
             label="Track this route"
             icon="plus"
             filled
             hint={`Makes this your route at ${preview.fromStopName}`}
             scheme={scheme}
+            stacked={stacked}
             onPress={track}
           />
           <ActionButton
@@ -155,6 +159,7 @@ export function RouteView({
             filled={false}
             hint={`Opens walking directions to ${preview.fromStopName} in Apple Maps`}
             scheme={scheme}
+            stacked={stacked}
             onPress={() => openWalkingDirections({ lat: yours.lat, lng: yours.lng })}
           />
         </View>
@@ -324,6 +329,7 @@ function ActionButton({
   filled,
   hint,
   scheme,
+  stacked,
   onPress,
 }: {
   label: string;
@@ -331,11 +337,12 @@ function ActionButton({
   filled: boolean;
   hint: string;
   scheme: 'light' | 'dark';
+  stacked: boolean;
   onPress: () => void;
 }) {
   const ink = pick(hex.ink, scheme);
   return (
-    <Host matchContents={{ vertical: true }} style={styles.action}>
+    <Host matchContents={{ vertical: true }} style={stacked ? styles.actionStacked : styles.action}>
       <Button
         onPress={onPress}
         modifiers={[
@@ -490,6 +497,12 @@ const styles = StyleSheet.create({
   },
   action: {
     flex: 1,
+  },
+  actionsStacked: {
+    gap: space.sm,
+  },
+  actionStacked: {
+    alignSelf: 'stretch',
   },
   stopRow: {
     flexDirection: 'row',

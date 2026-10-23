@@ -2,6 +2,7 @@ import { SymbolView } from 'expo-symbols';
 import { StyleSheet, Text, View } from 'react-native';
 
 import type { StopRouteRow } from '@/components/sheet/nearby/model';
+import { TIME_MAX_SCALE } from '@/components/sheet/nearby/PlaceRow';
 import { RouteBadge } from '@/components/trip/SheetHeader';
 import { RowButton } from '@/components/ui/RowButton';
 import { color, space, type } from '@/theme/design';
@@ -54,7 +55,7 @@ export function StopRouteRowView({
       </View>
       <View style={styles.next}>
         {live ? <View style={styles.liveDot} /> : null}
-        <Text style={[styles.nextText, row.ended && styles.ended]} numberOfLines={1}>
+        <Text style={[styles.nextText, row.ended && styles.ended]} numberOfLines={1} maxFontSizeMultiplier={TIME_MAX_SCALE}>
           {next}
         </Text>
       </View>

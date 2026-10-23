@@ -88,6 +88,8 @@ const styles = StyleSheet.create({
   },
   titleRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    columnGap: space.sm,
     alignItems: 'baseline',
     justifyContent: 'space-between',
     paddingTop: space.xs,

@@ -13,6 +13,7 @@ const ACRONYMS = new Set([
   'ktm',
   'brt',
   'erl',
+  'kl',
   'klia',
   'ttdi',
 ]);

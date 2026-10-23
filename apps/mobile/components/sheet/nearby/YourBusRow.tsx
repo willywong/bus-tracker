@@ -1,8 +1,9 @@
 import { haversineMeters, type LatLng } from '@bus-tracker/shared';
 import { SymbolView } from 'expo-symbols';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { distanceText } from '@/components/sheet/nearby/model';
+import { AX_FONT_SCALE, TIME_MAX_SCALE } from '@/components/sheet/nearby/PlaceRow';
 import { SourceMark } from '@/components/trip/Hero';
 import { RouteBadge } from '@/components/trip/SheetHeader';
 import { RowButton } from '@/components/ui/RowButton';
@@ -29,6 +30,7 @@ export function YourBusRow({
 }) {
   const trip = useTrip();
   const settings = useSettings();
+  const { fontScale } = useWindowDimensions();
   const { model } = trip;
 
   if (settings.preferredRouteCode == null || model.state === 'empty') {
@@ -69,26 +71,38 @@ export function YourBusRow({
     .filter(Boolean)
     .join(', ');
 
+  // From the first accessibility size the stop name takes its own line
+  // under the badge and countdown.
+  const stacked = fontScale >= AX_FONT_SCALE;
+  const titles = (
+    <View style={stacked ? styles.titlesStacked : styles.titles}>
+      <Text style={styles.title} numberOfLines={stacked ? 2 : 1}>
+        {stopName}
+      </Text>
+      <Text style={styles.caption} numberOfLines={1}>
+        {caption}
+      </Text>
+    </View>
+  );
   return (
-    <RowButton onPress={onOpen} style={styles.row} accessibilityLabel={spoken} accessibilityHint="Shows your trip">
+    <RowButton
+      onPress={onOpen}
+      style={[styles.row, stacked && styles.rowStacked]}
+      accessibilityLabel={spoken}
+      accessibilityHint="Shows your trip"
+    >
       <RouteBadge code={trip.routeCode} />
-      <View style={styles.titles}>
-        <Text style={styles.title} numberOfLines={1}>
-          {stopName}
-        </Text>
-        <Text style={styles.caption} numberOfLines={1}>
-          {caption}
-        </Text>
-      </View>
+      {stacked ? <View style={styles.spacer} /> : titles}
       {model.compact ? (
         <View style={styles.countdown}>
           <SourceMark source={model.source} size={11} />
-          <Text style={styles.compact} numberOfLines={1}>
+          <Text style={styles.compact} numberOfLines={1} maxFontSizeMultiplier={TIME_MAX_SCALE}>
             {model.compact}
           </Text>
         </View>
       ) : null}
       <SymbolView name="chevron.right" size={13} weight="semibold" tintColor={color.tertiaryLabel} />
+      {stacked ? titles : null}
     </RowButton>
   );
 }
@@ -113,8 +127,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  rowStacked: {
+    flexWrap: 'wrap',
+  },
+  spacer: {
+    flex: 1,
+  },
   titles: {
     flex: 1,
+    gap: 2,
+  },
+  titlesStacked: {
+    width: '100%',
     gap: 2,
   },
   title: {
