@@ -313,12 +313,12 @@ export default function TripSheet() {
               onBack={nearby.pop}
               backLabel="Back to around you"
             />
-            <TripView peek={peek} scheme={scheme} />
+            <TripView scheme={scheme} />
           </>
         ) : nearbyView?.kind === 'stop' ? (
-          <StopView view={nearbyView} peek={peek} scheme={scheme} />
+          <StopView view={nearbyView} scheme={scheme} />
         ) : nearbyView?.kind === 'route' ? (
-          <RouteView view={nearbyView} peek={peek} scheme={scheme} />
+          <RouteView view={nearbyView} scheme={scheme} />
         ) : section === 'plan' ? (
           <PlanSection peek={peek} scheme={scheme} />
         ) : section === 'saved' ? (

@@ -8,13 +8,12 @@ import { formatClockHHMM } from '@/components/tracker/logic';
 import { Connections } from '@/components/trip/Connections';
 import { BusPosition } from '@/components/trip/BusPosition';
 import { HeroBlock } from '@/components/trip/Hero';
-import { mins, stopsAwayLabel, type TripState } from '@/components/trip/model';
+import { mins, type TripState } from '@/components/trip/model';
 import { EmptyState } from '@/components/sheet/EmptyState';
 import { DataSources } from '@/components/trip/DataSources';
 import { TripRows } from '@/components/trip/Notes';
 import { tripStatusItem, tripWarnings, WarningBadges } from '@/components/trip/Warnings';
 import { AllStopsButton, OnTheWay } from '@/components/trip/OnTheWay';
-import { PeekCard, TripPeekAction } from '@/components/trip/PeekCard';
 import { PrimaryAction } from '@/components/trip/PrimaryAction';
 import { Hairline, LinkRow, ROW_ICON_INSET, ToggleRow } from '@/components/trip/Rows';
 import { Section, SECTION_RULE, SheetBody } from '@/components/trip/SheetBody';
@@ -29,24 +28,19 @@ import { useTrip } from '@/state/TripContext';
 import { color, MARGIN, motion, space, type } from '@/theme/design';
 
 /**
- * Your tracked bus, in full (Nearby's trip view, plan 17/02). Peek shows the
- * header row and the peek card; glance the thin hero number, the status
- * line, "Then" and notes, and one action; large adds the approach, today's
- * times, rail nearby and the trip options. With no route yet it invites you
- * to pick one.
+ * Your tracked bus, in full (Nearby's trip view, plan 17/02): the thin hero
+ * number, the status line, "Then" and notes, and one action; then the
+ * approach, today's times, rail nearby and the trip options. Every detent
+ * shows the same column, cut by the sheet's edge, so at peek the rows under
+ * the hero show there is more above the fold. With no route yet it invites
+ * you to pick one.
  */
-export function TripView({ peek, scheme }: { peek: boolean; scheme: 'light' | 'dark' }) {
+export function TripView({ scheme }: { scheme: 'light' | 'dark' }) {
   const trip = useTrip();
   const settings = useSettings();
   const router = useRouter();
   const ride = useRide();
   const { model } = trip;
-  // The live dot leads the capsule beside the number, then any warnings.
-  const statusItem = tripStatusItem(model);
-  const peekWarnings = [
-    ...(statusItem ? [statusItem] : []),
-    ...tripWarnings(model, settings.walkMinutes),
-  ];
   const userStop = trip.route?.userStop ?? null;
   const stopPoint = useMemo(
     () => (userStop ? { lat: userStop.stop_lat, lng: userStop.stop_lon } : null),
@@ -100,61 +94,18 @@ export function TripView({ peek, scheme }: { peek: boolean; scheme: 'light' | 'd
     trip.journey.busStop != null;
   const hasLastBus = model.notes.some((n) => n.id === 'last-bus');
 
-  const peekHasAction = model.action.kind !== 'tight' && model.action.kind !== 'none';
-  const stopsAhead = trip.journey.stopsAhead;
-  const peekTrailing =
-    !showJourney || !model.sourceLine.arrives || !trip.eta.primaryArrival
-      ? null
-      : peekHasAction
-        ? { label: 'Arrives', value: formatClockHHMM(trip.eta.primaryArrival.epochMs) }
-        : stopsAhead != null
-          ? { label: '', value: stopsAwayLabel(stopsAhead) }
-          : null;
-
   return (
     <>
       <SheetHeader
         routeCode={trip.routeCode}
         title={trip.stopName}
-        peek={peek}
-        status={model.state === 'arrival' || model.state === 'before-service' ? model.status : null}
+        peek={false}
+        status={null}
         source={model.source}
         compact={model.hero}
-        peekContent={
-          <PeekCard
-            hero={model.hero}
-            source={model.source}
-            liveMark={false}
-            stopsAhead={showJourney ? trip.journey.stopsAhead : null}
-            aside={model.sourceLine.arrives ?? model.detail}
-            accessory={
-              peekWarnings.length > 0 ? (
-                <WarningBadges items={peekWarnings} onPress={() => router.push('/warnings')} />
-              ) : null
-            }
-            action={
-              // "Too soon" is the walker in the warnings capsule above, so it
-              // has no text of its own here.
-              model.action.kind !== 'tight' ? (
-                <TripPeekAction
-                  action={model.action}
-                  walkMinutes={settings.walkMinutes}
-                  onFollow={trip.follow}
-                  onUnfollow={trip.unfollow}
-                  onStartWalking={trip.startWalking}
-                  onCancelWalking={trip.cancelWalking}
-                />
-              ) : null
-            }
-            // Later buses live in the Today grid. While the rail holds the
-            // top row, "Arrives …" moves here so the clock time isn't lost;
-            // with no button, it takes the left and this says how far.
-            trailing={peekTrailing}
-          />
-        }
       />
 
-      <SheetBody peek={peek}>
+      <SheetBody peek={false}>
         <StateBody scheme={scheme} />
 
         <TripRows

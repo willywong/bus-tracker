@@ -49,16 +49,14 @@ const RING_YOURS = 14;
 /**
  * One route from a stop around you, previewed (plan 17/04): the scheduled
  * countdown at your stop, live when one of its buses is on the way, then
- * Track this route and Walk there, and its stops from yours onward. Peek
- * shows the header and the countdown; the rest waits in the body.
+ * Track this route and Walk there, and its stops from yours onward. Every
+ * detent shows the whole column, cut by the sheet's edge.
  */
 export function RouteView({
   view,
-  peek,
   scheme,
 }: {
   view: Extract<NearbyView, { kind: 'route' }>;
-  peek: boolean;
   scheme: 'light' | 'dark';
 }) {
   const nearby = useNearby();
@@ -142,7 +140,7 @@ export function RouteView({
       <View style={styles.countdown}>
         <Countdown preview={preview} now={now} stopsAway={stopsAway} />
       </View>
-      <SheetBody peek={peek}>
+      <SheetBody peek={false}>
         <View style={stacked ? styles.actionsStacked : styles.actions}>
           <ActionButton
             label="Track this route"

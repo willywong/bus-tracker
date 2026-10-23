@@ -33,16 +33,14 @@ type StopPlace = Extract<NearbyPlace, { kind: 'stop' }>;
  * A bus stop around you, in the sheet (plan 17/03): every route and
  * direction boarding there, soonest first, with the next time and two more;
  * finished ones last. A route opens its preview; walking directions sit
- * under the list. Peek shows the header and the soonest route, as the list
- * shows your bus and the nearest place.
+ * under the list. Every detent shows the whole list, cut by the sheet's
+ * edge, as the Nearby list is.
  */
 export function StopView({
   view,
-  peek,
   scheme,
 }: {
   view: Extract<NearbyView, { kind: 'stop' }>;
-  peek: boolean;
   scheme: 'light' | 'dark';
 }) {
   const nearby = useNearby();
@@ -86,7 +84,7 @@ export function StopView({
   if (!place) {
     return (
       <View>
-        <DetailHeader title="Bus stop" subtitle={null} peek={peek} onBack={nearby.pop} backLabel="Back to Nearby" />
+        <DetailHeader title="Bus stop" subtitle={null} peek={false} onBack={nearby.pop} backLabel="Back to Nearby" />
         <EmptyState
           icon="mappin.slash"
           title="Stop not found"
@@ -122,7 +120,7 @@ export function StopView({
 
   return (
     <View>
-      <DetailHeader title={place.name} subtitle={subtitle} peek={peek} onBack={nearby.pop} backLabel="Back to Nearby" />
+      <DetailHeader title={place.name} subtitle={subtitle} peek={false} onBack={nearby.pop} backLabel="Back to Nearby" />
       <View style={styles.top}>
         <View style={styles.titleRow}>
           <SectionLabel>Routes</SectionLabel>
@@ -137,7 +135,7 @@ export function StopView({
           />
         )}
       </View>
-      <SheetBody peek={peek}>
+      <SheetBody peek={false}>
         {rest.length > 0 ? (
           <View>
             {rest.map((face) => (
