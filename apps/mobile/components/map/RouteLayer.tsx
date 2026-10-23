@@ -35,9 +35,8 @@ interface RouteLayerProps {
   paper: string;
   /** The stop open in the sheet, drawn solid. */
   selectedStopId?: string | null;
+  /** A stop tapped, your own included: it opens in the sheet. */
   onStopPress?: (stopId: string) => void;
-  /** Your own stop: tapping it goes back to the trip. */
-  onUserStopPress?: () => void;
   /** Zoomed in to street level: stops and stations are drawn as little buildings. */
   close?: boolean;
   /** The MRT station the feeder ends at, drawn as a landmark; null when it isn't one. */
@@ -102,7 +101,6 @@ export const RouteLayer = memo(function RouteLayer({
   paper,
   selectedStopId = null,
   onStopPress,
-  onUserStopPress,
   close = false,
   terminus = null,
   terminusHidden = false,
@@ -249,7 +247,7 @@ export const RouteLayer = memo(function RouteLayer({
           coordinate={{ latitude: userStop.stop_lat, longitude: userStop.stop_lon }}
           zIndex={2}
           displayPriority="required"
-          onPress={onUserStopPress}
+          onPress={onStopPress ? () => onStopPress(userStop.stop_id) : undefined}
           accessibilityLabel={`Your stop: ${formatStopName(userStop.stop_name)}`}
         >
           {yourStop ? (
@@ -258,6 +256,7 @@ export const RouteLayer = memo(function RouteLayer({
               size={YOUR_STOP}
               below={LABEL_BAND}
               width={LABELLED_WIDTH}
+              halo={userStop.stop_id === selectedStopId ? ink : null}
             >
               <View style={[styles.chip, { backgroundColor: paper, borderColor: `${ink}26` }]}>
                 <Text

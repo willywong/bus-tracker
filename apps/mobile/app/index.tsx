@@ -481,7 +481,6 @@ export default function MapScreen() {
     (stopId: string) => select({ kind: 'stop', stopId }),
     [select],
   );
-  const clearSelection = useCallback(() => select(null), [select]);
   const selectBus = useCallback(
     (vehicleId: string) => select({ kind: 'bus', vehicleId }),
     [select],
@@ -533,7 +532,12 @@ export default function MapScreen() {
         coords.push({ latitude: ghost.coord.lat, longitude: ghost.coord.lng });
       }
 
-      let target: Coord[] = coords.length > 0 ? coords : polyline;
+      // Your own stop, selected, is one point, not two: framed like any single stop.
+      const unique = coords.filter(
+        (c, i) =>
+          coords.findIndex((d) => d.latitude === c.latitude && d.longitude === c.longitude) === i,
+      );
+      let target: Coord[] = unique.length > 0 ? unique : polyline;
       if (target.length === 1) {
         const c = target[0];
         target = [
@@ -586,13 +590,15 @@ export default function MapScreen() {
     return () => clearTimeout(t);
   }, [route]);
 
-  // Re-frame when the tracked bus or the sheet height changes — unless the
-  // user has taken over the camera. A preview holds still (its own fit is below).
+  // Re-frame when the tracked bus or the sheet height changes (a detent, or
+  // the sheet opening over the bus bar, e.g. for a stop tapped on the map) —
+  // unless the user has taken over the camera. A preview holds still (its
+  // own fit is below).
   useEffect(() => {
     if (userPanned || itOpenRef.current || previewShownRef.current) return;
     if (goOnlyRef.current) frameGoRef.current(true);
     else frameRef.current(true);
-  }, [primaryVehicleId, trip.detent, userPanned]);
+  }, [primaryVehicleId, trip.detent, userPanned, sheetUp]);
 
   // A new selection (or going back) always re-frames, even after a pan.
   const lastSelection = useRef(selectionKey);
@@ -916,7 +922,6 @@ export default function MapScreen() {
             paper={mapPaper}
             selectedStopId={selectedStopId}
             onStopPress={selectStop}
-            onUserStopPress={clearSelection}
             close={close}
             terminus={terminus}
             terminusHidden={zoomBand < 2}
