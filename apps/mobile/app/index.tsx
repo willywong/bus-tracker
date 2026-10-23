@@ -296,16 +296,22 @@ export default function MapScreen() {
   const nearbyNav = useRef(nearby);
   nearbyNav.current = nearby;
   const popNearby = useCallback(() => nearbyNav.current.pop(), []);
-  const openPlace = useCallback(
-    (place: NearbyPlace) => {
-      if (place.kind === 'stop') nearbyNav.current.push({ kind: 'stop', key: place.key });
-      else router.push({ pathname: '/station', params: { station: place.stationId } });
-    },
-    [router],
+  const openPlace = useCallback((place: NearbyPlace) => {
+    if (place.kind === 'stop') nearbyNav.current.push({ kind: 'stop', key: place.key });
+    else nearbyNav.current.push({ kind: 'station', stationId: place.stationId });
+  }, []);
+  // A station open in Nearby. Its view claims the rail focus, so its lines
+  // show; the camera frames it with you above the trip sheet.
+  const nearbyStationId = nearbyTop.kind === 'station' ? nearbyTop.stationId : null;
+  const nearbyStation = useMemo(
+    () => (nearbyStationId ? (railStationDraws.find((s) => s.id === nearbyStationId) ?? null) : null),
+    [nearbyStationId, railStationDraws],
   );
-  // A stop's view: you, and the stop you'd walk to (its nearest member).
+  // A stop's or station's view: you, and the place you'd walk to (a
+  // stop's nearest member).
   const nearbyHere = nearby.here;
   const walkTo = useMemo(() => {
+    if (nearbyStation) return { at: { lat: nearbyStation.lat, lng: nearbyStation.lng }, name: nearbyStation.name };
     if (nearbyTop.kind !== 'stop' || !network) return null;
     const place = nearby.places?.find((p) => p.key === nearbyTop.key);
     if (place) {
@@ -317,7 +323,7 @@ export default function MapScreen() {
     return s < 0
       ? null
       : { at: { lat: network.stops.lat[s], lng: network.stops.lon[s] }, name: placeName(network.stops.name[s]) };
-  }, [nearbyTop, network, nearby.places]);
+  }, [nearbyTop, nearbyStation, network, nearby.places]);
   const walkShown = walkTo != null && nearbyHere != null && !itShown;
 
   // --- Live bus markers ----------------------------------------------------
@@ -448,14 +454,18 @@ export default function MapScreen() {
   // --- Camera ---------------------------------------------------------------
   // Frames your stop + the bus heading to it (or the selected stop or bus)
   // in the area left visible above the sheet and below the toolbar. An open
-  // station frames the station and your stop above its 0.5 sheet instead.
+  // station frames the station and your stop above its 0.5 sheet instead;
+  // one open in Nearby, the station and you above the trip sheet.
   const focusPoint = focus?.point ?? null;
+  const focusInSheet = focusPoint != null && focus?.stationId === nearbyStationId;
   const frameTrip = useCallback(
     (animated: boolean) => {
       const map = mapRef.current;
       if (!map || (!route && !focusPoint)) return;
       const coords: Coord[] = [];
-      if (route?.userStop) {
+      if (focusInSheet) {
+        if (nearbyHere) coords.push({ latitude: nearbyHere.lat, longitude: nearbyHere.lng });
+      } else if (route?.userStop) {
         coords.push({
           latitude: route.userStop.stop_lat,
           longitude: route.userStop.stop_lon,
@@ -464,7 +474,7 @@ export default function MapScreen() {
       let bottom = sheetHeight + 32;
       if (focusPoint) {
         coords.push({ latitude: focusPoint.lat, longitude: focusPoint.lng });
-        bottom = (windowHeight - insets.top) * STATION_SHEET_DETENT + 32;
+        if (!focusInSheet) bottom = (windowHeight - insets.top) * STATION_SHEET_DETENT + 32;
       } else if (selectedPoint) {
         coords.push({ latitude: selectedPoint.lat, longitude: selectedPoint.lng });
       } else if (primaryPosition) {
@@ -495,6 +505,8 @@ export default function MapScreen() {
     [
       route,
       focusPoint,
+      focusInSheet,
+      nearbyHere,
       primaryPosition,
       selectedPoint,
       ghost.coord,

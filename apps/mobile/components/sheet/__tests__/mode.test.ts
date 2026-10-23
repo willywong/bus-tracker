@@ -19,6 +19,7 @@ test('Nearby views map to trip, place and preview', () => {
   const off = { go: false, riding: false, detail: false };
   assert.equal(sheetMode({ ...off, nearby: 'trip' }), 'trip');
   assert.equal(sheetMode({ ...off, nearby: 'stop' }), 'place');
+  assert.equal(sheetMode({ ...off, nearby: 'station' }), 'place');
   assert.equal(sheetMode({ ...off, nearby: 'route' }), 'preview');
 });
 

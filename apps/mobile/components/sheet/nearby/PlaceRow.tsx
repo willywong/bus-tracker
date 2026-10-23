@@ -35,7 +35,7 @@ export function PlaceRow({ place, onPress }: { place: NearbyPlace; onPress: () =
       onPress={onPress}
       style={styles.row}
       accessibilityLabel={place.spoken}
-      accessibilityHint={place.kind === 'stop' ? 'Shows its routes' : 'Opens the station'}
+      accessibilityHint={place.kind === 'stop' ? 'Shows its routes' : 'Shows its departures'}
     >
       {place.kind === 'stop' ? <Disc icon="bus" /> : <Chips lines={place.lines} />}
       <View style={styles.titles}>

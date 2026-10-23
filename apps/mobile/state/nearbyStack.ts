@@ -1,6 +1,7 @@
 /**
  * Where you are inside Nearby (plan 17/02): the list of places around you,
- * your bus's full trip view, a bus stop's routes, or a route's preview.
+ * your bus's full trip view, a bus stop's routes, a rail station's boards,
+ * or a route's preview.
  * A stack, so back returns to where you came from. Never persisted: a
  * relaunch starts at the list.
  */
@@ -8,6 +9,8 @@ export type NearbyView =
   | { kind: 'list' }
   | { kind: 'trip' }
   | { kind: 'stop'; key: string }
+  /** `RailStation.id` (slug), as the `/station` sheet's param. */
+  | { kind: 'station'; stationId: string }
   | { kind: 'route'; route: number; pattern: number; fromStopIndex: number };
 
 export type NearbyAction = { type: 'push'; view: NearbyView } | { type: 'pop' } | { type: 'reset' };
@@ -22,6 +25,8 @@ export function viewKey(v: NearbyView): string {
       return v.kind;
     case 'stop':
       return `stop:${v.key}`;
+    case 'station':
+      return `station:${v.stationId}`;
     case 'route':
       return `route:${v.route}:${v.pattern}:${v.fromStopIndex}`;
   }

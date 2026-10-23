@@ -121,6 +121,7 @@ export function DetailHeader({
   peekContent,
   onBack,
   backLabel = 'Back to your trip',
+  accessory,
 }: {
   title: string;
   subtitle: string | null;
@@ -131,6 +132,8 @@ export function DetailHeader({
   onBack: () => void;
   /** VoiceOver label of the back button. */
   backLabel?: string;
+  /** At the row's end, e.g. a station's line badges. */
+  accessory?: ReactNode;
 }) {
   const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
   return (
@@ -160,6 +163,7 @@ export function DetailHeader({
             </Text>
           ) : null}
         </View>
+        {accessory}
       </View>
       <PeekLayer peek={peek} strip={strip} content={peekContent} />
     </View>

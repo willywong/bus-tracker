@@ -32,5 +32,6 @@ test('reset goes back to the list', () => {
 test('view keys tell views apart', () => {
   assert.equal(viewKey({ kind: 'list' }), 'list');
   assert.equal(viewKey(stop), 'stop:stop:kl:1000944');
+  assert.equal(viewKey({ kind: 'station', stationId: 'kj-taman-paramount' }), 'station:kj-taman-paramount');
   assert.notEqual(viewKey(route), viewKey({ ...route, fromStopIndex: 121 } as NearbyView));
 });

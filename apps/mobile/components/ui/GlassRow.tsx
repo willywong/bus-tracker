@@ -47,11 +47,15 @@ export function GlassRow({
       accessibilityHint={accessibilityHint}
     >
       {glass ? (
-        // Tinted with the row fill: on the plain sheet, untinted glass has
-        // nothing to refract and all but disappears.
-        <GlassView glassEffectStyle="regular" isInteractive tintColor={color.fill} style={styles.card}>
-          {content}
-        </GlassView>
+        // On the row fill: on the plain sheet, glass has nothing to refract
+        // and all but disappears. The fill also stands in when UIKit skips
+        // the glass, as it does for glass made in a fully expanded sheet
+        // until the sheet next moves.
+        <View style={[styles.card, styles.solid]}>
+          <GlassView glassEffectStyle="regular" isInteractive>
+            {content}
+          </GlassView>
+        </View>
       ) : (
         <View style={[styles.card, styles.solid, pressed && styles.pressed]}>{content}</View>
       )}

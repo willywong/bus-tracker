@@ -20,7 +20,7 @@ export function sheetMode(s: {
   if (s.riding) return 'ride';
   if (s.detail) return 'detail';
   if (s.nearby === 'trip') return 'trip';
-  if (s.nearby === 'stop') return 'place';
+  if (s.nearby === 'stop' || s.nearby === 'station') return 'place';
   if (s.nearby === 'route') return 'preview';
   return 'sections';
 }

@@ -37,6 +37,7 @@ import { sheetPushIn, sheetPushOut } from '@/components/trip/sheetTransition';
 import { sheetMode } from '@/components/sheet/mode';
 import { NearbySection } from '@/components/sheet/NearbySection';
 import { RouteView } from '@/components/sheet/nearby/RouteView';
+import { StationView } from '@/components/sheet/nearby/StationView';
 import { StopView } from '@/components/sheet/nearby/StopView';
 import { TripView } from '@/components/sheet/nearby/TripView';
 import { PlanSection } from '@/components/sheet/PlanSection';
@@ -286,7 +287,7 @@ export default function TripSheet() {
     );
   }
 
-  // The sections, and Nearby's trip, place and preview views: switching
+  // The sections, and Nearby's trip, stop, station and preview views: switching
   // crossfades the body and scrolls to the top; the sheet keeps its detent.
   // A Nearby view folds away "Where to?" and the picker, so its back header
   // takes the top of the sheet.
@@ -317,6 +318,8 @@ export default function TripSheet() {
           </>
         ) : nearbyView?.kind === 'stop' ? (
           <StopView view={nearbyView} scheme={scheme} />
+        ) : nearbyView?.kind === 'station' ? (
+          <StationView view={nearbyView} scheme={scheme} />
         ) : nearbyView?.kind === 'route' ? (
           <RouteView view={nearbyView} scheme={scheme} />
         ) : section === 'plan' ? (

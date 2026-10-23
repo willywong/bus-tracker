@@ -13,7 +13,7 @@ import { color, MARGIN, space, type } from '@/theme/design';
 /**
  * The Nearby section (plan 17/02): your bus in one row, then the bus stops
  * and stations around you, nearest first. A stop opens its routes in the
- * sheet; a station opens its sheet. Every detent shows the whole list, cut
+ * sheet, a station its boards. Every detent shows the whole list, cut
  * by the sheet's edge.
  */
 export function NearbySection() {
@@ -23,7 +23,7 @@ export function NearbySection() {
 
   const open = (place: NearbyPlace) => {
     if (place.kind === 'stop') nearby.push({ kind: 'stop', key: place.key });
-    else router.push({ pathname: '/station', params: { station: place.stationId } });
+    else nearby.push({ kind: 'station', stationId: place.stationId });
   };
 
   const [first, ...rest] = places ?? [];
