@@ -18,6 +18,7 @@ import Animated, {
   useAnimatedStyle,
   useReducedMotion,
   useSharedValue,
+  withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -48,7 +49,7 @@ import { viewKey } from '@/state/nearbyStack';
 import { usePlanner } from '@/state/PlannerContext';
 import { useRide } from '@/state/RideContext';
 import { useTrip } from '@/state/TripContext';
-import { hex, motion, PEEK_TOP, pick, sheetDetents, space, type DetentIndex } from '@/theme/design';
+import { EASE_OUT, hex, motion, PEEK_TOP, pick, sheetDetents, space, type DetentIndex } from '@/theme/design';
 import { devNow } from '@/utils/devClock';
 
 /** After the map settles, how long before all detents return (the snap must land first). */
@@ -287,7 +288,8 @@ export default function TripSheet() {
 
   // The sections, and Nearby's trip, place and preview views: switching
   // crossfades the body and scrolls to the top; the sheet keeps its detent.
-  // A Nearby view hides the picker, as a detail does.
+  // A Nearby view folds away "Where to?" and the picker, so its back header
+  // takes the top of the sheet.
   const bodyKey = nearbyView && nearbyView.kind !== 'list' ? `nearby:${viewKey(nearbyView)}` : section;
   return (
     <SheetScroll
@@ -297,10 +299,10 @@ export default function TripSheet() {
       swap
       resetKey={bodyKey}
     >
-      {whereTo}
-      {mode === 'sections' ? (
+      <SheetChrome shown={mode === 'sections'}>
+        {whereTo}
         <SectionPicker value={section} onChange={settings.setSheetSection} />
-      ) : null}
+      </SheetChrome>
       <SectionBody key={bodyKey}>
         {nearbyView?.kind === 'trip' ? (
           <>
@@ -342,6 +344,46 @@ function SectionBody({ children }: { children: ReactNode }) {
         {children}
       </Animated.View>
     </LayoutAnimationConfig>
+  );
+}
+
+/**
+ * "Where to?" and the section picker, folding away while a Nearby view is
+ * open and back out on return. The height follows the fold, so the view's
+ * header rises to the top as its body fades in; the chrome fades out in the
+ * first part of the fold. On the UI thread; Reduce Motion swaps.
+ */
+function SheetChrome({ shown, children }: { shown: boolean; children: ReactNode }) {
+  const reduceMotion = useReducedMotion();
+  const natural = useSharedValue(0);
+  const open = useSharedValue(shown ? 1 : 0);
+  useEffect(() => {
+    const to = shown ? 1 : 0;
+    open.set(reduceMotion ? to : withTiming(to, { duration: motion.reposition, easing: EASE_OUT }));
+  }, [shown, reduceMotion, open]);
+  // The content is laid out on its own (absolutely), so its height never
+  // depends on the fold; a Dynamic Type change re-measures it.
+  const style = useAnimatedStyle(() => {
+    const o = open.get();
+    return { height: natural.get() * o, opacity: interpolate(o, [0.5, 1], [0, 1], 'clamp') };
+  });
+  return (
+    <Animated.View
+      style={[styles.chrome, style]}
+      pointerEvents={shown ? 'auto' : 'none'}
+      accessibilityElementsHidden={!shown}
+      importantForAccessibility={shown ? 'auto' : 'no-hide-descendants'}
+    >
+      <View
+        style={styles.chromeContent}
+        onLayout={(e) => {
+          const h = e.nativeEvent.layout.height;
+          if (h > 0) natural.set(h);
+        }}
+      >
+        {children}
+      </View>
+    </Animated.View>
   );
 }
 
@@ -434,6 +476,15 @@ const styles = StyleSheet.create({
   },
   fill: {
     flex: 1,
+  },
+  chrome: {
+    overflow: 'hidden',
+  },
+  chromeContent: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
   },
   // Solid under the grabber, then a short fade.
   topEdge: {
