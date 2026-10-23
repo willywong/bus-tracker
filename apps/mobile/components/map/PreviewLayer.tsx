@@ -105,6 +105,9 @@ export const PreviewLayer = memo(function PreviewLayer({
 
   if (path.length < 2 || (!done && !start)) return null;
   const yours = stops.find((s) => s.yours);
+  // A loop passes a stop twice: one marker each, keyed by the stop.
+  const seen = new Set<number>();
+  const once = stops.filter((s) => !seen.has(s.index) && seen.add(s.index));
 
   return (
     <>
@@ -126,8 +129,8 @@ export const PreviewLayer = memo(function PreviewLayer({
           ))
       )}
       {done
-        ? stops.map((s) =>
-            s.yours ? null : (
+        ? once.map((s) =>
+            s.yours || s.index === yours?.index ? null : (
               <Marker
                 key={`stop-${s.index}`}
                 coordinate={s.coord}
