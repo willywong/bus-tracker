@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 import type { RailStation, TransitNetwork } from '@bus-tracker/shared';
 
-import { buildLocalIndex, lookupLocal, normalizeName, searchLocal } from '../searchIndex';
+import { buildLocalIndex, lookupLocal, normalizeName, searchLocal, searchRoutes } from '../searchIndex';
 
 type StopRow = { id: string; name: string; lat: number; lng: number; station?: number; routes?: number[] };
 
@@ -157,4 +157,122 @@ test('a leading stop code does not hide a name prefix', () => {
   );
   // The code itself still finds it.
   assert.equal(searchLocal(IX, 'kl94', null)[0]?.id, 'kl:4001');
+});
+
+// --- Route codes ---------------------------------------------------------------
+
+/** Mode indices, as `MODES` orders them. */
+const BUS = 0;
+const FEEDER = 1;
+const LRT = 2;
+
+type RouteRow = { label: string; mode: number; longName?: string };
+type PatternRow = { route: number; stops: number[] };
+
+/** Stops on a line of longitude 0.001° (~110 m) apart, routes and patterns over them. */
+function makeRouteNet(stopCount: number, routes: RouteRow[], patterns: PatternRow[]): TransitNetwork {
+  const stopStart: number[] = [];
+  const stopLen: number[] = [];
+  const flat: number[] = [];
+  for (const p of patterns) {
+    stopStart.push(flat.length);
+    stopLen.push(p.stops.length);
+    flat.push(...p.stops);
+  }
+  return {
+    stops: {
+      count: stopCount,
+      id: Array.from({ length: stopCount }, (_, i) => `kl:${i}`),
+      name: Array.from({ length: stopCount }, (_, i) => `STOP ${i}`),
+      lat: Float32Array.from({ length: stopCount }, () => 3.1),
+      lon: Float32Array.from({ length: stopCount }, (_, i) => 101.6 + i * 0.001),
+      station: new Int32Array(stopCount).fill(-1),
+    },
+    routes: {
+      count: routes.length,
+      label: routes.map((r) => r.label),
+      longName: routes.map((r) => r.longName ?? ''),
+      mode: Uint8Array.from(routes.map((r) => r.mode)),
+    },
+    patterns: {
+      count: patterns.length,
+      route: Int32Array.from(patterns.map((p) => p.route)),
+      stopStart: Int32Array.from(stopStart),
+      stopLen: Int32Array.from(stopLen),
+      stops: Int32Array.from(flat),
+    },
+  } as unknown as TransitNetwork;
+}
+
+const ROUTE_NET = makeRouteNet(
+  10,
+  [
+    { label: 'T816', mode: FEEDER, longName: 'Hotel Lisa ~ Pasar Seni' },
+    { label: 'T815', mode: FEEDER },
+    { label: 'T8160', mode: BUS },
+    { label: 'KJ', mode: LRT },
+    { label: '816', mode: BUS },
+    { label: 'T816', mode: BUS },
+  ],
+  [
+    { route: 0, stops: [0, 1, 2, 3] },
+    { route: 0, stops: [3, 2, 1, 0] },
+    { route: 1, stops: [5, 6, 7] },
+    { route: 2, stops: [8, 9] },
+    { route: 3, stops: [0, 9] },
+    { route: 4, stops: [4, 5] },
+    { route: 5, stops: [6, 7] },
+  ],
+);
+
+const at = (s: number) => ({ lat: 3.1, lng: 101.6 + s * 0.001 });
+
+test('routes: a whole code first, then longer codes it begins, then the number alone', () => {
+  assert.deepEqual(
+    searchRoutes(ROUTE_NET, 'T816', null).map((h) => h.label),
+    ['T816', 'T8160'],
+  );
+  assert.deepEqual(
+    searchRoutes(ROUTE_NET, '816', null).map((h) => h.label),
+    ['816', 'T816', 'T8160'],
+  );
+  // Case and spaces don't matter.
+  assert.equal(searchRoutes(ROUTE_NET, ' t 816 ', null)[0]?.label, 'T816');
+});
+
+test('routes: a name search never lists routes, and rail lines are left to their stations', () => {
+  assert.deepEqual(searchRoutes(ROUTE_NET, 'pasar', null), []);
+  assert.deepEqual(searchRoutes(ROUTE_NET, 'kj', null), []);
+  assert.deepEqual(searchRoutes(ROUTE_NET, '', null), []);
+});
+
+test('routes: you board at the nearest stop that is not a last stop, in that direction', () => {
+  // Nearest stop to 3 is 3 itself, but it ends the first pattern: board
+  // the return pattern there.
+  const [hit] = searchRoutes(ROUTE_NET, 't816', at(3));
+  assert.equal(hit.pattern, 1);
+  assert.equal(hit.fromStopIndex, 3);
+  assert.equal(hit.towards, 'Stop 0');
+  assert.equal(hit.stopName, 'Stop 3');
+  assert.equal(Math.round(hit.meters ?? -1), 0);
+  assert.equal(hit.longName, 'Hotel Lisa ~ Pasar Seni');
+});
+
+test('routes: two routes sharing a code are one hit, boarding the nearer', () => {
+  const hits = searchRoutes(ROUTE_NET, 't816', at(6));
+  assert.equal(hits.filter((h) => h.label === 'T816').length, 1);
+  assert.equal(hits[0].route, 5);
+  assert.equal(hits[0].fromStopIndex, 6);
+});
+
+test('routes: with no position, the first direction from its first stop', () => {
+  const [hit] = searchRoutes(ROUTE_NET, 'T815', null);
+  assert.deepEqual([hit.pattern, hit.fromStopIndex, hit.meters], [2, 5, null]);
+});
+
+test('routes: nearer first within a tier, and at most the limit', () => {
+  // T8160 boards right here; T815 and T816 both board at stop 6, so by code.
+  const hits = searchRoutes(ROUTE_NET, 't81', at(8));
+  assert.deepEqual(hits.map((h) => h.label), ['T8160', 'T815', 'T816']);
+  assert.equal(searchRoutes(ROUTE_NET, 't81', null, 2).length, 2);
 });

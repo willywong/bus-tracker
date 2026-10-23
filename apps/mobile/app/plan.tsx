@@ -15,7 +15,14 @@ import {
   type SearchView,
 } from '@/components/plan/model';
 import { PlanResults } from '@/components/plan/PlanResults';
-import { localIndexFor, lookupLocal, searchLocal, type LocalHit } from '@/components/plan/searchIndex';
+import {
+  localIndexFor,
+  lookupLocal,
+  searchLocal,
+  searchRoutes,
+  type LocalHit,
+  type RouteHit,
+} from '@/components/plan/searchIndex';
 import { NoteRow, SuggestionRow, SUGGESTION_INSET, THUMB_INSET } from '@/components/plan/SuggestionRow';
 import { useNear } from '@/components/plan/useNear';
 import { Hairline, SectionLabel } from '@/components/trip/Rows';
@@ -25,7 +32,9 @@ import { useTransitNetwork } from '@/hooks/useTransitNetwork';
 import { mapsErrorCode, resolve, type ResolvedPlace } from '@/modules/transit-maps';
 import { mergeRecent, type RecentPlace } from '@/services/places/recents';
 import { loadRecents, saveRecents } from '@/services/places/recentsStore';
+import { useNearby } from '@/state/NearbyContext';
 import { HERE, usePlanner, type Place } from '@/state/PlannerContext';
+import { useTrip } from '@/state/TripContext';
 import { MARGIN, space } from '@/theme/design';
 import { haptics } from '@/utils/haptics';
 
@@ -65,6 +74,8 @@ export default function PlanScreen() {
   const planner = usePlanner();
   const { setPresented } = planner;
   const settings = useSettings();
+  const nearby = useNearby();
+  const trip = useTrip();
   const { network } = useTransitNetwork();
   const [permission, requestPermission] = Location.useForegroundPermissions();
   const locationOff = permission != null && !permission.granted;
@@ -114,6 +125,12 @@ export default function PlanScreen() {
   const localHits = useMemo(
     () => (ix && searching ? searchLocal(ix, query, near) : null),
     [ix, query, near, searching],
+  );
+  // A route code ("T816") is something to look at, not somewhere to go:
+  // offered for the destination only.
+  const routeHits = useMemo(
+    () => (network && editing === 'to' ? searchRoutes(network, query, near) : []),
+    [network, query, near, editing],
   );
   const places = usePlaceSearch(searching ? query : '', near);
 
@@ -179,6 +196,7 @@ export default function PlanScreen() {
   const view: SearchView = searchSections({
     query,
     local: ix ? (localHits ?? []) : null,
+    routes: routeHits,
     places: places.places,
     placesOffline: places.offline,
     placesLoading: places.loading,
@@ -217,8 +235,20 @@ export default function PlanScreen() {
     searchRef.current?.blur();
   };
 
+  // The route's preview from its nearest stop, in Nearby; back returns to the list.
+  const openRoute = (hit: RouteHit) => {
+    haptics.selection();
+    trip.select(null);
+    settings.setSheetSection('nearby');
+    nearby.reset();
+    nearby.push({ kind: 'route', route: hit.route, pattern: hit.pattern, fromStopIndex: hit.fromStopIndex });
+    router.back();
+  };
+
   const pick = async (target: PickTarget) => {
     switch (target.kind) {
+      case 'route':
+        return openRoute(target.hit);
       case 'here':
         return commit(HERE);
       case 'local':

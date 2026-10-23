@@ -8,7 +8,7 @@ import type { PlaceHit } from '@/services/places/placeSearch';
 import { MAX_PINS } from '@/services/places/saved';
 import type { RecentPlace } from '@/services/places/recents';
 
-import type { LocalHit } from './searchIndex';
+import { normalizeName, type LocalHit, type RouteHit } from './searchIndex';
 
 /**
  * Pure presentation model for the plan sheet's search state (spec §6.2):
@@ -109,6 +109,31 @@ export function localRow(hit: LocalHit): RowModel {
     subtitle,
     trailing: null,
     accessibilityLabel: a11y,
+  };
+}
+
+const code = (s: string) => normalizeName(s).replace(/ /g, '');
+
+/**
+ * A bus route by its code: its name (or, when the name is just the code,
+ * where it's headed from your nearest stop) and how far that stop is.
+ */
+export function routeRow(hit: RouteHit): RowModel {
+  const named = hit.longName !== '' && code(hit.longName) !== code(hit.label);
+  const subtitle = named ? hit.longName : hit.towards ? `To ${hit.towards}` : null;
+  return {
+    key: `route:${hit.label}`,
+    lead: { kind: 'symbol', name: 'point.bottomleft.forward.to.point.topright.scurvepath' },
+    title: hit.label,
+    subtitle,
+    trailing: hit.meters != null ? formatDistance(hit.meters) : null,
+    accessibilityLabel: spoken(
+      'Route',
+      hit.label,
+      subtitle,
+      `nearest stop ${hit.stopName}`,
+      hit.meters != null ? spokenDistance(hit.meters) : null,
+    ),
   };
 }
 
@@ -222,6 +247,8 @@ export function defaultDepartAt(now: number): number {
 /** What a tap on a row turns into a journey end. */
 export type PickTarget =
   | { kind: 'local'; hit: LocalHit }
+  /** Not a journey end: opens the route's preview in the sheet. */
+  | { kind: 'route'; hit: RouteHit }
   | { kind: 'place'; hit: PlaceHit }
   | { kind: 'ready'; place: Place & { address?: string } }
   | { kind: 'here' };
@@ -240,7 +267,7 @@ export type SearchView =
   | { kind: 'sections'; sections: SearchSection[] }
   | { kind: 'no-results'; query: string };
 
-export const QUIET_EMPTY = 'Search for a station, a stop or a place.';
+export const QUIET_EMPTY = 'Search for a station, a stop, a route or a place.';
 export const NETWORK_PENDING = 'Stations appear once today’s timetable has downloaded.';
 export const PLACES_OFFLINE = 'Places need a connection';
 
@@ -256,6 +283,8 @@ export interface SearchInput {
   query: string;
   /** Null while the network hasn't loaded. */
   local: LocalHit[] | null;
+  /** Bus routes by code; empty while choosing a start. */
+  routes: readonly RouteHit[];
   places: PlaceHit[];
   placesOffline: boolean;
   placesLoading: boolean;
@@ -267,7 +296,8 @@ export interface SearchInput {
 
 /**
  * The search state's sections (spec §6.2). Empty query: Recent, then Saved
- * (or one quiet line). Typing: Stations and stops, then Places.
+ * (or one quiet line). Typing: Routes (a code like "T816"), then Stations
+ * and stops, then Places (none for a whole route code).
  */
 export function searchSections(i: SearchInput): SearchView {
   const q = i.query.trim();
@@ -295,13 +325,23 @@ export function searchSections(i: SearchInput): SearchView {
     i.local == null
       ? [{ kind: 'note', symbol: null, text: NETWORK_PENDING }]
       : i.local.slice(0, MAX_LOCAL_ROWS).map((hit) => ({ kind: 'row', row: localRow(hit), target: { kind: 'local', hit } }));
-  const placeItems: SearchItem[] = i.placesOffline
+  // A whole route code ("T816") is what you meant: places matching it are
+  // postcodes abroad.
+  const routeCode = i.routes.some((r) => code(r.label) === code(q));
+  const placeItems: SearchItem[] = routeCode
+    ? []
+    : i.placesOffline
     ? [{ kind: 'note', symbol: 'wifi.slash', text: PLACES_OFFLINE }]
     : i.places.slice(0, MAX_PLACE_ROWS).map((hit) => ({ kind: 'row', row: placeRow(hit), target: { kind: 'place', hit } }));
 
-  if (i.local != null && i.local.length === 0 && !i.placesOffline && i.places.length === 0 && !i.placesLoading) {
+  const routeItems = i.routes.map(
+    (hit): SearchItem => ({ kind: 'row', row: routeRow(hit), target: { kind: 'route', hit } }),
+  );
+
+  if (routeItems.length === 0 && i.local != null && i.local.length === 0 && !i.placesOffline && i.places.length === 0 && !i.placesLoading) {
     return i.offerHere ? { kind: 'sections', sections } : { kind: 'no-results', query: q };
   }
+  if (routeItems.length) sections.push({ key: 'routes', title: 'Routes', items: routeItems });
   if (localItems.length) sections.push({ key: 'local', title: 'Stations and stops', items: localItems });
   if (placeItems.length) sections.push({ key: 'places', title: 'Places', items: placeItems });
   return { kind: 'sections', sections };

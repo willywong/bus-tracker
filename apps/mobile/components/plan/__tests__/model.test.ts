@@ -12,6 +12,7 @@ import {
   placeRow,
   QUIET_EMPTY,
   recentRow,
+  routeRow,
   routesText,
   savedInOrder,
   savedRow,
@@ -113,6 +114,7 @@ test('depart-at defaults to the next five minutes', () => {
 const INPUT: SearchInput = {
   query: '',
   local: [],
+  routes: [],
   places: [],
   placesOffline: false,
   placesLoading: false,
@@ -161,4 +163,49 @@ test('no match at all is the empty view, but not while places load', () => {
   assert.deepEqual(searchSections({ ...INPUT, query: 'zzz' }), { kind: 'no-results', query: 'zzz' });
   assert.deepEqual(titles(searchSections({ ...INPUT, query: 'zzz', placesLoading: true })), []);
   assert.deepEqual(titles(searchSections({ ...INPUT, query: 'zzz', offerHere: true })), ['here']);
+});
+
+test('typing a route code: Routes first, and a route alone is not "no results"', () => {
+  const route = {
+    route: 0,
+    label: 'T816',
+    longName: '',
+    pattern: 0,
+    fromStopIndex: 3,
+    stopName: 'Hotel Lisa De Inn',
+    towards: 'Pasar Seni',
+    meters: 450,
+  };
+  const view = searchSections({ ...INPUT, query: 't816', routes: [route] });
+  assert.deepEqual(titles(view), ['Routes']);
+  const item = view.kind === 'sections' ? view.sections[0].items[0] : null;
+  assert.equal(item?.kind === 'row' && item.target.kind, 'route');
+  assert.equal(item?.kind === 'row' && item.row.title, 'T816');
+  assert.equal(item?.kind === 'row' && item.row.subtitle, 'To Pasar Seni');
+  assert.equal(item?.kind === 'row' && item.row.trailing, '450 m');
+  assert.equal(
+    item?.kind === 'row' && item.row.accessibilityLabel,
+    'Route, T816, To Pasar Seni, nearest stop Hotel Lisa De Inn, 450 metres',
+  );
+  const stop = { kind: 'stop' as const, id: '1', name: 'T816 Stop', lat: 3, lng: 101, routes: [], routeCount: 0 };
+  assert.deepEqual(titles(searchSections({ ...INPUT, query: 't816', routes: [route], local: [stop] })), [
+    'Routes',
+    'Stations and stops',
+  ]);
+});
+
+test('a route named only by its code reads its direction; a real name reads as itself', () => {
+  const base = { route: 0, pattern: 0, fromStopIndex: 0, stopName: 'A', towards: 'Atwater', meters: null };
+  assert.equal(routeRow({ ...base, label: 'T815', longName: 'T815' }).subtitle, 'To Atwater');
+  assert.equal(routeRow({ ...base, label: '300', longName: 'Hab Pasar Seni ~ Kepong' }).subtitle, 'Hab Pasar Seni ~ Kepong');
+});
+
+test('a whole route code hides places; a partial one keeps them', () => {
+  const route = { route: 0, label: 'T815', longName: '', pattern: 0, fromStopIndex: 0, stopName: 'A', towards: 'B', meters: null };
+  const place = { id: 'c', title: '34 The Park', subtitle: 'Dublin D17 T815', symbol: 'mappin' as const, meters: null };
+  assert.deepEqual(titles(searchSections({ ...INPUT, query: 'T815', routes: [route], places: [place] })), ['Routes']);
+  assert.deepEqual(titles(searchSections({ ...INPUT, query: 't81', routes: [route], places: [place] })), [
+    'Routes',
+    'Places',
+  ]);
 });

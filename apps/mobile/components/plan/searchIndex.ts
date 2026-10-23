@@ -1,6 +1,7 @@
-import { haversineMeters, type RailStation, type TransitNetwork } from '@bus-tracker/shared';
+import { haversineMeters, MODES, type RailStation, type TransitNetwork } from '@bus-tracker/shared';
 
 import { formatStopName } from '@/components/map/format';
+import { placeName } from '@/components/sheet/nearby/model';
 
 /**
  * Offline name search over the compiled network's stations and stops
@@ -267,4 +268,127 @@ export function searchLocal(ix: LocalIndex, query: string, near: LatLng | null, 
       (a.e.norm < b.e.norm ? -1 : a.e.norm > b.e.norm ? 1 : 0),
   );
   return matches.slice(0, limit).map((m) => toHit(ix, m.e, near));
+}
+
+// --- Routes -----------------------------------------------------------------
+
+/** A bus route whose code matches the query, with where you'd board it. */
+export interface RouteHit {
+  /** Route index (the first, when routes share a code). */
+  route: number;
+  /** "T816". */
+  label: string;
+  longName: string;
+  /** The direction and stop you'd board at: nearest to you, else the first stop. */
+  pattern: number;
+  fromStopIndex: number;
+  stopName: string;
+  /** The direction's last stop, as the route preview names it. */
+  towards: string;
+  /** From `near` to that stop, or null with no position. */
+  meters: number | null;
+}
+
+/** Route codes a search shows at most. */
+export const MAX_ROUTE_HITS = 4;
+
+/** Bus and feeder routes have codes people type; rail lines are found by their stations. */
+const CODED_MODES = new Set([MODES.indexOf('bus'), MODES.indexOf('feeder')]);
+
+const compact = (s: string) => normalizeName(s).replace(/ /g, '');
+
+/**
+ * 0 the whole code ("t816"), 1 a code prefix ("t81"), 2 the number alone
+ * ("816" for T816), -1 no match. A query needs a digit, so a name search
+ * ("klcc") never lists routes.
+ */
+function codeTier(code: string, q: string): number {
+  if (code === q) return 0;
+  if (code.startsWith(q)) return 1;
+  if (/^\d+$/.test(q) && code.replace(/^[a-z]+/, '').startsWith(q)) return 2;
+  return -1;
+}
+
+/**
+ * Bus routes whose code matches the query, best first: whole code, then
+ * prefix, then number alone; then the nearer boarding stop; then the
+ * shorter code. Routes sharing a code are one hit.
+ */
+export function searchRoutes(
+  net: TransitNetwork,
+  query: string,
+  near: LatLng | null,
+  limit = MAX_ROUTE_HITS,
+): RouteHit[] {
+  const q = compact(query);
+  if (q === '' || q.length > 8 || !/\d/.test(q) || limit <= 0) return [];
+
+  const byCode = new Map<string, { tier: number; routes: number[] }>();
+  for (let r = 0; r < net.routes.count; r++) {
+    if (!CODED_MODES.has(net.routes.mode[r])) continue;
+    const code = compact(net.routes.label[r]);
+    const tier = codeTier(code, q);
+    if (tier < 0) continue;
+    const found = byCode.get(code);
+    if (found) found.routes.push(r);
+    else byCode.set(code, { tier, routes: [r] });
+  }
+  if (byCode.size === 0) return [];
+
+  const hits: (RouteHit & { tier: number })[] = [];
+  for (const { tier, routes } of byCode.values()) {
+    const board = boardingStop(net, new Set(routes), near);
+    if (!board) continue;
+    const route = net.patterns.route[board.pattern];
+    hits.push({
+      tier,
+      route,
+      label: net.routes.label[route],
+      longName: net.routes.longName[route] ?? '',
+      pattern: board.pattern,
+      fromStopIndex: board.stop,
+      stopName: placeName(net.stops.name[board.stop]),
+      towards: placeName(net.stops.name[lastStop(net, board.pattern)]),
+      meters: board.meters,
+    });
+  }
+  hits.sort(
+    (a, b) =>
+      a.tier - b.tier ||
+      (a.meters ?? Number.POSITIVE_INFINITY) - (b.meters ?? Number.POSITIVE_INFINITY) ||
+      a.label.length - b.label.length ||
+      (a.label < b.label ? -1 : a.label > b.label ? 1 : 0),
+  );
+  return hits.slice(0, limit).map(({ tier: _, ...hit }) => hit);
+}
+
+/** A pattern's last stop. */
+function lastStop(net: TransitNetwork, p: number): number {
+  return net.patterns.stops[net.patterns.stopStart[p] + net.patterns.stopLen[p] - 1];
+}
+
+/**
+ * Where to board one of `routes`: the stop nearest `near` on any of their
+ * patterns, never a pattern's last stop (nothing leaves it). With no
+ * position, the first pattern's first stop.
+ */
+function boardingStop(
+  net: TransitNetwork,
+  routes: ReadonlySet<number>,
+  near: LatLng | null,
+): { pattern: number; stop: number; meters: number | null } | null {
+  let best: { pattern: number; stop: number; meters: number | null } | null = null;
+  for (let p = 0; p < net.patterns.count; p++) {
+    if (!routes.has(net.patterns.route[p])) continue;
+    const start = net.patterns.stopStart[p];
+    const len = net.patterns.stopLen[p];
+    if (len < 2) continue;
+    if (!near) return { pattern: p, stop: net.patterns.stops[start], meters: null };
+    for (let i = start; i < start + len - 1; i++) {
+      const s = net.patterns.stops[i];
+      const m = haversineMeters(near, stopPoint(net, s));
+      if (!best || m < (best.meters ?? Number.POSITIVE_INFINITY)) best = { pattern: p, stop: s, meters: m };
+    }
+  }
+  return best;
 }
