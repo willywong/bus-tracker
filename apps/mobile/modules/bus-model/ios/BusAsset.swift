@@ -12,6 +12,9 @@ enum BusKind: String, CaseIterable, Sendable {
   var model: String { self == .feeder ? "RapidBus" : "RapidKLBus" }
   var sprite: String { self == .feeder ? "map-bus" : "map-rapid" }
   var icon: String { self == .feeder ? "pill-bus" : "pill-rapid" }
+  /// The same, lit for the night (headlamps, a glowing sign, beams on the road).
+  var nightSprite: String { "\(sprite)-night" }
+  var nightIcon: String { "\(icon)-night" }
 }
 
 /// The bus models, each loaded once and cloned per view (clones share meshes
@@ -76,17 +79,33 @@ enum BusAsset {
 
   /// The map's tiny buses rendered from the model, one per 15° of heading
   /// (frame k heads k × 15° clockwise from north); empty unless all are there.
-  nonisolated static func mapSpriteURLs(_ kind: BusKind = .feeder) -> [URL] {
+  nonisolated static func mapSpriteURLs(_ kind: BusKind = .feeder, night: Bool = false) -> [URL] {
     guard let assets = assets() else { return [] }
+    let prefix = night ? kind.nightSprite : kind.sprite
     let urls = (0..<24).compactMap {
-      assets.url(forResource: String(format: "\(kind.sprite)-%02d", $0), withExtension: "png")
+      assets.url(forResource: String(format: "\(prefix)-%02d", $0), withExtension: "png")
     }
     return urls.count == 24 ? urls : []
   }
 
   /// The bus pill's icon: the bus three-quarters on, 44 × 36 pt.
-  nonisolated static func pillIconURL(_ kind: BusKind = .feeder) -> URL? {
-    assets()?.url(forResource: kind.icon, withExtension: "png")
+  nonisolated static func pillIconURL(_ kind: BusKind = .feeder, night: Bool = false) -> URL? {
+    assets()?.url(forResource: night ? kind.nightIcon : kind.icon, withExtension: "png")
+  }
+
+  /// The map's landmarks, rendered by `scripts/build-map-landmarks.py`: name
+  /// to file URL, for those in the build. Each is square with its ground
+  /// point at 50% across and 70% down.
+  nonisolated static let landmarks = [
+    "shelter", "shelter-night", "your-stop", "your-stop-night", "mrt-station",
+    "mrt-station-night", "station", "station-band", "station-night",
+  ]
+
+  nonisolated static func landmarkURLs() -> [String: URL] {
+    guard let assets = assets() else { return [:] }
+    return landmarks.reduce(into: [:]) { urls, name in
+      urls[name] = assets.url(forResource: "map-\(name)", withExtension: "png")
+    }
   }
 
   nonisolated private static func assets() -> Bundle? {
@@ -104,6 +123,63 @@ enum BusAsset {
   static func headsign(in bus: Entity) -> ModelEntity? {
     guard let sign = bus.findEntity(named: "Headsign") else { return nil }
     return firstModel(in: sign)
+  }
+
+  /// The headlamps' model entity, if the asset has one (both scripts name it `Headlamps`).
+  static func headlamps(in bus: Entity) -> ModelEntity? {
+    guard let lamps = bus.findEntity(named: "Headlamps") else { return nil }
+    return firstModel(in: lamps)
+  }
+
+  /// Lit headlamps for the night: unlit warm white, so they glow whatever the light.
+  static let litLamp: UnlitMaterial = {
+    var material = UnlitMaterial()
+    material.color = .init(tint: UIColor(red: 1, green: 0.96, blue: 0.84, alpha: 1))
+    return material
+  }()
+
+  /// Two soft beams on the road ahead of the bus, for the night: a plane
+  /// `width` wide and `length` long, its near edge at the bus's front.
+  static func headlightBeams(width: Float, length: Float) -> ModelEntity? {
+    guard let image = beamsImage(), let texture = texture(image) else { return nil }
+    var material = UnlitMaterial()
+    material.color = .init(tint: .white, texture: .init(texture))
+    material.blending = .transparent(opacity: .init(floatLiteral: 1))
+    let plane = ModelEntity(mesh: .generatePlane(width: width, depth: length), materials: [material])
+    plane.position.y = 0.006
+    return plane
+  }
+
+  private static func beamsImage() -> CGImage? {
+    let size = CGSize(width: 128, height: 256)
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    format.opaque = false
+    let image = UIGraphicsImageRenderer(size: size, format: format).image { context in
+      let cg = context.cgContext
+      // The bus is at the bottom edge; each beam widens and fades up the road.
+      let colors =
+        [
+          UIColor(red: 1, green: 0.93, blue: 0.7, alpha: 0.55).cgColor,
+          UIColor(red: 1, green: 0.93, blue: 0.7, alpha: 0).cgColor,
+        ] as CFArray
+      guard let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 1])
+      else { return }
+      for x in [size.width * 0.3, size.width * 0.7] {
+        cg.saveGState()
+        let beam = UIBezierPath()
+        beam.move(to: CGPoint(x: x - 6, y: size.height))
+        beam.addLine(to: CGPoint(x: x + 6, y: size.height))
+        beam.addLine(to: CGPoint(x: x + 30, y: 0))
+        beam.addLine(to: CGPoint(x: x - 30, y: 0))
+        beam.close()
+        beam.addClip()
+        cg.drawLinearGradient(
+          gradient, start: CGPoint(x: x, y: size.height), end: CGPoint(x: x, y: 0), options: [])
+        cg.restoreGState()
+      }
+    }
+    return image.cgImage
   }
 
   private static func firstModel(in entity: Entity) -> ModelEntity? {

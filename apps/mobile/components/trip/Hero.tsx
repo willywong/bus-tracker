@@ -14,13 +14,13 @@ import {
 } from '@expo/ui/swift-ui/modifiers';
 import { SymbolView } from 'expo-symbols';
 import MaskedViewNative from '@react-native-masked-view/masked-view';
-import type { ComponentType, ReactElement, ReactNode } from 'react';
+import type { ComponentType, ReactElement } from 'react';
 import { StyleSheet, Text, useColorScheme, View, type ViewProps } from 'react-native';
 import Animated, { useReducedMotion } from 'react-native-reanimated';
 
 import type { HeroValue, SourceKind, TripModel } from '@/components/trip/model';
 import { useSheetBodyHidden } from '@/components/trip/SheetBody';
-import { color, CSS_EASE_OUT, hex, pick, space, type } from '@/theme/design';
+import { color, CSS_EASE_OUT, hex, pick, type } from '@/theme/design';
 
 /**
  * The one number: thin, very large, tabular, in full ink whether live or
@@ -29,8 +29,8 @@ import { color, CSS_EASE_OUT, hex, pick, space, type } from '@/theme/design';
  * changes use SwiftUI's `numericText` roll.
  */
 export function Hero({ model }: { model: TripModel }) {
-  // On the trip sheet the live dot lives in the status capsule beside the
-  // number, with the warnings, so the number stands alone.
+  // On the trip sheet the live dot lives in the status capsule in the
+  // header, with the warnings, so the number stands alone.
   return (
     <HeroNumber
       hero={model.hero}
@@ -133,11 +133,19 @@ export function HeroNumber({
 
 /**
  * The hero and one quiet line under it: "Arrives 10:52 AM · 3 min late"
- * while live (the live dot is in the status capsule beside the number). Freshness only shows once it's a problem ("Updated 3 min
- * ago", orange); fresh data needs no timestamp. Scheduled leads with the
- * word "Scheduled" and its reason, so the two are never confused.
+ * while live (the live dot is in the status capsule in the header). Freshness
+ * only shows once it's a problem ("Updated 3 min ago", orange); fresh data
+ * needs no timestamp. Scheduled leads with the word "Scheduled" and its
+ * reason, so the two are never confused. At the end of a row (beside the 3D
+ * bus) it aligns right and stacks the line's parts, one per line.
  */
-export function HeroBlock({ model, accessory }: { model: TripModel; accessory?: ReactNode }) {
+export function HeroBlock({
+  model,
+  align = 'start',
+}: {
+  model: TripModel;
+  align?: 'start' | 'end';
+}) {
   const { label, note, updated, arrives } = model.sourceLine;
   const source = model.source;
   // Live needs no word: its dot is in the status capsule. Ageing leads with
@@ -145,20 +153,15 @@ export function HeroBlock({ model, accessory }: { model: TripModel; accessory?: 
   const lead = source === 'aging' && updated ? updated : source === 'live' ? null : label;
   const rest = [arrives, note].filter(Boolean) as string[];
   if (model.facts.length === 0 && model.detail) rest.push(model.detail);
+  const end = align === 'end';
   return (
-    <View style={styles.block}>
-      {accessory ? (
-        <View style={styles.heroRow}>
-          <Hero model={model} />
-          {accessory}
-        </View>
-      ) : (
-        <Hero model={model} />
-      )}
+    <View style={[styles.block, end && styles.blockEnd]}>
+      <Hero model={model} />
       <StatusLine
         source={source}
         lead={lead}
         rest={rest}
+        stacked={end}
         accessibilityLabel={[label, arrives, note, updated].filter(Boolean).join(', ')}
       />
     </View>
@@ -173,16 +176,24 @@ export function StatusLine({
   source,
   lead,
   rest,
+  stacked = false,
   accessibilityLabel: a11y,
 }: {
   source: SourceKind | null;
   /** Coloured first word; null starts straight on the quiet parts. */
   lead: string | null;
   rest: string[];
+  /** One part per line, right-aligned, in place of the dots. */
+  stacked?: boolean;
   accessibilityLabel?: string;
 }) {
+  const sep = stacked ? '\n' : '  ·  ';
   return (
-    <Text style={styles.line} numberOfLines={2} accessibilityLabel={a11y}>
+    <Text
+      style={[styles.line, stacked && styles.lineStacked]}
+      numberOfLines={stacked ? 3 : 2}
+      accessibilityLabel={a11y}
+    >
       {lead ? (
         <Text
           style={[
@@ -196,7 +207,7 @@ export function StatusLine({
       ) : null}
       {rest.map((part, i) => (
         <Text key={part}>
-          {lead || i > 0 ? <Text style={styles.sep}>{'  ·  '}</Text> : null}
+          {lead || i > 0 ? <Text style={styles.sep}>{sep}</Text> : null}
           {part}
         </Text>
       ))}
@@ -348,20 +359,19 @@ const styles = StyleSheet.create({
   pulse: {
     position: 'absolute',
   },
-  // The number on the left, a glass accessory (the warnings) on the right.
-  heroRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: space.sm,
-  },
   block: {
     gap: 2,
+  },
+  blockEnd: {
+    alignItems: 'flex-end',
   },
   line: {
     ...type.status,
     color: color.secondaryLabel,
     fontVariant: ['tabular-nums'],
+  },
+  lineStacked: {
+    textAlign: 'right',
   },
   lead: {
     fontWeight: '600',

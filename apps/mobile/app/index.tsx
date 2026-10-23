@@ -1,18 +1,20 @@
-import { Stack, useRootNavigationState, useRouter } from 'expo-router';
+import { Stack, usePathname, useRootNavigationState, useRouter } from 'expo-router';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Easing,
   StyleSheet,
   useColorScheme,
   useWindowDimensions,
   View,
 } from 'react-native';
-import MapView, { AnimatedRegion, PROVIDER_DEFAULT, type Region } from 'react-native-maps';
+import MapView, { PROVIDER_DEFAULT, type Region } from 'react-native-maps';
 import { useReducedMotion } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BUS_BAR_HEIGHT, BusBar } from '@/components/map/BusBar';
+import { isFeederRoute } from '@/components/detail/fares';
 import { BusMarker, GhostBusMarker } from '@/components/map/BusMarker';
+import { LANDMARKS_FROM_ZOOM } from '@/components/map/Landmark';
+import { Glider } from '@/components/map/glide';
 import { itineraryDrawLegs } from '@/components/map/itineraryGeometry';
 import { ItineraryLayer, type DrawLeg } from '@/components/map/ItineraryLayer';
 import { PlacePins, PlaceWalk, placeCoord } from '@/components/map/PlacePins';
@@ -42,6 +44,15 @@ import { useRailShapes } from '@/hooks/useRailShapes';
 import { useScheduledBusPosition } from '@/hooks/useScheduledBusPosition';
 import { useSettings, type MapLayers, type MapType } from '@/hooks/useSettings';
 import { useTransitNetwork } from '@/hooks/useTransitNetwork';
+import {
+  busKindOf,
+  canRideAlong,
+  rideAlong,
+  rideAlongInset,
+  rideAlongPause,
+  rideAlongStop,
+  rideAlongTurn,
+} from '@/modules/bus-model';
 import { useNearby } from '@/state/NearbyContext';
 import { viewKey } from '@/state/nearbyStack';
 import { useOpenItinerary, usePlanner } from '@/state/PlannerContext';
@@ -69,6 +80,8 @@ const KL_REGION = {
 
 /** Markers glide between fixes over one poll interval, along the route's own corners. */
 const POSITION_TWEEN_MS = 30_000;
+/** Screens that hide the whole map: the bus full screen and the full-height sheets. */
+const COVERING_PATHS = new Set(['/bus', '/add-route', '/plan', '/ride']);
 /** No pan events for this long means the finger is off the map. */
 const PAN_QUIET_MS = 250;
 /** Half-size (degrees, ~280 m) of the box framed around a lone point. */
@@ -94,6 +107,9 @@ export default function MapScreen() {
   const settings = useSettings();
   const trip = useTrip();
   const router = useRouter();
+  const pathname = usePathname();
+  // Nothing on the map is seen: its buses stop gliding until it is.
+  const mapCovered = COVERING_PATHS.has(pathname) || (pathname === '/trip' && trip.detent === 2);
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   useLocationPermission();
@@ -167,6 +183,30 @@ export default function MapScreen() {
     }));
   }, [route?.userStop]);
 
+  // The MRT station a feeder route ends at, drawn as a landmark so it's
+  // plain the bus feeds the train.
+  const terminus = useMemo<RailStationMark | null>(() => {
+    if (!route || !isFeederRoute(route.routeCode)) return null;
+    for (const end of [route.stops.at(-1), route.stops[0]]) {
+      if (!end) continue;
+      const near = nearbyRailStations(
+        { lat: end.stop_lat, lng: end.stop_lon },
+        { radiusMeters: 400, limit: 3 },
+      ).find(({ station }) => station.lines.some((l) => l.mode === 'MRT'));
+      if (near) {
+        const { station } = near;
+        return {
+          id: station.id,
+          name: station.name,
+          lat: station.lat,
+          lng: station.lng,
+          colors: [...new Set(station.lines.map((l) => l.color))],
+        };
+      }
+    }
+    return null;
+  }, [route]);
+
   // --- Rail layer: every line and station (plan 13/02) ----------------------
   const layers = settings.mapLayers;
   const { network } = useTransitNetwork();
@@ -179,6 +219,8 @@ export default function MapScreen() {
     railZoomBand(zoomFromRegion(KL_REGION.longitudeDelta, windowWidth)),
   );
   const railDim = zoomBand === 0;
+  // Street level: stops and stations drawn as little buildings, not dots.
+  const [close, setClose] = useState(false);
   // An open station, line or itinerary sheet (plans 13/05, 15/05).
   const focus = trip.railFocus;
   const railFocus = useMemo(
@@ -286,11 +328,12 @@ export default function MapScreen() {
   const onPreviewDrawn = useCallback(() => setPreviewDrawn(true), []);
   /** Set from opening a preview until the camera first settles: that starts its draw. */
   const awaitingPreviewDraw = useRef(false);
-  // Its buses glide like the trip's. Fed even as the preview closes, so
-  // they stop before they unmount (see useGlidingMarkers).
+  // Its buses glide like the trip's.
   const previewMarkers = useGlidingMarkers(
     previewShown ? nearby.previewPositions : NO_POSITIONS,
     previewKey ?? '',
+    undefined,
+    mapCovered,
   );
 
   // Pins: the list on screen (the sheet up on it, not put away to the bar),
@@ -347,18 +390,10 @@ export default function MapScreen() {
     () => snapPositions(feedPositions, routeLine),
     [feedPositions, routeLine],
   );
-  const markers = useGlidingMarkers(positions, trip.routeCode, routeLine);
-  // My buses off: stop every glide first and unmount the markers on the next
-  // render. Unmounting one mid-animation trips Fabric (see useGlidingMarkers).
-  // An open itinerary (or a journey in Go, or a route preview) hides them the same way.
-  const busesOn = layers.myBuses && !tripHidden;
-  const [busMarkersShown, setBusMarkersShown] = useState(busesOn);
-  useEffect(() => {
-    if (!busesOn) for (const m of markers) stopAnimation(m.region);
-    setBusMarkersShown(busesOn);
-    // Only on the toggle; `markers` is this render's list.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [busesOn]);
+  const markers = useGlidingMarkers(positions, trip.routeCode, routeLine, mapCovered);
+  // My buses off. An open itinerary (or a journey in Go, or a route preview)
+  // hides them the same way.
+  const busMarkersShown = layers.myBuses && !tripHidden;
   const primaryVehicleId =
     trip.eta.primaryArrival?.kind === 'live'
       ? trip.eta.primaryArrival.live?.vehicleId ?? null
@@ -414,7 +449,9 @@ export default function MapScreen() {
       setPreviewDrawStart(true);
     }
     // Same band: React bails out, nothing re-renders for the rail layer.
-    setZoomBand(railZoomBand(zoomFromRegion(region.longitudeDelta, windowWidth)));
+    const zoom = zoomFromRegion(region.longitudeDelta, windowWidth);
+    setZoomBand(railZoomBand(zoom));
+    setClose(zoom >= LANDMARKS_FROM_ZOOM);
     if (!holdPeek) return;
     const release = () => {
       const quiet = Date.now() - lastPanAt.current;
@@ -753,8 +790,32 @@ export default function MapScreen() {
     framePreviewRef.current(true);
   }, [trip.detent]);
 
+  // Ride along with your bus (or the one open in the sheet): the camera
+  // follows it, tilted over the 3D buildings, until the map is moved.
+  const [riding, setRiding] = useState(false);
+  const rideCandidate = busMarkersShown ? (selectedBusId ?? primaryVehicleId) : null;
+  const rideMarker = rideCandidate
+    ? markers.find((m) => m.vehicle.vehicleId === rideCandidate)
+    : undefined;
+  const canRide = canRideAlong && rideMarker != null;
+  useRideAlong(riding ? (rideMarker ?? null) : null, coveredHeight, mapCovered);
+  // The bus left the map: the ride is over.
+  useEffect(() => {
+    if (riding && !canRide) setRiding(false);
+  }, [riding, canRide]);
+  const toggleRide = useCallback(() => {
+    haptics.selection();
+    setRiding((on) => {
+      // The camera is the ride's while it lasts; after, the map frames the
+      // trip again.
+      setUserPanned(!on);
+      return !on;
+    });
+  }, []);
+
   const recenter = useCallback(() => {
     haptics.light();
+    setRiding(false);
     setUserPanned(false);
     if (itOpenRef.current) frameItRef.current(true);
     else if (goOnlyRef.current) frameGoRef.current(true);
@@ -791,6 +852,9 @@ export default function MapScreen() {
         myBusesOn={layers.myBuses}
         railOn={layers.rail}
         userPanned={userPanned}
+        canRide={canRide}
+        riding={riding}
+        onRide={toggleRide}
         onRecenter={recenter}
         onSelectRoute={selectRoute}
         onSetMapType={settings.setMapType}
@@ -806,10 +870,11 @@ export default function MapScreen() {
         showsUserLocation
         showsCompass={false}
         showsMyLocationButton={false}
-        pitchEnabled={false}
+        pitchEnabled={riding}
         legalLabelInsets={legalLabelInsets}
         onPanDrag={() => {
           if (!userPanned) setUserPanned(true);
+          if (riding) setRiding(false);
           lastPanAt.current = Date.now();
           // Moving the map means looking at it: get the sheet out of the way
           // until the map settles.
@@ -827,6 +892,9 @@ export default function MapScreen() {
             focus={railFocus}
             dim={railDim}
             showAllStations={zoomBand === 2}
+            close={close}
+            night={mapScheme === 'dark'}
+            hiddenStationId={zoomBand === 2 ? (terminus?.id ?? null) : null}
             paper={mapPaper}
             ink={ink}
             selectedStationId={selectedStationId}
@@ -849,6 +917,10 @@ export default function MapScreen() {
             selectedStopId={selectedStopId}
             onStopPress={selectStop}
             onUserStopPress={clearSelection}
+            close={close}
+            terminus={terminus}
+            terminusHidden={zoomBand < 2}
+            night={mapScheme === 'dark'}
           />
         ) : null}
         {route && layers.myBuses && !tripHidden && ghost.coord && positions.length === 0 ? (
@@ -858,22 +930,23 @@ export default function MapScreen() {
             background={mapPaper}
           />
         ) : null}
-        {(busMarkersShown ? markers : []).map(({ vehicle, region, heading }) => {
+        {(busMarkersShown ? markers : []).map(({ vehicle, glider }) => {
           const primary = vehicle.vehicleId === primaryVehicleId;
           const passed = trip.eta.passedVehicleIds.has(vehicle.vehicleId);
           return (
             <BusMarker
               key={vehicle.vehicleId}
-              region={region}
+              glider={glider}
               ink={ink}
               paper={mapPaper}
               live={pick(hex.live, mapScheme)}
               primary={primary}
               passed={passed}
               bearing={vehicle.bearing}
-              heading={heading}
               selected={vehicle.vehicleId === selectedBusId}
               vehicleId={vehicle.vehicleId}
+              kind={busKindOf(vehicle.tripId)}
+              night={mapScheme === 'dark'}
               onSelect={selectBus}
               accessibilityLabel={
                 primary
@@ -936,20 +1009,19 @@ export default function MapScreen() {
             userStop={pinsSkip}
           />
         ) : null}
-        {/* Unkeyed and always mapped: they empty themselves a render after
-            the preview closes, with their glides stopped (useGlidingMarkers). */}
-        {previewMarkers.map(({ vehicle, region, heading }) => (
+        {previewMarkers.map(({ vehicle, glider }) => (
           <BusMarker
             key={`preview-${vehicle.vehicleId}`}
-            region={region}
+            glider={glider}
             ink={ink}
             paper={mapPaper}
             live={pick(hex.live, mapScheme)}
             primary
             passed={false}
             bearing={vehicle.bearing}
-            heading={heading}
             vehicleId={vehicle.vehicleId}
+            kind={busKindOf(vehicle.tripId)}
+            night={mapScheme === 'dark'}
             accessibilityLabel={`Route ${preview?.label ?? ''} bus, live`}
           />
         ))}
@@ -998,6 +1070,10 @@ interface MapToolbarProps {
   myBusesOn: boolean;
   railOn: boolean;
   userPanned: boolean;
+  /** Your bus (or the open one) is on the map to ride along with. */
+  canRide: boolean;
+  riding: boolean;
+  onRide: () => void;
   onRecenter: () => void;
   onSelectRoute: (code: string) => void;
   onSetMapType: (t: MapType) => void;
@@ -1021,6 +1097,9 @@ const MapToolbar = memo(function MapToolbar({
   myBusesOn,
   railOn,
   userPanned,
+  canRide,
+  riding,
+  onRide,
   onRecenter,
   onSelectRoute,
   onSetMapType,
@@ -1110,6 +1189,13 @@ const MapToolbar = memo(function MapToolbar({
           </Stack.Toolbar.MenuAction>
         </Stack.Toolbar.Menu>
         <Stack.Toolbar.Button
+          icon="view.3d"
+          hidden={!canRide && !riding}
+          selected={riding}
+          accessibilityLabel={riding ? 'Stop riding along' : 'Ride along with the bus'}
+          onPress={onRide}
+        />
+        <Stack.Toolbar.Button
           icon={userPanned ? 'location' : 'location.fill'}
           accessibilityLabel="Recenter map"
           onPress={onRecenter}
@@ -1164,140 +1250,126 @@ type SnappedPosition = VehiclePosition & { segmentIndex: number | null };
 
 interface GlidingMarker {
   vehicle: VehiclePosition;
-  region: AnimatedRegion;
-  /** Its heading mid-glide, turning at each corner of the route. */
-  heading: HeadingFeed;
-}
-
-/** Below this, a turn isn't worth redrawing the marker (the map's sprites step every 15°). */
-const HEADING_STEP_DEG = 7.5;
-
-/**
- * A marker's heading while it glides. Set at each corner it turns; only that
- * marker redraws (BusMarker subscribes), not this screen.
- */
-interface HeadingFeed {
-  get(): number | undefined;
-  subscribe(onChange: () => void): () => void;
-  set(bearing: number | undefined): void;
-}
-
-function headingFeed(initial: number | undefined): HeadingFeed {
-  let value = initial;
-  const listeners = new Set<() => void>();
-  return {
-    get: () => value,
-    subscribe(onChange) {
-      listeners.add(onChange);
-      return () => listeners.delete(onChange);
-    },
-    set(bearing) {
-      if (bearing === value) return;
-      if (bearing != null && value != null) {
-        const turn = Math.abs(((((bearing - value) % 360) + 540) % 360) - 180);
-        if (turn < HEADING_STEP_DEG) return;
-      }
-      value = bearing;
-      for (const listener of listeners) listener();
-    },
-  };
+  /** Moves its native marker between fixes, turning at each corner of the route. */
+  glider: Glider;
 }
 
 /**
- * One AnimatedRegion per vehicle so markers glide between fixes: along the
- * route through each of its corners when both ends are on the line, else in
- * a straight line.
+ * One Glider per vehicle so markers glide between fixes: along the route
+ * through each of its corners when both ends are on the line, else in a
+ * straight line. The native marker does the moving; JS only starts each leg.
  *
- * A bus that drops out of the feed keeps its marker for one more commit: its
- * animation is stopped first, then it's removed on the following render.
- * Unmounting a marker while its native timing animation is still running
- * trips Fabric's view-recycle assertion. Everything is cleared on route
- * change.
+ * While the map is covered (`paused`), nothing glides: each bus jumps to its
+ * fix, and a glide under way jumps to its end. Everything is cleared on
+ * route change.
  */
 function useGlidingMarkers(
   positions: readonly (VehiclePosition | SnappedPosition)[],
   routeCode: string,
   polyline?: readonly LatLng[],
+  paused = false,
 ): GlidingMarker[] {
-  const regions = useRef(new Map<string, AnimatedRegion>());
-  const headings = useRef(new Map<string, HeadingFeed>());
-  const lastSeen = useRef(new Map<string, VehiclePosition>());
-  /** Where each marker is gliding to, so a repeated fix doesn't restart it. */
-  const targets = useRef(new Map<string, LatLng>());
-  const [, setPruneTick] = useState(0);
+  const gliders = useRef(new Map<string, Glider>());
+  // Route switch: drop every glider before making the new route's.
+  const shownRoute = useRef(routeCode);
+  if (shownRoute.current !== routeCode) {
+    shownRoute.current = routeCode;
+    for (const glider of gliders.current.values()) glider.halt();
+    gliders.current.clear();
+  }
 
   for (const p of positions) {
-    lastSeen.current.set(p.vehicleId, p);
-    if (!regions.current.has(p.vehicleId)) {
-      regions.current.set(
-        p.vehicleId,
-        new AnimatedRegion({
-          latitude: p.lat,
-          longitude: p.lng,
-          latitudeDelta: 0,
-          longitudeDelta: 0,
-        }),
-      );
-      headings.current.set(p.vehicleId, headingFeed(p.bearing));
+    if (!gliders.current.has(p.vehicleId)) {
+      gliders.current.set(p.vehicleId, new Glider({ lat: p.lat, lng: p.lng }, p.bearing));
     }
   }
 
   useEffect(() => {
     const live = new Set(positions.map((p) => p.vehicleId));
-    let pruned = false;
     for (const p of positions) {
+      const glider = gliders.current.get(p.vehicleId);
+      if (!glider) continue;
       // A bus that's stopped reporting repeats its last fix: hold it there.
       // Re-timing to the same point would restart the glide and drag out
       // whatever is left of it.
-      const target = targets.current.get(p.vehicleId);
-      if (target && target.lat === p.lat && target.lng === p.lng) continue;
-      targets.current.set(p.vehicleId, { lat: p.lat, lng: p.lng });
-      const region = regions.current.get(p.vehicleId);
-      const heading = headings.current.get(p.vehicleId);
-      if (!region || !heading) continue;
+      const target = glider.target;
+      if (target.lat === p.lat && target.lng === p.lng) continue;
+      if (paused) {
+        glider.jump({ lat: p.lat, lng: p.lng }, p.bearing);
+        continue;
+      }
       // From wherever the marker is now, mid-glide or not.
-      region.stopAnimation((now) => {
-        const at = { lat: now.latitude, lng: now.longitude };
-        const legs = legsAlongRoute(polyline, at, heading.get(), p) ?? [
-          { to: { lat: p.lat, lng: p.lng }, meters: 1, bearing: p.bearing ?? heading.get() },
-        ];
-        glide(region, heading, legs);
-      });
+      const legs = legsAlongRoute(polyline, glider.at(), glider.heading.get(), p) ?? [
+        { to: { lat: p.lat, lng: p.lng }, meters: 1, bearing: p.bearing ?? glider.heading.get() },
+      ];
+      glider.glide(legs, POSITION_TWEEN_MS);
     }
-    for (const id of Array.from(regions.current.keys())) {
+    for (const [id, glider] of gliders.current) {
       if (live.has(id)) continue;
-      stopAnimation(regions.current.get(id));
-      regions.current.delete(id);
-      headings.current.delete(id);
-      lastSeen.current.delete(id);
-      targets.current.delete(id);
-      pruned = true;
+      glider.halt();
+      gliders.current.delete(id);
     }
-    // Drop the now-stopped markers on the next render.
-    if (pruned) setPruneTick((n) => n + 1);
+    // Only on a new feed; `paused` is read as it is then.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [positions]);
 
-  // Route switch: stop and drop every region (cleanup), then re-render so
-  // the previous route's markers unmount with their animations already
-  // stopped.
+  // Covered: finish every glide at once and hold there until the next fix.
   useEffect(() => {
-    setPruneTick((n) => n + 1);
-    return () => {
-      for (const r of regions.current.values()) stopAnimation(r);
-      regions.current.clear();
-      headings.current.clear();
-      lastSeen.current.clear();
-      targets.current.clear();
-    };
-  }, [routeCode]);
+    if (paused) for (const glider of gliders.current.values()) glider.jump();
+  }, [paused]);
+
+  useEffect(
+    () => () => {
+      for (const glider of gliders.current.values()) glider.halt();
+    },
+    [],
+  );
 
   const out: GlidingMarker[] = [];
-  for (const [id, region] of regions.current) {
-    const vehicle = lastSeen.current.get(id);
-    const heading = headings.current.get(id);
-    if (vehicle && heading) out.push({ vehicle, region, heading });
+  for (const p of positions) {
+    const glider = gliders.current.get(p.vehicleId);
+    if (glider) out.push({ vehicle: p, glider });
   }
   return out;
+}
+
+/**
+ * Ride along with `bus`: the native follow camera behind its marker
+ * (modules/bus-model), turned at each corner as its glider turns. Held while
+ * the map is covered; back to the flat map when `bus` goes null.
+ */
+function useRideAlong(bus: GlidingMarker | null, coveredHeight: number, paused: boolean) {
+  const vehicleId = bus?.vehicle.vehicleId ?? null;
+  const glider = bus?.glider ?? null;
+  const covered = useRef(coveredHeight);
+  covered.current = coveredHeight;
+
+  useEffect(() => {
+    if (!vehicleId) return;
+    return () => rideAlongStop();
+  }, [vehicleId]);
+
+  useEffect(() => {
+    if (!vehicleId || !glider) return;
+    if (paused) {
+      rideAlongPause();
+      return;
+    }
+    rideAlong(vehicleId, glider.heading.get() ?? bus?.vehicle.bearing ?? 0, covered.current);
+    const unsubscribe = glider.heading.subscribe(() => {
+      const heading = glider.heading.get();
+      if (heading != null) rideAlongTurn(heading);
+    });
+    return () => {
+      unsubscribe();
+    };
+    // `bus` is read for its heading at the start only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vehicleId, glider, paused]);
+
+  useEffect(() => {
+    if (vehicleId && !paused) rideAlongInset(coveredHeight);
+  }, [vehicleId, paused, coveredHeight]);
 }
 
 /**
@@ -1320,37 +1392,6 @@ function legsAlongRoute(
     { point: from.point, segmentIndex: from.segmentIndex },
     { point: { lat: fix.lat, lng: fix.lng }, segmentIndex: fix.segmentIndex },
   );
-}
-
-/** A stretch of a glide; a straight one may not know its heading. */
-type GlideLeg = Omit<RouteLeg, 'bearing'> & { bearing: number | undefined };
-
-/**
- * Glides through `legs` in one poll interval, each leg's share of it by its
- * length, turning the marker as each starts. Stopping the region (a new fix,
- * a route change) ends the chain: the running leg reports unfinished.
- */
-function glide(region: AnimatedRegion, heading: HeadingFeed, legs: readonly GlideLeg[]) {
-  const total = legs.reduce((sum, leg) => sum + leg.meters, 0);
-  const run = (i: number) => {
-    const leg = legs[i];
-    if (!leg) return;
-    if (leg.bearing != null) heading.set(leg.bearing);
-    region
-      .timing({
-        latitude: leg.to.lat,
-        longitude: leg.to.lng,
-        latitudeDelta: 0,
-        longitudeDelta: 0,
-        duration: (POSITION_TWEEN_MS * leg.meters) / total,
-        easing: Easing.linear,
-        useNativeDriver: false,
-      } as Parameters<AnimatedRegion['timing']>[0])
-      .start(({ finished }) => {
-        if (finished) run(i + 1);
-      });
-  };
-  run(0);
 }
 
 /**
@@ -1381,14 +1422,6 @@ function snapPositions(
         }
       : { ...p, segmentIndex: null };
   });
-}
-
-function stopAnimation(region: AnimatedRegion | undefined) {
-  try {
-    (region as unknown as { stopAnimation?: () => void })?.stopAnimation?.();
-  } catch {
-    // best effort
-  }
 }
 
 const styles = StyleSheet.create({

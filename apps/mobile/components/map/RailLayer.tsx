@@ -2,12 +2,14 @@ import { memo, useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Marker, Polyline } from 'react-native-maps';
 
+import { LandmarkFrame } from '@/components/map/Landmark';
 import {
   railAlpha,
   stationsInFocus,
   type RailLineDraw,
   type RailStationDraw,
 } from '@/components/map/railModel';
+import { landmarkSprite } from '@/modules/bus-model';
 
 interface RailLayerProps {
   lines: RailLineDraw[];
@@ -25,12 +27,20 @@ interface RailLayerProps {
   /** The open station: solid ink, always shown, above the other squares. */
   selectedStationId?: string | null;
   onStationPress?: (stationId: string) => void;
+  /** Street level: each station drawn as a little station, its band in its line's colour. */
+  close?: boolean;
+  /** A dark map: the stations have their lights on. */
+  night?: boolean;
+  /** Drawn by the route instead, as its MRT landmark. */
+  hiddenStationId?: string | null;
 }
 
 /** Square height, and its width with one dot. */
 const RAIL = 20;
 /** Extra width per further dot, as `RouteLayer`'s squares. */
 const RAIL_PER_DOT = 9;
+/** A station's sprite, street level. */
+const STATION = 32;
 
 /**
  * Every rail line in its official colour on a thin paper casing, and the
@@ -55,8 +65,16 @@ export const RailLayer = memo(function RailLayer({
   ink,
   selectedStationId = null,
   onStationPress,
+  close = false,
+  night = false,
+  hiddenStationId = null,
 }: RailLayerProps) {
-  const shown = useMemo(() => new Set(stationsInFocus(stations, lines, focus)), [stations, lines, focus]);
+  const sprite = close ? landmarkSprite('station', night) : null;
+  const band = landmarkSprite('station-band');
+  const shown = useMemo(
+    () => new Set(stationsInFocus(stations, lines, focus)),
+    [stations, lines, focus],
+  );
   return (
     <>
       {lines.map((line) => {
@@ -84,6 +102,7 @@ export const RailLayer = memo(function RailLayer({
         const selected = s.id === selectedStationId;
         if (!showAllStations && !s.interchange && !selected) return null;
         if (!selected && !shown.has(s)) return null;
+        if (s.id === hiddenStationId) return null;
         const dots = Math.max(1, s.colors.length);
         return (
           <Marker
@@ -95,22 +114,31 @@ export const RailLayer = memo(function RailLayer({
             onPress={onStationPress ? () => onStationPress(s.id) : undefined}
             accessibilityLabel={selected ? `${s.label}, selected` : s.label}
           >
-            <View
-              collapsable={false}
-              style={[
-                styles.square,
-                {
-                  width: RAIL + (dots - 1) * RAIL_PER_DOT,
-                  // Selected: solid ink like the selected stop (RouteLayer).
-                  borderColor: selected ? paper : ink,
-                  backgroundColor: selected ? ink : paper,
-                },
-              ]}
-            >
-              {s.colors.map((c) => (
-                <View key={c} style={[styles.dot, { backgroundColor: c }]} />
-              ))}
-            </View>
+            {sprite ? (
+              <LandmarkFrame
+                uri={sprite}
+                size={STATION}
+                band={band && s.colors[0] ? { uri: band, tint: s.colors[0] } : null}
+                halo={selected ? ink : null}
+              />
+            ) : (
+              <View
+                collapsable={false}
+                style={[
+                  styles.square,
+                  {
+                    width: RAIL + (dots - 1) * RAIL_PER_DOT,
+                    // Selected: solid ink like the selected stop (RouteLayer).
+                    borderColor: selected ? paper : ink,
+                    backgroundColor: selected ? ink : paper,
+                  },
+                ]}
+              >
+                {s.colors.map((c) => (
+                  <View key={c} style={[styles.dot, { backgroundColor: c }]} />
+                ))}
+              </View>
+            )}
           </Marker>
         );
       })}

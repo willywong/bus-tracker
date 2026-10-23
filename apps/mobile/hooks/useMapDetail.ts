@@ -146,6 +146,9 @@ export interface BusDetail {
   destination: string | null;
 }
 
+/** A stopped bus this close to a stop is standing at it. */
+const AT_STOP_METERS = 30;
+
 /** Everything the bus sheet shows, for a live bus on the active route. */
 export function useBusDetail(vehicleId: string): BusDetail {
   const trip = useTrip();
@@ -169,7 +172,13 @@ export function useBusDetail(vehicleId: string): BusDetail {
 
   const derived = useMemo(() => {
     if (!vehicle || !route || route.polyline.length < 2) {
-      return { toYourStop: null, nearStopName: null, motionLabel: null };
+      return {
+        toYourStop: null,
+        nearStopName: null,
+        motionLabel: null,
+        motion: null,
+        atStopName: null,
+      };
     }
     const position = { lat: vehicle.lat, lng: vehicle.lng };
     let nearest: StopRow | null = null;
@@ -187,6 +196,13 @@ export function useBusDetail(vehicleId: string): BusDetail {
       signals: route.signals,
     });
     const motionLabel = status && status.kind !== 'moving' ? status.label : null;
+    // Stopped beside a stop (or the feed says so): it's at that stop.
+    const atStopName =
+      status?.kind === 'stopped' &&
+      nearest &&
+      (best <= AT_STOP_METERS || vehicle.currentStatus === 'STOPPED_AT')
+        ? formatStopName(nearest.stop_name)
+        : null;
 
     const user = route.userStop;
     let toYourStop: { minutes: number; stopsAway: number | null; meters: number } | null = null;
@@ -226,6 +242,8 @@ export function useBusDetail(vehicleId: string): BusDetail {
       toYourStop,
       nearStopName: nearest ? formatStopName(nearest.stop_name) : null,
       motionLabel,
+      motion: status?.kind ?? null,
+      atStopName,
     };
   }, [vehicle, route]);
 
@@ -248,6 +266,8 @@ export function useBusDetail(vehicleId: string): BusDetail {
         isYourBus: trip.eta.primaryArrival?.live?.vehicleId === vehicleId,
         speedKmh: vehicle?.speed ?? null,
         motionLabel: derived.motionLabel,
+        motion: derived.motion,
+        atStopName: derived.atStopName,
         observedAt: vehicle?.observedAt ?? null,
         now: Date.now(),
         formatClock: formatClockHHMM,

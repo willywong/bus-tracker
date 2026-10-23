@@ -7,7 +7,9 @@ import {
   glassEffect,
 } from '@expo/ui/swift-ui/modifiers';
 import { SymbolView } from 'expo-symbols';
+import { useRef } from 'react';
 import {
+  type HostInstance,
   Image as RNImage,
   Pressable,
   StyleSheet,
@@ -26,7 +28,7 @@ import {
 } from '@/components/sheet/sections';
 import { SourceMark } from '@/components/trip/Hero';
 import type { SourceKind } from '@/components/trip/model';
-import { pillIcon } from '@/modules/bus-model';
+import { busKindOf, launchBusFlight, pillIconFor } from '@/modules/bus-model';
 import { useSettings } from '@/hooks/useSettings';
 import { useTrip } from '@/state/TripContext';
 import { color, hex, pick, space, type } from '@/theme/design';
@@ -142,6 +144,15 @@ function BusPill({ onBus, onTrack }: { onBus: () => void; onTrack: () => void })
   const settings = useSettings();
   const { model } = trip;
   const empty = settings.preferredRouteCode == null || model.state === 'empty';
+  const kind = busKindOf(trip.stopId);
+  const pillIcon = pillIconFor(kind, useColorScheme() === 'dark');
+  // Where the bus is drawn, so it can fly up into the sheet from there.
+  const art = useRef<HostInstance>(null);
+  const artFrame = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
+  const measureArt = () =>
+    art.current?.measureInWindow((x, y, width, height) => {
+      artFrame.current = { x, y, width, height };
+    });
 
   const stopName = trip.stopName ?? 'Your stop';
   const spoken = empty
@@ -157,10 +168,12 @@ function BusPill({ onBus, onTrack }: { onBus: () => void; onTrack: () => void })
 
   return (
     <Pressable
+      onPressIn={measureArt}
       onPress={() => {
         haptics.selection();
-        if (empty) onTrack();
-        else onBus();
+        if (empty) return onTrack();
+        if (pillIcon && artFrame.current) launchBusFlight(artFrame.current, kind);
+        onBus();
       }}
       accessibilityRole="button"
       accessibilityLabel={spoken}
@@ -179,7 +192,9 @@ function BusPill({ onBus, onTrack }: { onBus: () => void; onTrack: () => void })
         ) : (
           <>
             {pillIcon ? (
-              <RNImage source={{ uri: pillIcon }} style={styles.busArt} />
+              <View ref={art} onLayout={measureArt} style={styles.busArt} collapsable={false}>
+                <RNImage source={{ uri: pillIcon }} style={styles.busArtImage} />
+              </View>
             ) : (
               <View style={styles.square}>
                 <SymbolView name="bus.fill" size={18} weight="semibold" tintColor={color.onAccent} />
@@ -273,6 +288,10 @@ const styles = StyleSheet.create({
     width: 44,
     height: 36,
     marginHorizontal: -2,
+  },
+  busArtImage: {
+    width: 44,
+    height: 36,
     shadowColor: '#000',
     shadowOpacity: 0.25,
     shadowRadius: 1.5,

@@ -21,6 +21,7 @@ import {
   type StopRow,
 } from "@/db/queries";
 import { useBusPosition } from "@/hooks/useBusPosition";
+import { useNow } from "@/hooks/useNow";
 import { useScheduledDepartures } from "@/hooks/useScheduledDepartures";
 import {
   resolveEta,
@@ -30,7 +31,6 @@ import {
   type EtaMode,
   type ResolvedEta,
 } from "@/components/tracker/logic";
-import { devNow } from "@/utils/devClock";
 
 export type { ApproachingBus } from "@/components/tracker/logic";
 
@@ -131,7 +131,8 @@ export function useEta({
   const { positions, lastUpdated: lastLiveFetchAt, error: rtError } =
     useBusPosition({ routeCode });
 
-  const [now, setNow] = useState(() => devNow());
+  // The shared clock, so `isStale` stays current.
+  const now = useNow();
 
   const previousByVehicleRef = useRef(
     new Map<string, { lat: number; lng: number }>(),
@@ -163,12 +164,6 @@ export function useEta({
       staticError: null,
     };
   }, [route, stopId, routeCode]);
-
-  // 2. Drive `now` forward every 15s so `isStale` stays current.
-  useEffect(() => {
-    const t = setInterval(() => setNow(devNow()), 15_000);
-    return () => clearInterval(t);
-  }, []);
 
   // 3. Maintain `previousByVehicleId` map whenever live positions change.
   useEffect(() => {

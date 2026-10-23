@@ -1,3 +1,5 @@
+import type { MotionStatus } from '@bus-tracker/shared';
+
 import type { FactTile } from '@/components/trip/Facts';
 import { mins, type HeroValue } from '@/components/trip/model';
 
@@ -24,6 +26,8 @@ export interface DetailModel {
   peek: string;
   /** VoiceOver summary of the hero. */
   accessibilityLabel: string;
+  /** A bus's own sheet only: what it's doing and how far it has to go. */
+  bus?: BusJourney;
 }
 
 // ---------------------------------------------------------------- stop
@@ -150,6 +154,39 @@ function stopsAwayText(n: number, capitalised = false): string {
 
 // ----------------------------------------------------------------- bus
 
+/**
+ * What the bus is doing now, most telling first: gone from the feed, its
+ * last fix too old to trust, then its motion. A stopped bus close to a stop
+ * is at that stop; with no speed in the feed it is just on the route.
+ */
+export type BusStateKind =
+  | 'lost'
+  | 'stale'
+  | 'moving'
+  | 'slow'
+  | 'at-signal'
+  | 'at-stop'
+  | 'stopped'
+  | 'on-route';
+
+export interface BusState {
+  kind: BusStateKind;
+  /** "On the move", "At a traffic light", "Last seen 4 mins ago". */
+  title: string;
+  /** Where: "Near Bomba SS2", the stop it's at, or when it was last seen. */
+  detail: string | null;
+  /** Shown only while it moves; rounded km/h. */
+  speedKmh: number | null;
+}
+
+export interface BusJourney {
+  state: BusState;
+  /** Under the hero: "Arrives 4:59 PM", or "Passed Hotel Lisa De Inn". */
+  caption: string | null;
+  /** Still to go to your stop; null once passed or not heading there. */
+  toGo: { stopsAway: number | null; distance: string; stopName: string } | null;
+}
+
 export interface BusDetailInput {
   routeCode: string;
   headsign: string | null;
@@ -160,6 +197,10 @@ export interface BusDetailInput {
   speedKmh: number | null;
   /** "Stopped at a traffic light", when not simply moving. */
   motionLabel: string | null;
+  /** From the speed and the traffic lights nearby; null without a speed. */
+  motion: MotionStatus | null;
+  /** The stop a stopped bus is standing at, if it's at one. */
+  atStopName: string | null;
   observedAt: number | null;
   now: number;
   formatClock: (epochMs: number) => string;
@@ -199,6 +240,7 @@ export function buildBusDetail(input: BusDetailInput): DetailModel {
       facts: [],
       peek: 'This bus stopped reporting',
       accessibilityLabel: 'This bus stopped reporting its position',
+      bus: { state: busState(input), caption: null, toGo: null },
     };
   }
 
@@ -245,17 +287,72 @@ export function buildBusDetail(input: BusDetailInput): DetailModel {
     if (input.passed) line.unshift(`Passed ${yours}`);
   }
 
+  const ahead = input.toYourStop && !input.passed ? input.toYourStop : null;
   return {
     title,
     subtitle,
     hero,
     source: 'live',
     line,
-    stopsAhead: input.toYourStop && !input.passed ? input.toYourStop.stopsAway : null,
+    stopsAhead: ahead ? ahead.stopsAway : null,
     facts,
     peek,
     accessibilityLabel: a11y,
+    bus: {
+      state: busState(input),
+      caption: ahead
+        ? `Arrives ${input.formatClock(input.now + Math.max(0, ahead.minutes) * 60_000)}`
+        : input.passed
+          ? `Passed ${yours}`
+          : null,
+      toGo: ahead
+        ? {
+            stopsAway: ahead.stopsAway,
+            distance: formatDistance(ahead.meters),
+            stopName: input.yourStopName ?? 'Your stop',
+          }
+        : null,
+    },
   };
+}
+
+/** Fixes older than this are no longer "now": the state says how old. */
+const STALE_SECONDS = 90;
+
+export function busState(input: BusDetailInput): BusState {
+  const near = input.nearStopName ? `Near ${input.nearStopName}` : null;
+  if (!input.reporting) {
+    return {
+      kind: 'lost',
+      title: 'Stopped reporting',
+      detail: input.observedAt != null ? `Last seen ${input.formatClock(input.observedAt)}` : null,
+      speedKmh: null,
+    };
+  }
+  const age = input.observedAt != null ? (input.now - input.observedAt) / 1000 : null;
+  if (age != null && age >= STALE_SECONDS) {
+    return {
+      kind: 'stale',
+      title: `Last seen ${mins(Math.floor(age / 60))} ago`,
+      detail: near,
+      speedKmh: null,
+    };
+  }
+  const speed = input.speedKmh != null ? Math.round(input.speedKmh) : null;
+  switch (input.motion) {
+    case 'moving':
+      return { kind: 'moving', title: 'On the move', detail: near, speedKmh: speed };
+    case 'slow':
+      return { kind: 'slow', title: 'Slow traffic', detail: near, speedKmh: speed };
+    case 'at-signal':
+      return { kind: 'at-signal', title: 'At a traffic light', detail: near, speedKmh: null };
+    case 'stopped':
+      return input.atStopName
+        ? { kind: 'at-stop', title: 'At a stop', detail: input.atStopName, speedKmh: null }
+        : { kind: 'stopped', title: 'Stopped', detail: near, speedKmh: null };
+    default:
+      return { kind: 'on-route', title: 'On the route', detail: near, speedKmh: null };
+  }
 }
 
 function movingText(speedKmh: number | null): string | null {

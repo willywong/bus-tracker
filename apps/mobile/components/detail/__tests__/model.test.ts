@@ -93,6 +93,8 @@ const bus = (patch: Partial<BusDetailInput> = {}): BusDetailInput => ({
   isYourBus: false,
   speedKmh: 23.6,
   motionLabel: null,
+  motion: 'moving',
+  atStopName: null,
   observedAt: NOW - 20_000,
   now: NOW,
   formatClock: clock,
@@ -133,6 +135,46 @@ test('bus detail: your bus, passed, stale and lost', () => {
   const lost = buildBusDetail(bus({ reporting: false }));
   assert.equal(lost.source, null);
   assert.equal(lost.line[0], 'Stopped reporting · last seen 01:59');
+});
+
+test('bus detail: what the bus is doing', () => {
+  const state = (patch: Partial<BusDetailInput>) => buildBusDetail(bus(patch)).bus?.state;
+  assert.deepEqual(state({}), {
+    kind: 'moving',
+    title: 'On the move',
+    detail: 'Near Bomba SS2',
+    speedKmh: 24,
+  });
+  assert.equal(state({ motion: 'slow', speedKmh: 9 })?.title, 'Slow traffic');
+  assert.equal(state({ motion: 'at-signal', speedKmh: 0 })?.speedKmh, null);
+  assert.deepEqual(state({ motion: 'stopped', atStopName: 'Pusat Perniagaan SS2' }), {
+    kind: 'at-stop',
+    title: 'At a stop',
+    detail: 'Pusat Perniagaan SS2',
+    speedKmh: null,
+  });
+  assert.equal(state({ motion: 'stopped' })?.kind, 'stopped');
+  assert.equal(state({ motion: null, speedKmh: null })?.kind, 'on-route');
+  assert.equal(state({ observedAt: NOW - 4 * 60_000 })?.title, 'Last seen 4 mins ago');
+  assert.deepEqual(state({ reporting: false }), {
+    kind: 'lost',
+    title: 'Stopped reporting',
+    detail: 'Last seen 01:59',
+    speedKmh: null,
+  });
+});
+
+test('bus detail: arrival and the way to your stop', () => {
+  const journey = buildBusDetail(bus()).bus;
+  assert.equal(journey?.caption, `Arrives ${clock(NOW + 7.2 * 60_000)}`);
+  assert.deepEqual(journey?.toGo, {
+    stopsAway: 3,
+    distance: '1.8 km',
+    stopName: 'Hotel Lisa De Inn',
+  });
+  const passed = buildBusDetail(bus({ passed: true })).bus;
+  assert.equal(passed?.caption, 'Passed Hotel Lisa De Inn');
+  assert.equal(passed?.toGo, null);
 });
 
 test('distance formatting', () => {

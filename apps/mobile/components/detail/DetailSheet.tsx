@@ -1,9 +1,12 @@
 import { nearbyRailStations } from '@bus-tracker/shared';
+import { SymbolView } from 'expo-symbols';
 import { useRouter } from 'expo-router';
 import { useMemo, type ReactNode } from 'react';
-import { Linking, StyleSheet, View } from 'react-native';
+import { Linking, StyleSheet, Text, View } from 'react-native';
 
-import { Bus3D } from '@/components/detail/Bus3D';
+import { Bus3D, hasBus3D } from '@/components/detail/Bus3D';
+import { busKindOf } from '@/modules/bus-model';
+import { BusStateLine, BusStatus } from '@/components/detail/BusStatus';
 import type { DetailModel } from '@/components/detail/model';
 import { openStreetView, StopPhoto } from '@/components/detail/StopPhoto';
 import { formatClockHHMM } from '@/components/tracker/logic';
@@ -18,7 +21,7 @@ import { DetailHeader, RouteBadge } from '@/components/trip/SheetHeader';
 import { Timetable } from '@/components/trip/Timetable';
 import { useBusDetail, useStopDetail } from '@/hooks/useMapDetail';
 import { useTrip } from '@/state/TripContext';
-import { color, MARGIN, space } from '@/theme/design';
+import { color, MARGIN, space, type } from '@/theme/design';
 
 interface DetailSheetProps {
   peek: boolean;
@@ -53,21 +56,27 @@ export function StopDetailSheet({ stopId, peek, onBack }: DetailSheetProps & { s
         subtitle={model.subtitle}
         peek={peek}
         peekContent={
-          <DetailPeek
-            model={model}
-            railEnd={stopId === trip.stopId ? 'you' : 'stop'}
-            action={
-              point ? (
-                <GlassAction
-                  icon="figure.walk"
-                  label="Directions"
-                  onPress={() => openWalkingDirections(point)}
-                  hint="Opens walking directions in Apple Maps"
-                />
-              ) : null
-            }
-            trailing={nextScheduled(model)}
-          />
+          <View style={styles.peek}>
+            <DetailPeek
+              model={model}
+              railEnd={stopId === trip.stopId ? 'you' : 'stop'}
+              action={
+                point ? (
+                  <GlassAction
+                    icon="figure.walk"
+                    label="Directions"
+                    onPress={() => openWalkingDirections(point)}
+                    hint="Opens walking directions in Apple Maps"
+                  />
+                ) : null
+              }
+              trailing={nextScheduled(model)}
+            />
+            <StopPeekLine
+              routes={otherRoutes}
+              stepFree={model.facts.find((f) => f.id === 'access')?.value ?? null}
+            />
+          </View>
         }
         onBack={onBack}
       />
@@ -132,9 +141,12 @@ export function StopDetailSheet({ stopId, peek, onBack }: DetailSheetProps & { s
 }
 
 /**
- * A live bus picked on the map: how long it is from your stop (or that it
- * has passed it), how it's moving, its stops from here to yours, and every
- * stop on the route with this bus marked.
+ * A live bus picked on the map, led by what it's doing. The 3D bus on the
+ * left turns while the real one moves and comes to rest when it stops; on
+ * the right, how long it is from your stop and when it gets there. Under
+ * them it says what it's doing now (on the move, in slow traffic, at a
+ * light or a stop) and how far it has to go, then its stops from here to
+ * yours, and every stop on the route with this bus marked.
  */
 export function BusDetailSheet({
   vehicleId,
@@ -153,6 +165,10 @@ export function BusDetailSheet({
       ? `${model.hero.text} ${model.hero.unit}`
       : model.hero.text
     : null;
+  // Mounted only above peek, so the 3D scene never renders unseen.
+  const showBus = !peek && hasBus3D;
+  const state = model.bus?.state.kind;
+  const moving = state === 'moving' || state === 'slow' || state === 'on-route';
 
   return (
     <>
@@ -161,28 +177,42 @@ export function BusDetailSheet({
         subtitle={model.subtitle}
         peek={peek}
         peekContent={
-          <DetailPeek
-            model={model}
-            railEnd="you"
-            action={
-              stopCount > 0 ? (
-                <GlassAction
-                  icon="list.bullet"
-                  label={`All ${stopCount} stops`}
-                  onPress={openAllStops}
-                />
-              ) : null
-            }
-            trailing={distance(model)}
-          />
+          // What it's doing under the card: the room the search row left.
+          <View style={styles.peek}>
+            <DetailPeek
+              model={model}
+              railEnd="you"
+              action={
+                stopCount > 0 ? (
+                  <GlassAction
+                    icon="list.bullet"
+                    label={`All ${stopCount} stops`}
+                    onPress={openAllStops}
+                  />
+                ) : null
+              }
+              trailing={distance(model)}
+            />
+            {model.bus ? <BusStateLine journey={model.bus} /> : null}
+          </View>
         }
         onBack={onBack}
       />
       <SheetBody peek={peek}>
-        <DetailHero model={model} />
-        <Facts facts={model.facts} />
-        {/* Mounted only above peek, so the 3D scene never renders unseen. */}
-        {!peek ? <Bus3D routeCode={trip.routeCode} destination={destination} /> : null}
+        <View style={showBus ? styles.heroRow : null}>
+          {showBus ? (
+            <Bus3D
+              kind={busKindOf(trip.stopId)}
+              routeCode={trip.routeCode}
+              destination={destination}
+              style={styles.bus}
+              still={!moving}
+              opens={{ vehicleId }}
+            />
+          ) : null}
+          <BusHero model={model} align={showBus ? 'end' : 'start'} />
+        </View>
+        {model.bus ? <BusStatus journey={model.bus} /> : null}
 
         {journeyShown ? (
           <Section title="On the way to your stop">
@@ -234,6 +264,47 @@ function DetailPeek({
   );
 }
 
+/** Badges shown on the stop's peek line before "+N". */
+const PEEK_ROUTES = 4;
+
+/**
+ * Under the stop's peek card: the other routes that call here, as badges,
+ * and whether it's step-free. Nothing when there's neither.
+ */
+function StopPeekLine({ routes, stepFree }: { routes: string[]; stepFree: string | null }) {
+  if (routes.length === 0 && !stepFree) return null;
+  const shown = routes.slice(0, PEEK_ROUTES);
+  const more = routes.length - shown.length;
+  return (
+    <View>
+      <Hairline />
+      <View style={styles.peekLine}>
+        {routes.length > 0 ? (
+          <View
+            style={styles.peekRoutes}
+            accessible
+            accessibilityLabel={`Also stops here: ${routes.join(', ')}`}
+          >
+            <Text style={styles.peekLabel}>Also here</Text>
+            {shown.map((code) => (
+              <RouteBadge key={code} code={code} size="small" />
+            ))}
+            {more > 0 ? <Text style={styles.peekLabel}>{`+${more}`}</Text> : null}
+          </View>
+        ) : (
+          <View style={styles.peekRoutes} />
+        )}
+        {stepFree ? (
+          <View style={styles.peekAccess} accessible accessibilityLabel={`Wheelchair: ${stepFree}`}>
+            <SymbolView name="figure.roll" size={14} tintColor={color.secondaryLabel} />
+            <Text style={styles.peekLabel}>{stepFree}</Text>
+          </View>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
 /** The next timetabled bus at a stop: "Then 12:42 PM", or "Scheduled …" beside a live one. */
 function nextScheduled(model: DetailModel) {
   const f = model.facts.find((x) => x.id === 'next');
@@ -248,6 +319,22 @@ function distance(model: DetailModel) {
 
 function openWalkingDirections(point: { lat: number; lng: number }) {
   void Linking.openURL(`https://maps.apple.com/?daddr=${point.lat},${point.lng}&dirflg=w`);
+}
+
+/**
+ * The bus's hero: the minutes to your stop with the live dot, and when it
+ * gets there (or that it has passed you). What it's doing is the card's.
+ */
+function BusHero({ model, align }: { model: DetailModel; align: 'start' | 'end' }) {
+  const caption = model.bus?.caption ?? null;
+  if (!model.hero && !caption) return null;
+  const end = align === 'end';
+  return (
+    <View style={[styles.hero, end && styles.heroEnd]}>
+      <HeroNumber hero={model.hero} source="live" accessibilityLabel={model.accessibilityLabel} />
+      {caption ? <StatusLine source={null} lead={null} rest={[caption]} stacked={end} /> : null}
+    </View>
+  );
 }
 
 /** The detail hero: the number with its live dot, and one status line. */
@@ -266,8 +353,47 @@ function DetailHero({ model }: { model: DetailModel }) {
 }
 
 const styles = StyleSheet.create({
+  // The bus bleeding off the left edge, the minutes on the right.
+  heroRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+  },
+  bus: {
+    flex: 1,
+    height: 150,
+    marginLeft: -MARGIN,
+  },
+  peek: {
+    gap: space.sm,
+  },
+  peekLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    paddingTop: space.sm,
+  },
+  peekRoutes: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  peekLabel: {
+    ...type.status,
+    color: color.secondaryLabel,
+  },
+  peekAccess: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
   hero: {
     gap: 2,
+  },
+  heroEnd: {
+    flexShrink: 0,
+    alignItems: 'flex-end',
   },
   badges: {
     flexDirection: 'row',

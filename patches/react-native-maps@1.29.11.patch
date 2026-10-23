@@ -1,0 +1,44 @@
+diff --git a/ios/AirMaps/AIRMapMarker.m b/ios/AirMaps/AIRMapMarker.m
+index 82ec84395d97ec18dfe1dd62ecd9a1f16548b394..08ed062f5f4db9d18dec557e22ce7414f7452e9f 100644
+--- a/ios/AirMaps/AIRMapMarker.m
++++ b/ios/AirMaps/AIRMapMarker.m
+@@ -437,8 +437,13 @@ - (void)setUseLegacyPinView:(BOOL)value {
+ }
+ 
+ - (void)animateToCoordinate:(CLLocationCoordinate2D)newCoordinate duration:(NSTimeInterval)duration {
+-    if (_isAnimating) {
+-        NSLog(@"Animation already in progress. Rejecting new animation request.");
++    // A new move takes over from wherever the marker is now, mid-move or not;
++    // no duration places it there at once.
++    [_displayLink invalidate];
++    _displayLink = nil;
++    _isAnimating = NO;
++    if (duration <= 0) {
++        [self setValue:[NSValue valueWithMKCoordinate:newCoordinate] forKey:@"coordinate"];
+         return;
+     }
+ 
+@@ -456,6 +461,10 @@ - (void)animateToCoordinate:(CLLocationCoordinate2D)newCoordinate duration:(NSTi
+         [_displayLink invalidate];
+     }
+     _displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(updatePosition)];
++    // A marker crawling across the map needs no more than 60 fps.
++    if (@available(iOS 15.0, *)) {
++        _displayLink.preferredFrameRateRange = CAFrameRateRangeMake(30, 60, 60);
++    }
+     [_displayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+ }
+ 
+diff --git a/ios/AirMaps/RNMapsMarkerView.mm b/ios/AirMaps/RNMapsMarkerView.mm
+index be7e91dc6ef5005a68e468f9f223c47c2e095b7f..8ce84aee46418db2660d7468d8fb6824ab3a9ad3 100644
+--- a/ios/AirMaps/RNMapsMarkerView.mm
++++ b/ios/AirMaps/RNMapsMarkerView.mm
+@@ -66,7 +66,7 @@ + (ComponentDescriptorProvider)componentDescriptorProvider
+ 
+ - (void) animateToCoordinates:(double)latitude longitude:(double)longitude duration:(NSInteger)duration
+ {
+-    [_view animateToCoordinate:CLLocationCoordinate2DMake(latitude, longitude) duration:duration/1000];
++    [_view animateToCoordinate:CLLocationCoordinate2DMake(latitude, longitude) duration:duration/1000.0];
+ }
+ 
+ - (void) showCallout

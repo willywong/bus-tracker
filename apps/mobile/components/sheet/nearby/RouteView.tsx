@@ -13,7 +13,7 @@ import {
 } from '@expo/ui/swift-ui/modifiers';
 import { SymbolView } from 'expo-symbols';
 import { useRouter } from 'expo-router';
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { Alert, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import Animated, { FadeIn, useReducedMotion } from 'react-native-reanimated';
 
@@ -30,15 +30,14 @@ import { RowButton } from '@/components/ui/RowButton';
 import { Section, SheetBody } from '@/components/trip/SheetBody';
 import { DetailHeader, RouteBadge } from '@/components/trip/SheetHeader';
 import type { StopRow } from '@/db/queries';
+import { useNow } from '@/hooks/useNow';
 import { MAX_FAVORITES, useSettings } from '@/hooks/useSettings';
 import { useTransitNetwork } from '@/hooks/useTransitNetwork';
 import { useNearby, type NearbyView } from '@/state/NearbyContext';
 import { color, hex, MARGIN, motion, pick, space, type } from '@/theme/design';
-import { devNow } from '@/utils/devClock';
 import { haptics } from '@/utils/haptics';
 
 /** The countdown re-reads the clock this often. */
-const TICK_MS = 15_000;
 /** Collapsed, the stops onward show this many from yours, then the last. */
 const HEAD_STOPS = 4;
 /** The rail column the stop rings sit on. */
@@ -169,15 +168,6 @@ export function RouteView({
   );
 }
 
-/** The clock, re-read every few seconds while the preview is open. */
-function useNow(): number {
-  const [now, setNow] = useState(devNow);
-  useEffect(() => {
-    const t = setInterval(() => setNow(devNow()), TICK_MS);
-    return () => clearInterval(t);
-  }, []);
-  return now;
-}
 
 /**
  * How many stops before yours the nearest live bus of this route is, from

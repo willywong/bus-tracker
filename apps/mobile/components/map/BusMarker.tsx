@@ -1,22 +1,10 @@
 import { SymbolView } from 'expo-symbols';
-import { memo, useCallback, useSyncExternalStore } from 'react';
-import { Animated, Image, StyleSheet, View } from 'react-native';
-import {
-  AnimatedRegion,
-  MapMarker,
-  Marker,
-  MarkerAnimated as RawMarkerAnimated,
-  type MapMarkerProps,
-} from 'react-native-maps';
+import { memo, useCallback, useState, useSyncExternalStore } from 'react';
+import { Image, StyleSheet, View } from 'react-native';
+import { MapMarker, Marker } from 'react-native-maps';
 
-import { spriteForBearing } from '@/modules/bus-model';
-
-// react-native-maps types MarkerAnimated as `AnimatedComponent<typeof MapMarker>`,
-// but RN 0.88's `AnimatedComponent` is generic over props, not the component.
-const MarkerAnimated = RawMarkerAnimated as unknown as Animated.AnimatedComponent<
-  MapMarkerProps,
-  MapMarker
->;
+import type { Glider } from '@/components/map/glide';
+import { type BusKind, spriteForBearing } from '@/modules/bus-model';
 
 // Marker views are hosted natively by MapKit; DynamicColorIOS / PlatformColor
 // don't survive that bridge, so colours arrive as resolved hex strings.
@@ -37,17 +25,9 @@ const SPRITE = 36;
 /** Facing east, a side view, when a bus reports no heading. */
 const SIDE_ON = 90;
 
-/** A heading that changes mid-glide, read without re-rendering the map. */
-export interface HeadingSource {
-  get(): number | undefined;
-  subscribe(onChange: () => void): () => void;
-}
-
-const NO_HEADING: HeadingSource = { get: () => undefined, subscribe: () => () => {} };
-
 interface BusMarkerProps {
-  /** Animated region that glides between position fixes. */
-  region: AnimatedRegion;
+  /** Moves the native marker between position fixes; its heading turns at each corner. */
+  glider: Glider;
   ink: string;
   paper: string;
   live: string;
@@ -55,13 +35,16 @@ interface BusMarkerProps {
   primary: boolean;
   /** Already past your stop — faded so it doesn't read as "your bus". */
   passed: boolean;
+  /** The fix's heading, until the glider has one. */
   bearing?: number | null;
-  /** While gliding along the route, its heading at each corner (wins over `bearing`). */
-  heading?: HeadingSource;
   accessibilityLabel: string;
   /** Open in the sheet: solid, with a halo so it stands out from the rest. */
   selected?: boolean;
   vehicleId: string;
+  /** Which bus its sprite draws. */
+  kind: BusKind;
+  /** A dark map: the sprite has its lights on. */
+  night?: boolean;
   /** Stable across renders, so an unchanged marker skips re-rendering. */
   onSelect?: (vehicleId: string) => void;
 }
@@ -75,21 +58,29 @@ interface BusMarkerProps {
  * only colour); other buses are smaller paper discs.
  */
 export const BusMarker = memo(function BusMarker({
-  region,
+  glider,
   ink,
   paper,
   live,
   primary,
   passed,
   bearing: fixBearing,
-  heading = NO_HEADING,
   accessibilityLabel,
   selected = false,
   vehicleId,
+  kind,
+  night = false,
   onSelect,
 }: BusMarkerProps) {
   const onPress = useCallback(() => onSelect?.(vehicleId), [onSelect, vehicleId]);
-  const gliding = useSyncExternalStore(heading.subscribe, heading.get);
+  const gliding = useSyncExternalStore(glider.heading.subscribe, glider.heading.get);
+  // Mounted where the glide has got to, and never moved by props again: the
+  // glider moves it natively, and a changed prop would snap it.
+  const [coordinate] = useState(() => {
+    const at = glider.at();
+    return { latitude: at.lat, longitude: at.lng };
+  });
+  const attach = useCallback((marker: MapMarker | null) => glider.attach(marker), [glider]);
   const bearing = gliding ?? fixBearing;
   const solid = primary || selected;
   const size = solid ? 34 : 28;
@@ -98,13 +89,13 @@ export const BusMarker = memo(function BusMarker({
   const hasHeading = typeof bearing === 'number' && Number.isFinite(bearing);
   const inset = (FRAME - size) / 2;
   // The bus model seen from above at its heading, when the model is bundled.
-  const sprite = spriteForBearing(hasHeading ? bearing : SIDE_ON);
+  const sprite = spriteForBearing(hasHeading ? bearing : SIDE_ON, kind, night);
 
   return (
-    <MarkerAnimated
-      coordinate={
-        region as unknown as React.ComponentProps<typeof MarkerAnimated>['coordinate']
-      }
+    <Marker
+      ref={attach}
+      identifier={vehicleId}
+      coordinate={coordinate}
       flat
       zIndex={selected ? 4 : primary ? 3 : 2}
       displayPriority="required"
@@ -133,10 +124,7 @@ export const BusMarker = memo(function BusMarker({
         {!sprite && hasHeading ? (
           <View style={[styles.frameFill, { transform: [{ rotate: `${bearing}deg` }] }]}>
             <View
-              style={[
-                styles.wedge,
-                { top: inset - WEDGE_GAP - WEDGE_H, borderBottomColor: ink },
-              ]}
+              style={[styles.wedge, { top: inset - WEDGE_GAP - WEDGE_H, borderBottomColor: ink }]}
             />
           </View>
         ) : null}
@@ -178,7 +166,7 @@ export const BusMarker = memo(function BusMarker({
           />
         ) : null}
       </View>
-    </MarkerAnimated>
+    </Marker>
   );
 });
 

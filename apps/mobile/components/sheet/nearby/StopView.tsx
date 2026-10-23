@@ -1,5 +1,5 @@
 import { haversineMeters, walkingMinutes, type TransitNetwork } from '@bus-tracker/shared';
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useMemo, useRef } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { EmptyState } from '@/components/sheet/EmptyState';
@@ -17,12 +17,12 @@ import { formatClockHHMM } from '@/components/tracker/logic';
 import { Hairline, LinkRow, SectionLabel } from '@/components/trip/Rows';
 import { SheetBody } from '@/components/trip/SheetBody';
 import { DetailHeader } from '@/components/trip/SheetHeader';
+import { useNow } from '@/hooks/useNow';
 import { useSettings } from '@/hooks/useSettings';
 import { useTransitNetwork } from '@/hooks/useTransitNetwork';
 import { useNearby, type NearbyView } from '@/state/NearbyContext';
 import { useTrip } from '@/state/TripContext';
 import { color, MARGIN, space, type } from '@/theme/design';
-import { devNow } from '@/utils/devClock';
 
 /** The next times are refreshed this often while the stop is open. */
 const REFRESH_MS = 30_000;
@@ -55,11 +55,7 @@ export function StopView({
   if (found) lastPlace.current = found;
   const place = found ?? lastPlace.current;
 
-  const [now, setNow] = useState(devNow);
-  useEffect(() => {
-    const t = setInterval(() => setNow(devNow()), REFRESH_MS);
-    return () => clearInterval(t);
-  }, []);
+  const now = useNow(REFRESH_MS);
 
   // Live only for your tracked route, and only at your stop while the feed
   // has its buses: that is the one route here with a live countdown (the

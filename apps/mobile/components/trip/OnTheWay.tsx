@@ -12,6 +12,7 @@ import { SymbolView } from 'expo-symbols';
 import { Pressable, StyleSheet, Text, useColorScheme, View } from 'react-native';
 import Animated, { useReducedMotion } from 'react-native-reanimated';
 
+import { formatMinutes, type NextStops } from '@/components/detail/nextStops';
 import { formatStopName } from '@/components/map/format';
 import { useSheetBodyHidden } from '@/components/trip/SheetBody';
 import type { StopRow } from '@/db/queries';
@@ -93,6 +94,49 @@ export function OnTheWay({
         onPress={onStopPress}
         flow={flow(i++)}
       />
+    </View>
+  );
+}
+
+/**
+ * Where this bus goes next, as the same timeline, for the bus opened full
+ * screen: the bus at the stop it's nearest, the next few stops with how long
+ * till it's there, and your stop after a gap if it's further along.
+ */
+export function NextStopsLine({ next }: { next: NextStops }) {
+  const lastAhead = next.ahead.length - 1;
+  const minutes = (m: number | null) => (m == null ? null : formatMinutes(m));
+  return (
+    <View>
+      <Row kind="bus" stop={next.near} trailing="now" first />
+      {next.ahead.map((s, i) =>
+        s.yours ? (
+          <Row
+            key={`${s.stop.stopId}-${s.stop.sequence}`}
+            kind="user"
+            stop={s.stop}
+            trailing={minutes(s.minutes)}
+            last={!next.yours && i === lastAhead}
+          />
+        ) : (
+          <Row
+            key={`${s.stop.stopId}-${s.stop.sequence}`}
+            kind="stop"
+            stop={s.stop}
+            trailing={minutes(s.minutes)}
+            last={!next.yours && i === lastAhead}
+          />
+        ),
+      )}
+      {next.yours && next.skipped > 0 ? (
+        <Row
+          kind="collapsed"
+          label={`${next.skipped} more ${next.skipped === 1 ? 'stop' : 'stops'}`}
+        />
+      ) : null}
+      {next.yours ? (
+        <Row kind="user" stop={next.yours.stop} trailing={minutes(next.yours.minutes)} last />
+      ) : null}
     </View>
   );
 }

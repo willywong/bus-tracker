@@ -42,6 +42,8 @@ export const color = {
   /** Live text on glass or paper: green deep enough to read. */
   liveText: dynamic('#1B7A34', '#4ADE7B'),
   warning: ios('systemOrange', '#FF9500'),
+  /** Warning text on paper: orange deep enough to read. */
+  warningText: dynamic('#B85300', '#FFB340'),
   /** Wash behind a warning tile: orange at low strength. */
   warningFill: dynamic('rgba(255,149,0,0.12)', 'rgba(255,159,10,0.18)'),
   critical: ios('systemRed', '#FF3B30'),

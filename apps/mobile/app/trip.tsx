@@ -180,7 +180,9 @@ export default function TripSheet() {
     router.push('/plan');
   }, [pendingOpen, clearPending, router]);
 
-  // Search is chrome (as in Apple Maps): the row tops the whole-sheet modes.
+  // Search is chrome (as in Apple Maps): the row tops Go and the ride. A bus
+  // or stop picked on the map leaves it out, as Nearby's views do: its back
+  // button is the way out, and search is on the map's bar.
   const whereTo = (
     <View ref={topRow} collapsable={false}>
       <WhereToRow
@@ -286,7 +288,8 @@ export default function TripSheet() {
     return (
       <EdgeSwipeBack key={key} onBack={back}>
         <SheetScroll contentContainerStyle={scrollStyle} scheme={scheme} swap>
-          {whereTo}
+          {/* Where the sheet's top is, for reading the detent it rests at. */}
+          <View ref={topRow} collapsable={false} />
           {sel.kind === 'stop' ? (
             <StopDetailSheet stopId={sel.stopId} peek={peek} onBack={back} onStopPress={openStop} />
           ) : (

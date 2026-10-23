@@ -3,12 +3,10 @@ import {
   type LatLng,
 } from '@bus-tracker/shared';
 import { useEffect, useState } from 'react';
-import { AppState, type AppStateStatus } from 'react-native';
 
 import { openDb } from '@/db/database';
 import { getStopTimesForTrip, type TripStopTimeRow } from '@/db/queries';
-
-const TICK_MS = 15_000;
+import { useNow } from '@/hooks/useNow';
 
 export interface UseScheduledBusPositionArgs {
   /**
@@ -50,7 +48,7 @@ export function useScheduledBusPosition({
   loop = true,
 }: UseScheduledBusPositionArgs): UseScheduledBusPositionResult {
   const [stopTimes, setStopTimes] = useState<TripStopTimeRow[] | null>(null);
-  const [now, setNow] = useState(() => Date.now());
+  const now = useNow();
 
   useEffect(() => {
     if (!tripId) {
@@ -79,18 +77,6 @@ export function useScheduledBusPosition({
       cancelled = true;
     };
   }, [tripId]);
-
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), TICK_MS);
-    return () => clearInterval(t);
-  }, []);
-
-  useEffect(() => {
-    const sub = AppState.addEventListener('change', (status: AppStateStatus) => {
-      if (status === 'active') setNow(Date.now());
-    });
-    return () => sub.remove();
-  }, []);
 
   if (
     !tripId ||

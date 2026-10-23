@@ -35,6 +35,7 @@ import { useSettings } from '@/hooks/useSettings';
 import { useStaticGtfs } from '@/hooks/useStaticGtfs';
 import { useRainNudge, useTripSideEffects } from '@/hooks/useTripSideEffects';
 import { useWalkTimer, type UseWalkTimerResult } from '@/hooks/useWalkTimer';
+import { useNow } from '@/hooks/useNow';
 import { sheetNavDirection } from '@/components/trip/sheetTransition';
 import {
   claimRailFocus,
@@ -45,7 +46,6 @@ import {
   type RailFocusClaims,
 } from '@/components/rail/railFocus';
 import { SHEET_INITIAL_DETENT, type DetentIndex } from '@/theme/design';
-import { devNow } from '@/utils/devClock';
 import { ensureNotificationPermission } from '@/services/reminders/notifications';
 import type { RainNudge } from '@/services/weather';
 import { haptics } from '@/utils/haptics';
@@ -138,11 +138,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
   const bus = useBusPosition({ routeCode: routeCode || undefined });
   const walk = useWalkTimer(settings.walkMinutes);
 
-  const [now, setNow] = useState(() => devNow());
-  useEffect(() => {
-    const t = setInterval(() => setNow(devNow()), 15_000);
-    return () => clearInterval(t);
-  }, []);
+  const now = useNow();
 
   const [detent, setDetent] = useState<DetentIndex>(SHEET_INITIAL_DETENT);
   const [holdPeek, setHoldPeek] = useState(false);
@@ -341,15 +337,16 @@ export function TripProvider({ children }: { children: ReactNode }) {
     // Strict: a press handler passed straight through hands in its event.
     if (opts?.silent !== true) haptics.light();
   }, []);
+  const { start: startWalk, cancel: cancelWalk } = walk;
   const startWalking = useCallback(() => {
     setIsFollowing(true);
-    void walk.start();
+    void startWalk();
     haptics.success();
-  }, [walk]);
+  }, [startWalk]);
   const cancelWalking = useCallback(() => {
-    void walk.cancel();
+    void cancelWalk();
     haptics.light();
-  }, [walk]);
+  }, [cancelWalk]);
 
   const routeLoadFailed = !!routeCode && route == null && gtfs.failed.has(routeCode);
   const retryRouteLoad = useCallback(() => {

@@ -4,8 +4,10 @@ import { StyleSheet, Text, View } from 'react-native';
 import { Marker, Polyline } from 'react-native-maps';
 
 import { formatStopName } from '@/components/map/format';
+import { LandmarkFrame } from '@/components/map/Landmark';
 import type { RouteSplit } from '@/components/map/routeSplit';
 import type { StopRow } from '@/db/queries';
+import { landmarkSprite } from '@/modules/bus-model';
 
 export interface RailStationMark {
   id: string;
@@ -36,6 +38,14 @@ interface RouteLayerProps {
   onStopPress?: (stopId: string) => void;
   /** Your own stop: tapping it goes back to the trip. */
   onUserStopPress?: () => void;
+  /** Zoomed in to street level: stops and stations are drawn as little buildings. */
+  close?: boolean;
+  /** The MRT station the feeder ends at, drawn as a landmark; null when it isn't one. */
+  terminus?: RailStationMark | null;
+  /** Zoomed out past where the terminus landmark reads. */
+  terminusHidden?: boolean;
+  /** A dark map: the buildings have their lights on. */
+  night?: boolean;
 }
 
 // Apple Maps ignores `anchor` and centres every marker view on its
@@ -60,6 +70,12 @@ const LABEL_BAND = LABEL_GAP + CHIP_HEIGHT;
 const LABELLED_WIDTH = 168;
 const RAIL = 20;
 const DEST = 26;
+/** Landmark sprites: a stop shelter, the selected one, your stop, a station, the MRT station. */
+const SHELTER = 36;
+const SHELTER_SELECTED = 46;
+const YOUR_STOP = 56;
+const STATION = 32;
+const MRT = 80;
 
 /**
  * Route geometry in Calm Mono: an ink line on a paper casing — light ink
@@ -87,8 +103,17 @@ export const RouteLayer = memo(function RouteLayer({
   selectedStopId = null,
   onStopPress,
   onUserStopPress,
+  close = false,
+  terminus = null,
+  terminusHidden = false,
+  night = false,
 }: RouteLayerProps) {
   if (polyline.length < 2) return null;
+  const shelter = close ? landmarkSprite('shelter', night) : null;
+  const yourStop = close ? landmarkSprite('your-stop', night) : null;
+  const station = close ? landmarkSprite('station', night) : null;
+  const band = landmarkSprite('station-band');
+  const mrt = terminus && !terminusHidden ? landmarkSprite('mrt-station', night) : null;
   return (
     <>
       <Polyline
@@ -136,38 +161,75 @@ export const RouteLayer = memo(function RouteLayer({
             onPress={onStopPress ? () => onStopPress(s.stop_id) : undefined}
             accessibilityLabel={`Stop: ${formatStopName(s.stop_name)}`}
           >
-            <View style={styles.stopHit} collapsable={false}>
-              <View
-                style={[
-                  selected ? styles.stopSelected : styles.stopRing,
-                  { borderColor: selected ? paper : ink, backgroundColor: selected ? ink : paper },
-                ]}
+            {shelter ? (
+              <LandmarkFrame
+                uri={shelter}
+                size={selected ? SHELTER_SELECTED : SHELTER}
+                halo={selected ? ink : null}
               />
-            </View>
+            ) : (
+              <View style={styles.stopHit} collapsable={false}>
+                <View
+                  style={[
+                    selected ? styles.stopSelected : styles.stopRing,
+                    {
+                      borderColor: selected ? paper : ink,
+                      backgroundColor: selected ? ink : paper,
+                    },
+                  ]}
+                />
+              </View>
+            )}
           </Marker>
         );
       })}
-      {railStations.map((r) => (
-        <Marker
-          key={`rail-${r.id}`}
-          coordinate={{ latitude: r.lat, longitude: r.lng }}
-          flat
-          zIndex={1}
-          displayPriority="high"
-          accessibilityLabel={`Rail station: ${r.name}`}
-        >
-          <View
-            style={[
-              styles.rail,
-              { borderColor: ink, backgroundColor: paper, width: RAIL + (r.colors.length - 1) * 9 },
-            ]}
+      {railStations.map((r) =>
+        mrt && r.id === terminus?.id ? null : (
+          <Marker
+            key={`rail-${r.id}`}
+            coordinate={{ latitude: r.lat, longitude: r.lng }}
+            flat
+            zIndex={1}
+            displayPriority="high"
+            accessibilityLabel={`Rail station: ${r.name}`}
           >
-            {r.colors.map((c) => (
-              <View key={c} style={[styles.railDot, { backgroundColor: c }]} />
-            ))}
-          </View>
+            {station ? (
+              <LandmarkFrame
+                uri={station}
+                size={STATION}
+                band={band && r.colors[0] ? { uri: band, tint: r.colors[0] } : null}
+              />
+            ) : (
+              <View
+                style={[
+                  styles.rail,
+                  {
+                    borderColor: ink,
+                    backgroundColor: paper,
+                    width: RAIL + (r.colors.length - 1) * 9,
+                  },
+                ]}
+              >
+                {r.colors.map((c) => (
+                  <View key={c} style={[styles.railDot, { backgroundColor: c }]} />
+                ))}
+              </View>
+            )}
+          </Marker>
+        ),
+      )}
+      {mrt && terminus ? (
+        // Where the feeder meets the train: it should read as a station from afar.
+        <Marker
+          key={`terminus-${terminus.id}`}
+          coordinate={{ latitude: terminus.lat, longitude: terminus.lng }}
+          zIndex={1}
+          displayPriority="required"
+          accessibilityLabel={`MRT station: ${terminus.name}, where this bus ends`}
+        >
+          <LandmarkFrame uri={mrt} size={MRT} />
         </Marker>
-      ))}
+      ) : null}
       {destination ? (
         <Marker
           coordinate={{ latitude: destination.lat, longitude: destination.lng }}
@@ -190,35 +252,49 @@ export const RouteLayer = memo(function RouteLayer({
           onPress={onUserStopPress}
           accessibilityLabel={`Your stop: ${formatStopName(userStop.stop_name)}`}
         >
-          <View style={styles.userStopWrap} collapsable={false}>
-            <View style={styles.labelBand} />
-            <View style={styles.pinArea}>
-              <View style={[styles.halo, { backgroundColor: ink }]} />
-              <View style={[styles.pin, { backgroundColor: ink, borderColor: paper }]}>
-                <SymbolView
-                  name="figure.stand"
-                  size={15}
-                  weight="semibold"
-                  tintColor={paper}
-                  resizeMode="scaleAspectFit"
-                />
+          {yourStop ? (
+            <LandmarkFrame
+              uri={yourStop}
+              size={YOUR_STOP}
+              below={LABEL_BAND}
+              width={LABELLED_WIDTH}
+            >
+              <View style={[styles.chip, { backgroundColor: paper, borderColor: `${ink}26` }]}>
+                <Text
+                  numberOfLines={1}
+                  allowFontScaling={false}
+                  style={[styles.chipText, { color: ink }]}
+                >
+                  {formatStopName(userStop.stop_name)}
+                </Text>
+              </View>
+            </LandmarkFrame>
+          ) : (
+            <View style={styles.userStopWrap} collapsable={false}>
+              <View style={styles.labelBand} />
+              <View style={styles.pinArea}>
+                <View style={[styles.halo, { backgroundColor: ink }]} />
+                <View style={[styles.pin, { backgroundColor: ink, borderColor: paper }]}>
+                  <SymbolView
+                    name="figure.stand"
+                    size={15}
+                    weight="semibold"
+                    tintColor={paper}
+                    resizeMode="scaleAspectFit"
+                  />
+                </View>
+              </View>
+              <View style={[styles.chip, { backgroundColor: paper, borderColor: `${ink}26` }]}>
+                <Text
+                  numberOfLines={1}
+                  allowFontScaling={false}
+                  style={[styles.chipText, { color: ink }]}
+                >
+                  {formatStopName(userStop.stop_name)}
+                </Text>
               </View>
             </View>
-            <View
-              style={[
-                styles.chip,
-                { backgroundColor: paper, borderColor: `${ink}26` },
-              ]}
-            >
-              <Text
-                numberOfLines={1}
-                allowFontScaling={false}
-                style={[styles.chipText, { color: ink }]}
-              >
-                {formatStopName(userStop.stop_name)}
-              </Text>
-            </View>
-          </View>
+          )}
         </Marker>
       ) : null}
     </>

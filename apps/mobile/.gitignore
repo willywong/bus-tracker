@@ -41,12 +41,24 @@ yarn-error.*
 /android
 
 # The bus models and their sprites are ours (scripts/build-feeder-bus.py,
-# scripts/build-lrt-bus.py) and committed; the reference photos beside them
-# are others' and stay local.
+# scripts/build-lrt-bus.py, scripts/render-night-buses.py), as are the map
+# landmarks (scripts/build-map-landmarks.py), and committed; the reference
+# photos beside them are others' and stay local.
 /modules/bus-model/ios/Assets/*
 !/modules/bus-model/ios/Assets/RapidBus.usdz
 !/modules/bus-model/ios/Assets/map-bus-*.png
 !/modules/bus-model/ios/Assets/pill-bus.png
+!/modules/bus-model/ios/Assets/pill-bus-night.png
 !/modules/bus-model/ios/Assets/RapidKLBus.usdz
 !/modules/bus-model/ios/Assets/map-rapid-*.png
 !/modules/bus-model/ios/Assets/pill-rapid.png
+!/modules/bus-model/ios/Assets/pill-rapid-night.png
+!/modules/bus-model/ios/Assets/map-shelter.png
+!/modules/bus-model/ios/Assets/map-shelter-night.png
+!/modules/bus-model/ios/Assets/map-your-stop.png
+!/modules/bus-model/ios/Assets/map-your-stop-night.png
+!/modules/bus-model/ios/Assets/map-mrt-station.png
+!/modules/bus-model/ios/Assets/map-mrt-station-night.png
+!/modules/bus-model/ios/Assets/map-station.png
+!/modules/bus-model/ios/Assets/map-station-night.png
+!/modules/bus-model/ios/Assets/map-station-band.png

@@ -110,6 +110,14 @@ function AppStack() {
           }}
         />
         <Stack.Screen
+          name="bus"
+          options={{
+            // Zooms open from the sheet's 3D bus (Link.AppleZoom in Bus3D).
+            presentation: 'fullScreenModal',
+            contentStyle: { backgroundColor: SHEET_BACKGROUND },
+          }}
+        />
+        <Stack.Screen
           name="add-route"
           options={{
             presentation: 'formSheet',

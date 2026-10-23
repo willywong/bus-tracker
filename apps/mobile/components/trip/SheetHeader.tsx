@@ -41,6 +41,8 @@ interface SheetHeaderProps {
    * the strip, the status line and the compact number.
    */
   peekContent?: ReactNode;
+  /** At the row's end when not at peek, e.g. the live and weather capsule. */
+  accessory?: ReactNode;
 }
 
 /**
@@ -58,6 +60,7 @@ export function SheetHeader({
   compact,
   strip,
   peekContent,
+  accessory,
 }: SheetHeaderProps) {
   const card = peekContent != null;
   return (
@@ -70,6 +73,7 @@ export function SheetHeader({
         status={status}
         source={source}
         compact={compact}
+        accessory={accessory}
       />
       <PeekLayer peek={peek} strip={strip} content={peekContent} />
     </View>
@@ -178,6 +182,7 @@ function HeaderRow({
   status,
   source,
   compact,
+  accessory,
 }: Omit<SheetHeaderProps, 'strip'>) {
   return (
     <View style={styles.row} accessibilityRole="header">
@@ -209,6 +214,7 @@ function HeaderRow({
           {compact.unit ? <Text style={styles.compactUnit}>{compact.unit}</Text> : null}
         </Animated.View>
       ) : null}
+      {peek ? null : accessory}
     </View>
   );
 }

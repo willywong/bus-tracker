@@ -4,7 +4,8 @@ import { useCallback, useMemo } from 'react';
 import { Linking, Share, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, useReducedMotion } from 'react-native-reanimated';
 
-import { Bus3D } from '@/components/detail/Bus3D';
+import { Bus3D, hasBus3D } from '@/components/detail/Bus3D';
+import { busKindOf } from '@/modules/bus-model';
 import { formatClockHHMM } from '@/components/tracker/logic';
 import { Connections } from '@/components/trip/Connections';
 import { BusPosition } from '@/components/trip/BusPosition';
@@ -96,6 +97,11 @@ export function TripView({ scheme }: { scheme: 'light' | 'dark' }) {
     trip.journey.userStop != null &&
     trip.journey.busStop != null;
   const hasLastBus = model.notes.some((n) => n.id === 'last-bus');
+  // Live or scheduled, and the weather and other warnings: a glass capsule at
+  // the header's end, opening the details. Empty states list them inline.
+  const status = tripStatusItem(model);
+  const warnings = [...(status ? [status] : []), ...tripWarnings(model, settings.walkMinutes)];
+  const hero = showsHero(model.state);
 
   return (
     <>
@@ -106,16 +112,36 @@ export function TripView({ scheme }: { scheme: 'light' | 'dark' }) {
         status={null}
         source={model.source}
         compact={model.hero}
+        accessory={
+          hero && warnings.length > 0 ? (
+            <WarningBadges items={warnings} onPress={() => router.push('/warnings')} />
+          ) : null
+        }
       />
 
       <SheetBody peek={false}>
-        <StateBody scheme={scheme} />
+        {hero ? (
+          <>
+            {/* Under the route and stop, in view as the sheet opens: the pill's bus lands here. */}
+            <View style={hasBus3D ? styles.heroRow : null}>
+              <Bus3D
+                kind={busKindOf(trip.stopId)}
+                routeCode={trip.routeCode}
+                destination={destination}
+                style={styles.bus}
+                opens={{ vehicleId: trip.eta.primaryArrival?.live?.vehicleId ?? null }}
+              />
+              <TripHero align={hasBus3D ? 'end' : 'start'} />
+            </View>
+            {model.facts.map((f) => (
+              <BusPosition key={f.id} title={f.value} caption={f.caption} />
+            ))}
+          </>
+        ) : (
+          <StateBody scheme={scheme} />
+        )}
 
-        <TripRows
-          model={model}
-          walkMinutes={settings.walkMinutes}
-          inlineWarnings={!showsHero(model.state)}
-        />
+        <TripRows model={model} walkMinutes={settings.walkMinutes} inlineWarnings={!hero} />
 
         {(model.state === 'arrival' || model.action.kind === 'walking') &&
         model.action.kind !== 'tight' ? (
@@ -128,10 +154,6 @@ export function TripView({ scheme }: { scheme: 'light' | 'dark' }) {
             onStartWalking={trip.startWalking}
             onCancelWalking={trip.cancelWalking}
           />
-        ) : null}
-
-        {showsHero(model.state) ? (
-          <Bus3D routeCode={trip.routeCode} destination={destination} />
         ) : null}
 
         {journeyShown ? (
@@ -246,15 +268,28 @@ function showsHero(state: TripState): boolean {
   return !(state === 'loading' || state === 'service-ended' || state === 'no-service');
 }
 
-/** Hero area for the current state — the map above never changes. */
+/**
+ * The minutes and their status line, crossfading when the state changes
+ * (arriving, at stop), beside the bus, which stays put.
+ */
+function TripHero({ align }: { align: 'start' | 'end' }) {
+  const { model } = useTrip();
+  const reduceMotion = useReducedMotion();
+  return (
+    <Animated.View
+      key={model.state}
+      entering={reduceMotion ? undefined : FadeIn.duration(motion.crossfade)}
+      style={styles.hero}
+    >
+      <HeroBlock model={model} align={align} />
+    </Animated.View>
+  );
+}
+
+/** The body for states without the hero number: loading, ended, no service. */
 function StateBody({ scheme }: { scheme: 'light' | 'dark' }) {
   const trip = useTrip();
-  const settings = useSettings();
-  const router = useRouter();
   const { model } = trip;
-  const reduceMotion = useReducedMotion();
-  const status = tripStatusItem(model);
-  const warnings = [...(status ? [status] : []), ...tripWarnings(model, settings.walkMinutes)];
 
   switch (model.state) {
     case 'loading':
@@ -272,7 +307,7 @@ function StateBody({ scheme }: { scheme: 'light' | 'dark' }) {
         );
       }
       return (
-        <View style={styles.heroBlock}>
+        <View style={styles.loading}>
           <View style={styles.placeholderNumber} />
           <Text style={styles.muted}>{model.status}</Text>
         </View>
@@ -298,30 +333,26 @@ function StateBody({ scheme }: { scheme: 'light' | 'dark' }) {
         />
       );
     default:
-      return (
-        <Animated.View
-          key={model.state}
-          entering={reduceMotion ? undefined : FadeIn.duration(motion.crossfade)}
-          style={styles.heroBlock}
-        >
-          <HeroBlock
-            model={model}
-            accessory={
-              warnings.length > 0 ? (
-                <WarningBadges items={warnings} onPress={() => router.push('/warnings')} />
-              ) : null
-            }
-          />
-          {model.facts.map((f) => (
-            <BusPosition key={f.id} title={f.value} caption={f.caption} />
-          ))}
-        </Animated.View>
-      );
+      return null;
   }
 }
 
 const styles = StyleSheet.create({
-  heroBlock: {
+  // The bus bleeding off the left edge, the minutes on the right.
+  heroRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+  },
+  bus: {
+    flex: 1,
+    height: 150,
+    marginLeft: -MARGIN,
+  },
+  hero: {
+    flexShrink: 0,
+  },
+  loading: {
     gap: space.lg,
   },
   placeholderNumber: {

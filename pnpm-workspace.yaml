@@ -4,3 +4,4 @@ packages:
 nodeLinker: hoisted
 patchedDependencies:
   expo-quick-actions@6.0.2: patches/expo-quick-actions@6.0.2.patch
+  react-native-maps@1.29.11: patches/react-native-maps@1.29.11.patch

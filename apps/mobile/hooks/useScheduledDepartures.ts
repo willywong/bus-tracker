@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { AppState, type AppStateStatus } from "react-native";
+import { useEffect, useMemo, useState } from "react";
 import { openDb } from "@/db/database";
 import {
   getNextScheduledDepartures,
@@ -7,8 +6,8 @@ import {
   type ScheduledDeparture,
   type ServiceDayBounds,
 } from "@/db/queries";
+import { useNow } from "@/hooks/useNow";
 import { useStaticGtfs } from "@/hooks/useStaticGtfs";
-import { devNow } from "@/utils/devClock";
 
 const REFRESH_MS = 30_000;
 const DEFAULT_LIMIT = 8;
@@ -47,26 +46,11 @@ export function useScheduledDepartures(
     ready: false,
     error: null,
   });
-  const [now, setNow] = useState(() => devNow());
-  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // Re-query every 30s — schedule data is static so we just need `now` to
-  // advance for `serviceEnded` / `beforeServiceStart` / the upcoming window.
-  useEffect(() => {
-    tickRef.current = setInterval(() => setNow(devNow()), REFRESH_MS);
-    return () => {
-      if (tickRef.current) clearInterval(tickRef.current);
-    };
-  }, []);
-
-  // Immediate re-query on foreground — covers the case where the phone was
-  // asleep for an hour and the in-memory `upcoming` list is stale.
-  useEffect(() => {
-    const sub = AppState.addEventListener("change", (status: AppStateStatus) => {
-      if (status === "active") setNow(devNow());
-    });
-    return () => sub.remove();
-  }, []);
+  // Re-query every 30s on the shared clock (and on returning to the
+  // foreground, when the phone may have slept for an hour): schedule data is
+  // static, so only `now` moves `serviceEnded` / `beforeServiceStart` / the
+  // upcoming window.
+  const now = useNow(REFRESH_MS);
 
   useEffect(() => {
     if (!staticGtfs.ready) return;

@@ -1,5 +1,5 @@
 import * as SecureStore from 'expo-secure-store';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 const WALK_STARTED_KEY = 't816.walkStartedAt';
 
@@ -64,5 +64,9 @@ export function useWalkTimer(walkMinutes: number): UseWalkTimerResult {
     setWalkStartedAt(null);
   }, []);
 
-  return { remainingSeconds, isWalking, start, cancel };
+  // Stable between ticks: the trip context's value depends on it.
+  return useMemo(
+    () => ({ remainingSeconds, isWalking, start, cancel }),
+    [remainingSeconds, isWalking, start, cancel],
+  );
 }

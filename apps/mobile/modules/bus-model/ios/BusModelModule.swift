@@ -8,20 +8,79 @@ public class BusModelModule: Module {
     Name("BusModel")
 
     Constant("hasModel") {
-      BusAsset.assetURL() != nil
+      BusAsset.assetURL(.feeder) != nil && BusAsset.assetURL(.rapid) != nil
     }
 
+    // Each keyed by bus kind ("feeder", "rapid").
     Constant("mapSprites") {
-      BusAsset.mapSpriteURLs().map(\.absoluteString)
+      Dictionary(uniqueKeysWithValues: BusKind.allCases.map {
+        ($0.rawValue, BusAsset.mapSpriteURLs($0).map(\.absoluteString))
+      })
     }
 
-    Constant("pillIcon") {
-      BusAsset.pillIconURL()?.absoluteString
+    Constant("pillIcons") {
+      Dictionary(uniqueKeysWithValues: BusKind.allCases.compactMap { kind in
+        BusAsset.pillIconURL(kind).map { (kind.rawValue, $0.absoluteString) }
+      })
     }
+
+    // The same, lit for the night; empty where the build has none.
+    Constant("nightSprites") {
+      Dictionary(uniqueKeysWithValues: BusKind.allCases.map {
+        ($0.rawValue, BusAsset.mapSpriteURLs($0, night: true).map(\.absoluteString))
+      })
+    }
+
+    Constant("nightPillIcons") {
+      Dictionary(uniqueKeysWithValues: BusKind.allCases.compactMap { kind in
+        BusAsset.pillIconURL(kind, night: true).map { (kind.rawValue, $0.absoluteString) }
+      })
+    }
+
+    // Stop shelters, rail stations and the MRT landmark, by name.
+    Constant("landmarks") {
+      BusAsset.landmarkURLs().mapValues(\.absoluteString)
+    }
+
+    // The pill's bus, at this frame in window points, flying into the sheet
+    // that's about to open.
+    AsyncFunction("launch") { (x: Double, y: Double, width: Double, height: Double, kind: String) in
+      MainActor.assumeIsolated {
+        BusFlight.launch(
+          from: CGRect(x: x, y: y, width: width, height: height), kind: BusKind(rawValue: kind) ?? .feeder)
+      }
+    }.runOnQueue(.main)
+
+    // Ride along: the map camera follows the bus marker with this identifier.
+    AsyncFunction("rideAlong") { (identifier: String, heading: Double, bottomInset: Double) in
+      MainActor.assumeIsolated {
+        RideAlong.start(identifier: identifier, heading: heading, bottomInset: bottomInset)
+      }
+    }.runOnQueue(.main)
+
+    AsyncFunction("rideAlongTurn") { (heading: Double) in
+      MainActor.assumeIsolated { RideAlong.turn(heading) }
+    }.runOnQueue(.main)
+
+    AsyncFunction("rideAlongInset") { (bottomInset: Double) in
+      MainActor.assumeIsolated { RideAlong.inset(bottomInset) }
+    }.runOnQueue(.main)
+
+    AsyncFunction("rideAlongPause") {
+      MainActor.assumeIsolated { RideAlong.pause() }
+    }.runOnQueue(.main)
+
+    AsyncFunction("rideAlongStop") {
+      MainActor.assumeIsolated { RideAlong.stop() }
+    }.runOnQueue(.main)
 
     View(BusModelView.self) {
       Prop("routeCode") { (view, code: String) in
         view.routeCode = code
+      }
+
+      Prop("kind") { (view, kind: String?) in
+        view.kind = kind.flatMap(BusKind.init(rawValue:)) ?? .feeder
       }
 
       Prop("destination") { (view, destination: String?) in
