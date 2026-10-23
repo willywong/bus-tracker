@@ -1,6 +1,15 @@
 import { RAIL_LINES } from '@bus-tracker/shared';
 import { SymbolView } from 'expo-symbols';
-import { ScrollView, StyleSheet, Text, View, type ColorValue } from 'react-native';
+import { memo, useCallback, type ReactNode } from 'react';
+import { StyleSheet, Text, View, type ColorValue, type LayoutChangeEvent } from 'react-native';
+import { GestureDetector, usePanGesture } from 'react-native-gesture-handler';
+import Animated, {
+  cancelAnimation,
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withDecay,
+} from 'react-native-reanimated';
 
 import { RowButton } from '@/components/ui/RowButton';
 import { color, space, type } from '@/theme/design';
@@ -23,7 +32,10 @@ const TEXT_ON = new Map(RAIL_LINES.map((l) => [l.code, l.textColor]));
  * every stop is a readable row.
  *
  * A solid bar, not glass: glass in a sheet at its largest detent draws
- * nothing until the sheet moves.
+ * nothing until the sheet moves. The chips slide on a gesture-handler pan
+ * rather than a ScrollView: on iOS 27 UIKit adopts the sheet's only
+ * UIScrollView as its content scroll view and moves its content up under
+ * the header, leaving the bar empty.
  */
 export function LineChips({
   lines,
@@ -67,13 +79,9 @@ export function LineChips({
         </View>
       ) : null}
       <View style={[styles.bar, { paddingBottom: bottomInset }]}>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.chips}
-          keyboardShouldPersistTaps="handled"
-        >
+        <ChipStrip>
           <Chip
+            code=""
             label="All"
             selected={all}
             onPress={onAll}
@@ -83,22 +91,78 @@ export function LineChips({
           {lines.map((line) => (
             <Chip
               key={line.code}
+              code={line.code}
               badge={chipBadge(line)}
               label={chipName(line)}
               a11y={line.name}
               selected={selection.has(line.code)}
-              onPress={() => onToggle(line.code)}
+              onPress={onToggle}
               fill={line.color}
               textOn={TEXT_ON.get(line.code) ?? '#FFFFFF'}
             />
           ))}
-        </ScrollView>
+        </ChipStrip>
       </View>
     </View>
   );
 }
 
-function Chip({
+/**
+ * A row wider than the screen that slides sideways under a finger and
+ * coasts (unless Reduce Motion is on), held between its two ends. A tap
+ * still reaches a chip; once the pan takes over, the chip's press cancels.
+ */
+function ChipStrip({ children }: { children: ReactNode }) {
+  const reduceMotion = useReducedMotion();
+  const x = useSharedValue(0);
+  const barWidth = useSharedValue(0);
+  const rowWidth = useSharedValue(0);
+
+  const onBar = useCallback(
+    (e: LayoutChangeEvent) => barWidth.set(e.nativeEvent.layout.width),
+    [barWidth],
+  );
+  const onRow = useCallback(
+    (e: LayoutChangeEvent) => rowWidth.set(e.nativeEvent.layout.width),
+    [rowWidth],
+  );
+
+  const pan = usePanGesture({
+    activeOffsetX: [-8, 8],
+    failOffsetY: [-12, 12],
+    onActivate: () => {
+      'worklet';
+      cancelAnimation(x);
+    },
+    onUpdate: (e) => {
+      'worklet';
+      const lo = Math.min(0, barWidth.get() - rowWidth.get());
+      x.set(Math.min(0, Math.max(lo, x.get() + e.changeX)));
+    },
+    onDeactivate: (e) => {
+      'worklet';
+      if (reduceMotion) return;
+      const lo = Math.min(0, barWidth.get() - rowWidth.get());
+      x.set(withDecay({ velocity: e.velocityX, clamp: [lo, 0] }));
+    },
+  });
+
+  const slid = useAnimatedStyle(() => ({ transform: [{ translateX: x.get() }] }));
+
+  return (
+    <GestureDetector gesture={pan}>
+      <View style={styles.strip} onLayout={onBar} collapsable={false}>
+        <Animated.View style={[styles.chips, slid]} onLayout={onRow}>
+          {children}
+        </Animated.View>
+      </View>
+    </GestureDetector>
+  );
+}
+
+/** One chip, re-rendered only when its own pick changes. */
+const Chip = memo(function Chip({
+  code,
   badge,
   label,
   a11y,
@@ -107,17 +171,19 @@ function Chip({
   fill,
   textOn,
 }: {
+  code: string;
   badge?: string;
   label: string;
   a11y?: string;
   selected: boolean;
-  onPress: () => void;
+  /** Called with `code`, so one stable handler serves every chip. */
+  onPress: (code: string) => void;
   /** The line's colour (or ink for All): the badge unpicked, the whole chip picked. */
   fill: ColorValue;
   textOn: ColorValue;
 }) {
   return (
-    <RowButton onPress={onPress} accessibilityLabel={a11y ?? label}>
+    <RowButton onPress={() => onPress(code)} accessibilityLabel={a11y ?? label}>
       <View
         style={[styles.chip, selected && { backgroundColor: fill }]}
         accessibilityState={{ selected }}
@@ -139,7 +205,7 @@ function Chip({
       </View>
     </RowButton>
   );
-}
+});
 
 const styles = StyleSheet.create({
   wrap: {
@@ -153,7 +219,13 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: color.hairline,
   },
+  strip: {
+    height: CHIP_BAR_HEIGHT,
+    overflow: 'hidden',
+  },
   chips: {
+    flexDirection: 'row',
+    alignSelf: 'flex-start',
     alignItems: 'center',
     gap: space.xs,
     paddingHorizontal: space.md,

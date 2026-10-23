@@ -62,6 +62,30 @@ const overlaps = (a: Rect, b: Rect, pad: number) =>
   a.y < b.y + b.height + pad &&
   b.y < a.y + a.height + pad;
 
+const inside = (r: Rect, f: Rect) =>
+  r.x >= f.x && r.y >= f.y && r.x + r.width <= f.x + f.width && r.y + r.height <= f.y + f.height;
+
+/** The station with its name on the other side, or null for a centred name. */
+function flip(s: DiagramStation): DiagramStation | null {
+  const l = s.label!;
+  if (l.anchor === 'middle') return null;
+  return { ...s, label: { dx: -l.dx, dy: l.dy, anchor: l.anchor === 'start' ? 'end' : 'start' } };
+}
+
+/**
+ * The part of the drawing a transform shows between the header and the
+ * bars, in diagram points, `pad` screen points in from each edge: the frame
+ * a fitted view keeps its names inside.
+ */
+export function visibleRect(t: Transform, view: Viewport, pad = 6): Rect {
+  return {
+    x: (pad - t.x) / t.scale,
+    y: (view.top + pad - t.y) / t.scale,
+    width: (view.width - pad * 2) / t.scale,
+    height: (view.height - view.top - view.bottom - pad * 2) / t.scale,
+  };
+}
+
 /** `r` grown by `k` about (`cx`, `cy`). */
 const grow = (r: Rect, cx: number, cy: number, k: number): Rect => ({
   x: cx + (r.x - cx) * k,
@@ -77,6 +101,7 @@ export function placeLabels(
   sel: LineSelection,
   step: number,
   grid: number,
+  frame: Rect | null = null,
 ): PlacedLabel[] {
   const shown = shownStations(sel, lines);
   const k = labelGrowth(step);
@@ -109,15 +134,24 @@ export function placeLabels(
   const placed: PlacedLabel[] = [];
   const taken: Rect[] = [];
   const pad = LABEL_GAP / step;
-  for (const { s } of candidates) {
-    const label = s.label!;
+  for (const { s: station } of candidates) {
+    let s = station;
     const cx = s.x * grid;
     const cy = s.y * grid;
+    const boxOf = (st: DiagramStation) => grow(labelRect(st, grid)!, cx, cy, k);
+    let box = boxOf(s);
+    if (frame && !inside(box, frame)) {
+      // Across the screen edge: try the station's other side, else leave it out.
+      const flipped = flip(s);
+      if (!flipped || !inside(boxOf(flipped), frame)) continue;
+      s = flipped;
+      box = boxOf(s);
+    }
     if (k > 1) {
-      const box = grow(labelRect(s, grid)!, cx, cy, k);
       if (taken.some((t) => overlaps(t, box, pad))) continue;
       taken.push(box);
     }
+    const label = s.label!;
     placed.push({
       id: s.id,
       name: s.name,
@@ -130,12 +164,6 @@ export function placeLabels(
   }
   return placed;
 }
-
-/**
- * Furthest a line fit zooms out: below the whole network's fit on a phone,
- * so a long line's names still fit across the screen.
- */
-export const FIT_MIN_SCALE = 0.1;
 
 /**
  * The picked lines fitted with their names in the uncovered part of `view`.
@@ -155,7 +183,7 @@ export function fitWithLabels(
   for (let step = LABEL_FULL_SCALE; step > 0.05; step = labelStep(step * 0.99)) {
     const box = selectionBounds(sel, stations, lines, grid, labelGrowth(step));
     if (!box) return null;
-    t = fitRectTransform(box, content, view, FIT_MIN_SCALE);
+    t = fitRectTransform(box, content, view);
     if (labelStep(t.scale) >= step) return t;
   }
   return t;

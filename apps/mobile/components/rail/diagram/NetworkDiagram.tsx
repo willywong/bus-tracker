@@ -10,7 +10,6 @@ import {
 } from 'react-native-gesture-handler';
 import Animated, {
   cancelAnimation,
-  useAnimatedReaction,
   useAnimatedStyle,
   useReducedMotion,
   useSharedValue,
@@ -24,7 +23,13 @@ import { scheduleOnRN } from 'react-native-worklets';
 import { EASE_OUT, hex, motion, pick, space, type Scheme } from '@/theme/design';
 import { haptics } from '@/utils/haptics';
 
-import { interchangeIds, linePaths, stationMarkers, type Point } from './geometry';
+import {
+  interchangeIds,
+  linePaths,
+  stationMarkers,
+  type Point,
+  type StationMarker,
+} from './geometry';
 import { nearestStation } from './hitTest';
 import {
   DIAGRAM_LINES,
@@ -33,7 +38,14 @@ import {
   DIAGRAM_STATIONS,
   GRID,
 } from './klRailDiagram';
-import { fitWithLabels, labelStep, placeLabels } from './labels';
+import {
+  fitWithLabels,
+  LABEL_FULL_SCALE,
+  labelStep,
+  placeLabels,
+  visibleRect,
+  type PlacedLabel,
+} from './labels';
 import { CHIP_BAR_HEIGHT, LineChips, STRIP_BUTTON_HEIGHT } from './LineChips';
 import {
   ALL_LINES,
@@ -51,6 +63,7 @@ import {
   minScale,
   translateBounds,
   zoomAbout,
+  type Rect as Box,
   type Transform,
   type Viewport,
 } from './viewport';
@@ -120,6 +133,9 @@ export function NetworkDiagram({
   const view = useSharedValue<Viewport>({ width: 0, height: 0, top: 0, bottom: 0 });
   const [ready, setReady] = useState(false);
   const [step, setStep] = useState(() => labelStep(1));
+  // After a fit, names stay inside what it framed; the next pan or pinch lets them all back.
+  const [frame, setFrame] = useState<Box | null>(null);
+  const framed = useSharedValue(false);
   const [selection, setSelection] = useState<LineSelection>(ALL_LINES);
 
   const apply = useCallback(
@@ -137,6 +153,31 @@ export function NetworkDiagram({
       }
     },
     [scale, tx, ty],
+  );
+
+  /**
+   * Move to `t` from JS, with the names already placed for where it lands:
+   * one SVG redraw before the move, none during it. A fit (`room`, the view
+   * it fitted into) keeps the names inside the screen.
+   */
+  const moveTo = useCallback(
+    (t: Transform, animate: boolean, room: Viewport | null = null) => {
+      setStep(labelStep(t.scale));
+      setFrame(room ? visibleRect(t, room) : null);
+      framed.set(room !== null);
+      apply(t, animate);
+    },
+    [apply, framed],
+  );
+
+  /** A gesture ended at `scale`: names for that zoom, and no longer held to a fit's frame. */
+  const settle = useCallback(
+    (scaleNow: number) => {
+      setStep(labelStep(scaleNow));
+      setFrame(null);
+      framed.set(false);
+    },
+    [framed],
   );
 
   const onLayout = useCallback(
@@ -160,17 +201,16 @@ export function NetworkDiagram({
     (sel: LineSelection, animate: boolean) => {
       const v = view.get();
       if (v.width === 0) return;
-      if (sel.size === 0) {
-        apply(fitTransform(SIZE, v), animate);
-        return;
-      }
       // One line picked: its "All stops" button sits over the map too.
       const extra = sel.size === 1 && onOpenLine ? STRIP_BUTTON_HEIGHT + space.xs : 0;
       const room = { ...v, bottom: v.bottom + extra };
-      const t = fitWithLabels(sel, DIAGRAM_STATIONS, DIAGRAM_LINES, GRID, SIZE, room);
-      if (t) apply(t, animate);
+      const t =
+        sel.size === 0
+          ? fitTransform(SIZE, room)
+          : fitWithLabels(sel, DIAGRAM_STATIONS, DIAGRAM_LINES, GRID, SIZE, room);
+      if (t) moveTo(t, animate, room);
     },
-    [apply, onOpenLine, view],
+    [moveTo, onOpenLine, view],
   );
 
   // Fit: the picked lines, or the whole network.
@@ -187,9 +227,9 @@ export function NetworkDiagram({
       setSelection(next);
       const v = view.get();
       if (next.size > 0) fitSelection(next, !reduceMotion);
-      else if (v.width > 0) apply(centreOn(HOME.x, HOME.y, 1, SIZE, v), !reduceMotion);
+      else if (v.width > 0) moveTo(centreOn(HOME.x, HOME.y, 1, SIZE, v), !reduceMotion);
     },
-    [apply, fitSelection, reduceMotion, view],
+    [fitSelection, moveTo, reduceMotion, view],
   );
   const onToggle = useCallback(
     (code: string) => changeSelection(toggleLine(selectionRef.current, code, DIAGRAM_LINES.length)),
@@ -202,14 +242,6 @@ export function NetworkDiagram({
   const openStrip = useMemo(
     () => (single && onOpenLine ? () => onOpenLine(single) : null),
     [onOpenLine, single],
-  );
-
-  // Names re-place at each label step: a few JS renders through a pinch, not one per frame.
-  useAnimatedReaction(
-    () => labelStep(scale.get()),
-    (next, prev) => {
-      if (next !== prev) scheduleOnRN(setStep, next);
-    },
   );
 
   const openAt = useCallback(
@@ -242,12 +274,16 @@ export function NetworkDiagram({
         e.focalY,
         SIZE,
         v,
-        // A line fit can sit below the usual floor: pinching from there mustn't jump.
-        Math.min(minScale(SIZE, v), scale.get()),
+        minScale(SIZE, v),
       );
       scale.set(t.scale);
       tx.set(t.x);
       ty.set(t.y);
+    },
+    // Names re-place once the fingers lift: redrawing the SVG mid-pinch is what stutters.
+    onDeactivate: () => {
+      'worklet';
+      scheduleOnRN(settle, scale.get());
     },
   });
 
@@ -269,6 +305,7 @@ export function NetworkDiagram({
     },
     onDeactivate: (e) => {
       'worklet';
+      if (framed.get()) scheduleOnRN(settle, scale.get());
       if (reduceMotion) return;
       const v = view.get();
       const s = scale.get();
@@ -296,6 +333,7 @@ export function NetworkDiagram({
         minScale(SIZE, v),
         MAX_SCALE,
       );
+      scheduleOnRN(settle, t.scale);
       apply(t, !reduceMotion);
     },
   });
@@ -327,7 +365,7 @@ export function NetworkDiagram({
               accessibilityElementsHidden
               importantForAccessibility="no-hide-descendants"
             >
-              <DiagramArt scheme={scheme} step={step} selection={selection} />
+              <DiagramArt scheme={scheme} step={step} selection={selection} frame={frame} />
             </Animated.View>
           ) : null}
         </View>
@@ -356,22 +394,49 @@ const isKtm = (code: string) => code.startsWith('KTM');
  * squares in its colour; on two or more, an ink-bordered pill spanning the
  * lines; a walking link is an ink connector.
  */
+const CANVAS: Box = { x: 0, y: 0, width: SIZE.width, height: SIZE.height };
+
+/** `frame` cut to the canvas, or the canvas itself. */
+function within(frame: Box | null): Box {
+  if (!frame) return CANVAS;
+  const x = Math.max(0, frame.x);
+  const y = Math.max(0, frame.y);
+  return {
+    x,
+    y,
+    width: Math.max(0, Math.min(SIZE.width, frame.x + frame.width) - x),
+    height: Math.max(0, Math.min(SIZE.height, frame.y + frame.height) - y),
+  };
+}
+
 const DiagramArt = memo(function DiagramArt({
   scheme,
   step,
   selection,
+  frame,
 }: {
   scheme: Scheme;
   step: number;
   selection: LineSelection;
+  frame: Box | null;
 }) {
   const paper = pick(hex.paper, scheme);
   const ink = pick(hex.ink, scheme);
-  const faint = (c: string) => mixHex(c, paper, FADE);
   const shown = useMemo(() => shownStations(selection, DIAGRAM_LINES), [selection]);
   const labels = useMemo(
-    () => placeLabels(DIAGRAM_STATIONS, DIAGRAM_LINES, INTERCHANGES, selection, step, GRID),
-    [selection, step],
+    // Names stay inside the SVG, which clips what it draws, and inside a fit's frame. At
+    // full size they're where they were placed by hand, which the drawing's extent holds.
+    () =>
+      placeLabels(
+        DIAGRAM_STATIONS,
+        DIAGRAM_LINES,
+        INTERCHANGES,
+        selection,
+        step,
+        GRID,
+        frame || step < LABEL_FULL_SCALE ? within(frame) : null,
+      ),
+    [frame, selection, step],
   );
   // Filtered-out lines first, so the picked ones draw over them.
   const order = [
@@ -380,96 +445,164 @@ const DiagramArt = memo(function DiagramArt({
   ];
   return (
     <Svg width={SIZE.width} height={SIZE.height}>
-      {order.flatMap((line) => {
-        const p = PATH_OF.get(line.code)!;
-        const on = lineShown(selection, line.code);
-        const stroke = on ? p.color : faint(p.color);
-        return p.branches.flatMap((b, i) => {
-          const pts = points(b);
-          const out = [
-            <Polyline
-              key={`${p.code}-${i}-casing`}
-              points={pts}
-              fill="none"
-              stroke={paper}
-              strokeWidth={7}
-              strokeLinejoin="round"
-              strokeLinecap="round"
-            />,
-            <Polyline
-              key={`${p.code}-${i}`}
-              points={pts}
-              fill="none"
-              stroke={stroke}
-              strokeWidth={5}
-              strokeLinejoin="round"
-              strokeLinecap="round"
-            />,
-          ];
-          if (isKtm(p.code) && on) {
-            out.push(
-              <Polyline
-                key={`${p.code}-${i}-dash`}
-                points={pts}
-                fill="none"
-                stroke={paper}
-                strokeWidth={1.5}
-                strokeDasharray="5 4"
-                strokeLinejoin="round"
-              />,
-            );
-          }
-          return out;
-        });
-      })}
-      {DIAGRAM_LINKS.flatMap(([a, b]) => {
-        const p = AT.get(a)!;
-        const q = AT.get(b)!;
-        const on = shown.has(a) || shown.has(b);
-        const ends = { x1: p.x * GRID, y1: p.y * GRID, x2: q.x * GRID, y2: q.y * GRID };
-        return [
-          <Line
-            key={`${a}-${b}-ink`}
-            {...ends}
-            stroke={on ? ink : faint(ink)}
-            strokeWidth={8}
-            strokeLinecap="round"
-          />,
-          <Line key={`${a}-${b}`} {...ends} stroke={paper} strokeWidth={4} strokeLinecap="round" />,
-        ];
-      })}
-      {MARKERS.map((m) => {
-        const on = shown.has(m.id);
-        // A pill where a picked line meets filtered-out ones stays ink: it's still a change.
-        const edge = m.color ?? ink;
-        return (
-          <Rect
-            key={m.id}
-            x={m.x - m.width / 2}
-            y={m.y - m.height / 2}
-            width={m.width}
-            height={m.height}
-            rx={m.color ? 0 : 4}
-            fill={paper}
-            stroke={on ? edge : faint(edge)}
-            strokeWidth={2}
-          />
-        );
-      })}
+      {order.map((line) => (
+        <LineArt
+          key={line.code}
+          code={line.code}
+          on={lineShown(selection, line.code)}
+          paper={paper}
+        />
+      ))}
+      {DIAGRAM_LINKS.map(([a, b]) => (
+        <LinkArt
+          key={`${a}-${b}`}
+          a={a}
+          b={b}
+          on={shown.has(a) || shown.has(b)}
+          paper={paper}
+          ink={ink}
+        />
+      ))}
+      {MARKERS.map((m) => (
+        <MarkerArt key={m.id} m={m} on={shown.has(m.id)} paper={paper} ink={ink} />
+      ))}
       {labels.map((l) => (
-        <SvgText
-          key={l.id}
-          x={l.x}
-          y={l.y}
-          fill={ink}
-          fontSize={l.fontSize}
-          fontWeight={l.bold ? '600' : '400'}
-          textAnchor={l.anchor}
-        >
-          {l.name}
-        </SvgText>
+        <LabelArt key={l.id} {...l} ink={ink} />
       ))}
     </Svg>
+  );
+});
+
+// Each piece re-renders only when its own state changes, so a filter toggle
+// sends the few props that changed rather than the whole drawing.
+
+/** Every branch of every line as a polyline `points` string, built once. */
+const POINTS = new Map(PATHS.map((p) => [p.code, p.branches.map(points)]));
+
+const LineArt = memo(function LineArt({
+  code,
+  on,
+  paper,
+}: {
+  code: string;
+  on: boolean;
+  paper: string;
+}) {
+  const p = PATH_OF.get(code)!;
+  const stroke = on ? p.color : mixHex(p.color, paper, FADE);
+  return (
+    <>
+      {POINTS.get(code)!.flatMap((pts, i) => [
+        <Polyline
+          key={`${i}-casing`}
+          points={pts}
+          fill="none"
+          stroke={paper}
+          strokeWidth={7}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />,
+        <Polyline
+          key={`${i}`}
+          points={pts}
+          fill="none"
+          stroke={stroke}
+          strokeWidth={5}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />,
+        isKtm(code) && on ? (
+          <Polyline
+            key={`${i}-dash`}
+            points={pts}
+            fill="none"
+            stroke={paper}
+            strokeWidth={1.5}
+            strokeDasharray="5 4"
+            strokeLinejoin="round"
+          />
+        ) : null,
+      ])}
+    </>
+  );
+});
+
+const LinkArt = memo(function LinkArt({
+  a,
+  b,
+  on,
+  paper,
+  ink,
+}: {
+  a: string;
+  b: string;
+  on: boolean;
+  paper: string;
+  ink: string;
+}) {
+  const p = AT.get(a)!;
+  const q = AT.get(b)!;
+  const ends = { x1: p.x * GRID, y1: p.y * GRID, x2: q.x * GRID, y2: q.y * GRID };
+  return (
+    <>
+      <Line
+        {...ends}
+        stroke={on ? ink : mixHex(ink, paper, FADE)}
+        strokeWidth={8}
+        strokeLinecap="round"
+      />
+      <Line {...ends} stroke={paper} strokeWidth={4} strokeLinecap="round" />
+    </>
+  );
+});
+
+const MarkerArt = memo(function MarkerArt({
+  m,
+  on,
+  paper,
+  ink,
+}: {
+  m: StationMarker;
+  on: boolean;
+  paper: string;
+  ink: string;
+}) {
+  // A pill where a picked line meets filtered-out ones stays ink: it's still a change.
+  const edge = m.color ?? ink;
+  return (
+    <Rect
+      x={m.x - m.width / 2}
+      y={m.y - m.height / 2}
+      width={m.width}
+      height={m.height}
+      rx={m.color ? 0 : 4}
+      fill={paper}
+      stroke={on ? edge : mixHex(edge, paper, FADE)}
+      strokeWidth={2}
+    />
+  );
+});
+
+const LabelArt = memo(function LabelArt({
+  x,
+  y,
+  name,
+  fontSize,
+  bold,
+  anchor,
+  ink,
+}: Omit<PlacedLabel, 'id'> & { ink: string }) {
+  return (
+    <SvgText
+      x={x}
+      y={y}
+      fill={ink}
+      fontSize={fontSize}
+      fontWeight={bold ? '600' : '400'}
+      textAnchor={anchor}
+    >
+      {name}
+    </SvgText>
   );
 });
 

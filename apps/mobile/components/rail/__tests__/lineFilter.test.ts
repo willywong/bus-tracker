@@ -17,9 +17,9 @@ import {
 import {
   fitWithLabels,
   LABEL_FULL_SCALE,
-  labelGrowth,
   labelStep,
   placeLabels,
+  visibleRect,
 } from '../diagram/labels';
 import {
   ALL_LINES,
@@ -252,30 +252,70 @@ test('worklets come after every worklet they call (they capture callees when the
   }
 });
 
-test('fitWithLabels keeps every picked line and its placed names on screen', () => {
+test('a fit keeps every placed name on screen, flipping or dropping those at the edge', () => {
   const views = [PHONE, { width: 440, height: 900, top: 56, bottom: 90 }];
-  const picks = [...DIAGRAM_LINES.map((l) => [l.code]), ['LRT KJ', 'LRT SP'], ['MRT KG', 'MRT PY']];
+  const picks = [
+    [] as string[],
+    ...DIAGRAM_LINES.map((l) => [l.code]),
+    ['LRT KJ', 'LRT SP'],
+    ['MRT KG', 'MRT PY'],
+  ];
   for (const view of views) {
     for (const codes of picks) {
       const sel = new Set(codes);
-      const t = fitWithLabels(sel, DIAGRAM_STATIONS, DIAGRAM_LINES, GRID, SIZE, view)!;
+      const t =
+        codes.length === 0
+          ? fitTransform(SIZE, view)
+          : fitWithLabels(sel, DIAGRAM_STATIONS, DIAGRAM_LINES, GRID, SIZE, view)!;
       const step = labelStep(t.scale);
-      const k = labelGrowth(step);
-      const where = `${codes.join('+')} at ${view.width}`;
-      for (const l of placeLabels(DIAGRAM_STATIONS, DIAGRAM_LINES, INTERCHANGES, sel, step, GRID)) {
-        const s = DIAGRAM_STATIONS.find((x) => x.id === l.id)!;
-        const r = labelRect(s, GRID)!;
-        const [cx, cy] = [s.x * GRID, s.y * GRID];
-        const x0 = t.x + (cx + (r.x - cx) * k) * t.scale;
-        const x1 = x0 + r.width * k * t.scale;
-        const y0 = t.y + (cy + (r.y - cy) * k) * t.scale;
-        const y1 = y0 + r.height * k * t.scale;
+      const frame = visibleRect(t, view);
+      const placed = placeLabels(
+        DIAGRAM_STATIONS,
+        DIAGRAM_LINES,
+        INTERCHANGES,
+        sel,
+        step,
+        GRID,
+        frame,
+      );
+      const where = `${codes.join('+') || 'all'} at ${view.width}`;
+      assert.ok(placed.length > 0, where);
+      for (const l of placed) {
+        // The drawn box, from the label itself: 6.4 pt a glyph, 9 pt up and 3 down, at its size.
+        const k = l.fontSize / 11;
+        const w = l.name.length * 6.4 * k;
+        const x0 = l.anchor === 'start' ? l.x : l.anchor === 'end' ? l.x - w : l.x - w / 2;
+        const sx0 = t.x + x0 * t.scale;
+        const sx1 = t.x + (x0 + w) * t.scale;
+        const sy0 = t.y + (l.y - 9 * k) * t.scale;
+        const sy1 = t.y + (l.y + 3 * k) * t.scale;
         assert.ok(
-          x0 >= 0 && x1 <= view.width,
-          `${where}: ${l.id} x ${x0.toFixed(0)}–${x1.toFixed(0)}`,
+          sx0 >= 0 && sx1 <= view.width,
+          `${where}: ${l.id} x ${sx0.toFixed(0)}–${sx1.toFixed(0)}`,
         );
-        assert.ok(y0 >= view.top && y1 <= view.height - view.bottom, `${where}: ${l.id} y`);
+        assert.ok(sy0 >= view.top && sy1 <= view.height - view.bottom, `${where}: ${l.id} y`);
       }
     }
   }
+});
+
+test('a name past the frame flips to the other side of its station', () => {
+  // Masjid Jamek's name sits to its left; a frame starting just left of the station flips it right.
+  const mj = DIAGRAM_STATIONS.find((s) => s.id === 'masjid-jamek')!;
+  const frame = { x: mj.x * GRID - 20, y: 0, width: 2000, height: 2000 };
+  const placed = placeLabels(
+    DIAGRAM_STATIONS,
+    DIAGRAM_LINES,
+    INTERCHANGES,
+    ALL_LINES,
+    1,
+    GRID,
+    frame,
+  );
+  const l = placed.find((p) => p.id === 'masjid-jamek')!;
+  assert.equal(mj.label!.anchor, 'end');
+  assert.equal(l.anchor, 'start');
+  assert.ok(l.x > mj.x * GRID);
+  // Nothing placed starts left of the frame.
+  assert.ok(!placed.some((p) => p.anchor === 'end' && p.x - p.name.length * 6.4 < frame.x - 1e-9));
 });
