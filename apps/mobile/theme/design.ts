@@ -66,6 +66,8 @@ export const hex = {
   secondaryLabel: { light: '#8A8A8E', dark: '#98989F' },
   casing: { light: 'rgba(255,255,255,0.9)', dark: 'rgba(0,0,0,0.6)' },
   stopFill: { light: '#FFFFFF', dark: '#141416' },
+  /** The bus bar's section glyph: its one touch of blue. */
+  section: { light: '#007AFF', dark: '#0A84FF' },
 } as const;
 
 export type Scheme = 'light' | 'dark';
@@ -136,8 +138,14 @@ export const SHEET_REVEAL_SHIFT = 10;
 /** The peek's "Where to?" row: a 44pt glass capsule plus 8pt below it. */
 export const WHERE_TO_ROW_HEIGHT = 52;
 
-/** The sheet's Plan · Nearby · Saved segmented control (32pt) plus 8pt below it. */
+/**
+ * Room the old Plan · Nearby · Saved segmented control took (32pt plus 8pt).
+ * The peeks still count it, so they keep the height they had.
+ */
 export const SECTION_PICKER_ROW_HEIGHT = 40;
+
+/** An opened section's header: its name, search and close (44pt) plus 8pt below it. */
+export const SECTION_HEADER_ROW_HEIGHT = 52;
 
 /**
  * Content height of the peek detent in points: top padding, the "Where to?"

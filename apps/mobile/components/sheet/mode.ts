@@ -24,3 +24,12 @@ export function sheetMode(s: {
   if (s.nearby === 'route') return 'preview';
   return 'sections';
 }
+
+/**
+ * Whether the trip sheet is up. At rest the map shows the bus bar alone; the
+ * sheet comes up when you open a section from the bar, and for anything that
+ * takes the whole sheet (Go, a ride, a detail, Your bus and Nearby's views).
+ */
+export function wantsSheet(mode: SheetMode, opened: boolean): boolean {
+  return opened || mode !== 'sections';
+}

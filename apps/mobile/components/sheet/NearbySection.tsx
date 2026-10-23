@@ -1,24 +1,21 @@
-import { useRouter } from 'expo-router';
 import { Fragment } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { STOP_RADIUS_M, type NearbyPlace } from '@/components/sheet/nearby/model';
 import { PLACE_ROW_INSET, PlaceRow, PlaceStatusRow } from '@/components/sheet/nearby/PlaceRow';
-import { YourBusRow } from '@/components/sheet/nearby/YourBusRow';
 import { Hairline, SectionLabel } from '@/components/trip/Rows';
 import { SheetBody } from '@/components/trip/SheetBody';
 import { useNearby } from '@/state/NearbyContext';
 import { color, MARGIN, space, type } from '@/theme/design';
 
 /**
- * The Nearby section (plan 17/02): your bus in one row, then the bus stops
- * and stations around you, nearest first. A stop opens its routes in the
+ * The Nearby section (plan 17/02): the bus stops and stations around you,
+ * nearest first (your bus rides in the sheet bar above). A stop opens its routes in the
  * sheet, a station its boards. Every detent shows the whole list, cut
  * by the sheet's edge.
  */
 export function NearbySection() {
   const nearby = useNearby();
-  const router = useRouter();
   const { places } = nearby;
 
   const open = (place: NearbyPlace) => {
@@ -30,11 +27,6 @@ export function NearbySection() {
   return (
     <View>
       <View style={styles.top}>
-        <YourBusRow
-          here={nearby.here}
-          onOpen={() => nearby.push({ kind: 'trip' })}
-          onTrack={() => router.push('/add-route')}
-        />
         <View style={styles.titleRow}>
           <SectionLabel>Around you</SectionLabel>
           {first ? <Text style={styles.aside}>Nearest first</Text> : null}

@@ -102,8 +102,9 @@ function AppStack() {
             // The map stays interactive behind the peek and glance detents.
             sheetLargestUndimmedDetentIndex: 1,
             sheetGrabberVisible: true,
-            // Persistent: the sheet resizes but can't be swiped away.
-            gestureEnabled: false,
+            // Swiping down from peek puts it away, back to the map's bus bar
+            // (the sheet holds itself up during Go and a ride).
+            gestureEnabled: true,
             // Transparent on iOS 26 so the system draws the Liquid Glass sheet.
             contentStyle: { backgroundColor: SHEET_BACKGROUND },
           }}

@@ -93,6 +93,9 @@ export interface TripContextValue {
   /** Current trip sheet detent (0 peek · 1 glance · 2 large). */
   detent: DetentIndex;
   setDetent: (d: DetentIndex) => void;
+  /** You opened a section from the bus bar; at rest the sheet is down and the map shows the bar. */
+  sheetOpen: boolean;
+  setSheetOpen: (open: boolean) => void;
   /** True while the map is being dragged from glance: the trip sheet holds at peek. */
   holdPeek: boolean;
   setHoldPeek: (on: boolean) => void;
@@ -143,6 +146,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
 
   const [detent, setDetent] = useState<DetentIndex>(SHEET_INITIAL_DETENT);
   const [holdPeek, setHoldPeek] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
   const [selection, setSelection] = useState<MapSelection | null>(null);
   const selectionRef = useRef<MapSelection | null>(null);
   const select = useCallback((s: MapSelection | null) => {
@@ -378,6 +382,8 @@ export function TripProvider({ children }: { children: ReactNode }) {
       setLastBusReminder: side.setLastBusReminder,
       detent,
       setDetent,
+      sheetOpen,
+      setSheetOpen,
       holdPeek,
       setHoldPeek,
       selection,
@@ -409,6 +415,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
       side.lastBusReminder,
       side.setLastBusReminder,
       detent,
+      sheetOpen,
       holdPeek,
       selection,
       select,

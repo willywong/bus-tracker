@@ -11,6 +11,7 @@ import MapView, { AnimatedRegion, PROVIDER_DEFAULT, type Region } from 'react-na
 import { useReducedMotion } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { BUS_BAR_HEIGHT, BusBar } from '@/components/map/BusBar';
 import { BusMarker, GhostBusMarker } from '@/components/map/BusMarker';
 import { itineraryDrawLegs } from '@/components/map/itineraryGeometry';
 import { ItineraryLayer, type DrawLeg } from '@/components/map/ItineraryLayer';
@@ -30,9 +31,11 @@ import { RouteShimmer } from '@/components/map/RouteShimmer';
 import { splitRoute } from '@/components/map/routeSplit';
 import { mapRailFocus } from '@/components/rail/railFocus';
 import { placeName, routePreview, type NearbyPlace } from '@/components/sheet/nearby/model';
+import { wantsSheet } from '@/components/sheet/mode';
 import { currentSection } from '@/components/sheet/sections';
+import { useSheetMode } from '@/components/sheet/useSheetMode';
 import { formatClockHHMM } from '@/components/tracker/logic';
-import { shouldPresentTrip, type NavStateLike } from '@/components/trip/sheetStack';
+import { containsRoute, shouldPresentTrip, topRoute, type NavStateLike } from '@/components/trip/sheetStack';
 import { useLocationPermission } from '@/hooks/useLocationPermission';
 import { usePreviewRealtime } from '@/hooks/usePreviewRealtime';
 import { useRailShapes } from '@/hooks/useRailShapes';
@@ -79,9 +82,10 @@ const DRAW_START_MAX_MS = 400;
 type Coord = { latitude: number; longitude: number };
 
 /**
- * The map canvas. Everything about the trip lives in the persistent sheet
- * (`app/trip.tsx`); this screen frames the evidence — your stop and the bus
- * heading to it — and hosts the glass toolbar controls.
+ * The map canvas. Everything about the trip lives in the trip sheet
+ * (`app/trip.tsx`), up when wanted; at rest the bus bar sits at the bottom
+ * instead. This screen frames the evidence — your stop and the bus heading
+ * to it — and hosts the glass toolbar controls.
  */
 export default function MapScreen() {
   const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
@@ -91,7 +95,7 @@ export default function MapScreen() {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   useLocationPermission();
-  usePresentTripSheet();
+  const sheetUp = useTripSheet();
   usePreviewRealtime();
 
   const mapRef = useRef<MapView>(null);
@@ -132,10 +136,11 @@ export default function MapScreen() {
   );
 
   // The sheet covers the bottom of the map. At the large detent the map is
-  // hidden anyway, so keep the glance framing.
-  const sheetHeight =
-    (windowHeight - insets.top) * sheetDetents(windowHeight, insets.top)[Math.min(trip.detent, 1)] +
-    (trip.detent === 0 ? insets.bottom : 0);
+  // hidden anyway, so keep the glance framing. At rest only the bus bar does.
+  const sheetHeight = sheetUp
+    ? (windowHeight - insets.top) * sheetDetents(windowHeight, insets.top)[Math.min(trip.detent, 1)] +
+      (trip.detent === 0 ? insets.bottom : 0)
+    : insets.bottom + BUS_BAR_COVER;
   // The itinerary sheet over it, by the same rule.
   const itDetent = planner.itineraryDetent;
   const itSheetHeight =
@@ -800,7 +805,7 @@ export default function MapScreen() {
           lastPanAt.current = Date.now();
           // Moving the map means looking at it: get the sheet out of the way
           // until the map settles.
-          if (trip.detent === 1 && !trip.holdPeek) trip.setHoldPeek(true);
+          if (sheetUp && trip.detent === 1 && !trip.holdPeek) trip.setHoldPeek(true);
         }}
         onRegionChange={onRegionChange}
         onRegionChangeComplete={onRegionChangeComplete}
@@ -941,6 +946,27 @@ export default function MapScreen() {
           color={mapPaper}
         />
       ) : null}
+      {/* Over the map at rest; the sheet, when up, takes its place. */}
+      {sheetUp ? null : (
+        <BusBar
+          section={currentSection(settings.sheetSection, settings.preferredRouteCode != null)}
+          onSection={(next) => {
+            settings.setSheetSection(next);
+            trip.setSheetOpen(true);
+          }}
+          onSettings={() => router.push('/settings')}
+          onBus={() => {
+            // Your bus is Nearby's trip view; wanting it puts the sheet up.
+            if (settings.sheetSection !== 'nearby') settings.setSheetSection('nearby');
+            nearby.push({ kind: 'trip' });
+          }}
+          onTrack={() => router.push('/add-route')}
+          onSearch={() => {
+            planner.setTo(null);
+            router.push('/plan');
+          }}
+        />
+      )}
     </View>
   );
 }
@@ -1076,21 +1102,44 @@ const MapToolbar = memo(function MapToolbar({
   );
 });
 
+/** Map the bus bar covers at rest, above the home indicator. */
+const BUS_BAR_COVER = BUS_BAR_HEIGHT + 12;
+
 /**
- * Presents the persistent trip sheet whenever it isn't on the stack — on
- * launch, and again if anything (e.g. Android back) ever pops it. It waits
- * while a station or line sheet is open (a cold `t816://station/…`), and
- * comes back once they close.
+ * Puts the trip sheet up when it's wanted (`wantsSheet`) and the map is on
+ * top, and away when it isn't. Swiping it away goes back to rest: the bar,
+ * no detail, Nearby's list. Go and a ride come straight back up. Returns
+ * whether the sheet is up.
  */
-function usePresentTripSheet() {
+function useTripSheet(): boolean {
   const router = useRouter();
-  const nav = useRootNavigationState();
+  const nav = useRootNavigationState() as NavStateLike & { key?: string };
+  const trip = useTrip();
+  const nearby = useNearby();
+  const { mode } = useSheetMode();
   const ready = nav?.key != null;
-  const present = shouldPresentTrip(nav as NavStateLike);
+  const want = wantsSheet(mode, trip.sheetOpen);
+  const up = containsRoute(nav, 'trip');
+  const top = topRoute(nav);
+  const wasUp = useRef(up);
   useEffect(() => {
-    if (!ready || !present) return;
-    router.push('/trip');
-  }, [ready, present, router]);
+    if (!ready) return;
+    const was = wasUp.current;
+    wasUp.current = up;
+    if (was && !up) {
+      trip.setDetent(0);
+      if (want && mode !== 'go' && mode !== 'ride') {
+        trip.setSheetOpen(false);
+        trip.select(null);
+        nearby.reset();
+        return;
+      }
+    }
+    if (want && shouldPresentTrip(nav)) router.push('/trip');
+    else if (!want && top === 'trip') router.back();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, want, up, top]);
+  return up;
 }
 
 interface GlidingMarker {

@@ -34,7 +34,6 @@ import { WhereToRow } from '@/components/plan/WhereToRow';
 import { SheetBody } from '@/components/trip/SheetBody';
 import { DetailHeader, SheetHeader } from '@/components/trip/SheetHeader';
 import { sheetPushIn, sheetPushOut } from '@/components/trip/sheetTransition';
-import { sheetMode } from '@/components/sheet/mode';
 import { NearbySection } from '@/components/sheet/NearbySection';
 import { RouteView } from '@/components/sheet/nearby/RouteView';
 import { StationView } from '@/components/sheet/nearby/StationView';
@@ -42,15 +41,25 @@ import { StopView } from '@/components/sheet/nearby/StopView';
 import { TripView } from '@/components/sheet/nearby/TripView';
 import { PlanSection } from '@/components/sheet/PlanSection';
 import { SavedSection } from '@/components/sheet/SavedSection';
-import { SectionPicker } from '@/components/sheet/SectionPicker';
-import { currentSection } from '@/components/sheet/sections';
+import { SectionHeader } from '@/components/sheet/SectionHeader';
+import { useSheetMode } from '@/components/sheet/useSheetMode';
 import { useSettings } from '@/hooks/useSettings';
 import { useNearby } from '@/state/NearbyContext';
 import { viewKey } from '@/state/nearbyStack';
 import { usePlanner } from '@/state/PlannerContext';
 import { useRide } from '@/state/RideContext';
 import { useTrip } from '@/state/TripContext';
-import { EASE_OUT, hex, motion, PEEK_TOP, pick, sheetDetents, space, type DetentIndex } from '@/theme/design';
+import {
+  EASE_OUT,
+  hex,
+  motion,
+  PEEK_TOP,
+  pick,
+  SHEET_INITIAL_DETENT,
+  sheetDetents,
+  space,
+  type DetentIndex,
+} from '@/theme/design';
 import { devNow } from '@/utils/devClock';
 
 /** After the map settles, how long before all detents return (the snap must land first). */
@@ -66,10 +75,11 @@ type DetentListener = (
 ) => () => void;
 
 /**
- * The persistent trip sheet over the map, in Calm Mono: opaque paper, ink
- * type, hairline rows. "Where to?" tops every state. Go, a ride and a stop or
- * bus detail each take the whole sheet (`sheetMode`); otherwise a segmented
- * control picks Plan, Nearby (your tracked bus) or Saved.
+ * The trip sheet over the map, in Calm Mono: opaque paper, ink type, hairline
+ * rows. It is up only when wanted (`wantsSheet`): at rest the map shows the
+ * bus bar instead. Go, a ride and a stop or bus detail each take the whole
+ * sheet under "Where to?" (`sheetMode`); a section opened from the bar shows
+ * under its own header, with the section menu, search and close.
  */
 export default function TripSheet() {
   const trip = useTrip();
@@ -82,6 +92,7 @@ export default function TripSheet() {
   const planner = usePlanner();
   const nearby = useNearby();
   const peek = trip.detent === 0;
+  const { mode, section, nearbyView } = useSheetMode();
 
   useEffect(() => {
     const addListener = (navigation as unknown as { addListener: DetentListener }).addListener;
@@ -91,6 +102,19 @@ export default function TripSheet() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navigation]);
+
+  // Each presentation opens at glance; UIKit doesn't report it.
+  useEffect(() => {
+    trip.setDetent(SHEET_INITIAL_DETENT);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Swiping down from peek puts the sheet away, back to the bus bar; Go and
+  // a ride hold it up.
+  const holdsUp = mode === 'go' || mode === 'ride';
+  useEffect(() => {
+    navigation.setOptions({ gestureEnabled: !holdsUp });
+  }, [holdsUp, navigation]);
 
   // Dragging the map drops the sheet from glance to peek. The native sheet
   // only takes a detent index at presentation, so while the map is dragged
@@ -156,7 +180,7 @@ export default function TripSheet() {
     router.push('/plan');
   }, [pendingOpen, clearPending, router]);
 
-  // Search is chrome (as in Apple Maps): the row tops every state of the sheet.
+  // Search is chrome (as in Apple Maps): the row tops the whole-sheet modes.
   const whereTo = (
     <View ref={topRow} collapsable={false}>
       <WhereToRow
@@ -180,15 +204,6 @@ export default function TripSheet() {
   );
   const back = useCallback(() => select(null), [select]);
 
-  const section = currentSection(settings.sheetSection, settings.preferredRouteCode != null);
-  // Nearby's own views (17/02) only count while Nearby is the section.
-  const nearbyView = section === 'nearby' ? nearby.top : null;
-  const mode = sheetMode({
-    go: ride.itinerary != null && ride.journey != null && ride.journeyNetwork != null,
-    riding: ride.active,
-    detail: trip.selection != null,
-    nearby: nearbyView?.kind ?? 'list',
-  });
 
   // Go (15/06): the journey, leg by leg. It doesn't need a tracked route.
   if (mode === 'go' && ride.itinerary && ride.journey && ride.journeyNetwork) {
@@ -289,8 +304,8 @@ export default function TripSheet() {
 
   // The sections, and Nearby's trip, stop, station and preview views: switching
   // crossfades the body and scrolls to the top; the sheet keeps its detent.
-  // A Nearby view folds away "Where to?" and the picker, so its back header
-  // takes the top of the sheet.
+  // A Nearby view folds away the section header, so its back header takes
+  // the top of the sheet.
   const bodyKey = nearbyView && nearbyView.kind !== 'list' ? `nearby:${viewKey(nearbyView)}` : section;
   return (
     <SheetScroll
@@ -301,8 +316,17 @@ export default function TripSheet() {
       resetKey={bodyKey}
     >
       <SheetChrome shown={mode === 'sections'}>
-        {whereTo}
-        <SectionPicker value={section} onChange={settings.setSheetSection} />
+        <View ref={topRow} collapsable={false}>
+          <SectionHeader
+            section={section}
+            onSection={settings.setSheetSection}
+            onSearch={() => {
+              planner.setTo(null);
+              router.push('/plan');
+            }}
+            onClose={() => trip.setSheetOpen(false)}
+          />
+        </View>
       </SheetChrome>
       <SectionBody key={bodyKey}>
         {nearbyView?.kind === 'trip' ? (
@@ -351,7 +375,7 @@ function SectionBody({ children }: { children: ReactNode }) {
 }
 
 /**
- * "Where to?" and the section picker, folding away while a Nearby view is
+ * The section header, folding away while a Nearby view is
  * open and back out on return. The height follows the fold, so the view's
  * header rises to the top as its body fades in; the chrome fades out in the
  * first part of the fold. On the UI thread; Reduce Motion swaps.

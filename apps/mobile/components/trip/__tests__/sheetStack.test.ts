@@ -1,22 +1,22 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { shouldPresentTrip, type NavStateLike } from '../sheetStack';
+import { shouldPresentTrip, topRoute, type NavStateLike } from '../sheetStack';
 
 const stack = (...names: string[]): NavStateLike => ({ routes: names.map((name) => ({ name })) });
 
-test('presents trip on a bare [index] stack', () => {
+test('presents trip on a bare [index] stack when wanted', () => {
   assert.equal(shouldPresentTrip(stack('index')), true);
-  // Every other sheet keeps today's behaviour: trip comes back under it.
-  assert.equal(shouldPresentTrip(stack('index', 'settings')), true);
-  assert.equal(shouldPresentTrip(stack('index', 'plan')), true);
+  assert.equal(shouldPresentTrip(stack('index'), false), false);
 });
 
-test('waits while station or line is on the stack', () => {
+test('waits while any other sheet is over the map', () => {
   assert.equal(shouldPresentTrip(stack('index', 'station')), false);
   assert.equal(shouldPresentTrip(stack('index', 'line')), false);
   assert.equal(shouldPresentTrip(stack('index', 'station', 'line')), false);
   assert.equal(shouldPresentTrip(stack('index', 'network')), false);
+  assert.equal(shouldPresentTrip(stack('index', 'plan')), false);
+  assert.equal(shouldPresentTrip(stack('index', 'settings')), false);
 });
 
 test('does not present when trip is already nested', () => {
@@ -32,7 +32,11 @@ test('does not present when trip is already nested', () => {
   assert.equal(shouldPresentTrip(nestedStation), false);
 });
 
-test('an unready navigator never presents by itself', () => {
-  // The hook also waits for a key; an empty state has nothing to wait behind.
-  assert.equal(shouldPresentTrip(undefined), true);
+test('the top route follows nested stacks', () => {
+  assert.equal(topRoute(stack('index', 'trip')), 'trip');
+  assert.equal(
+    topRoute({ routes: [{ name: '__root', state: { routes: [{ name: 'index' }, { name: 'plan' }] } }] }),
+    'plan',
+  );
+  assert.equal(topRoute(undefined), null);
 });
