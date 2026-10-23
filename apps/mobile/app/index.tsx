@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BUS_BAR_HEIGHT, BusBar, busHome } from '@/components/map/BusBar';
 import { isFeederRoute } from '@/components/detail/fares';
 import { BusMarker, GhostBusMarker } from '@/components/map/BusMarker';
+import { mapHeading } from '@/components/map/mapHeading';
 import { LANDMARKS_FROM_ZOOM } from '@/components/map/Landmark';
 import { Glider } from '@/components/map/glide';
 import { itineraryDrawLegs } from '@/components/map/itineraryGeometry';
@@ -47,6 +48,7 @@ import { useTransitNetwork } from '@/hooks/useTransitNetwork';
 import {
   busKindOf,
   canRideAlong,
+  onRideHeading,
   rideAlong,
   rideAlongInset,
   rideAlongPause,
@@ -438,6 +440,11 @@ export default function MapScreen() {
   const onRegionChangeComplete = useCallback((region: Region) => {
     cameraMoving.current = false;
     lastRegion.current = region;
+    // Turned by hand: the buses are drawn for the screen, not for north.
+    mapRef.current
+      ?.getCamera()
+      .then((camera) => mapHeading.set(camera.heading))
+      .catch(() => {});
     setCameraSettled(true);
     setCameraTick((t) => t + 1);
     if (awaitingDraw.current) {
@@ -969,7 +976,9 @@ export default function MapScreen() {
           const passed = trip.eta.passedVehicleIds.has(vehicle.vehicleId);
           return (
             <BusMarker
-              key={vehicle.vehicleId}
+              // A fresh native marker when the map tilts: react-native-maps
+              // only ever grows a marker's frame, and moves it as it does.
+              key={riding ? `${vehicle.vehicleId}:ride` : vehicle.vehicleId}
               glider={glider}
               ink={ink}
               paper={mapPaper}
@@ -981,6 +990,7 @@ export default function MapScreen() {
               vehicleId={vehicle.vehicleId}
               kind={busKindOf(vehicle.tripId)}
               night={mapScheme === 'dark'}
+              tilted={riding}
               onSelect={selectBus}
               accessibilityLabel={
                 primary
@@ -1389,7 +1399,14 @@ function useRideAlong(bus: GlidingMarker | null, coveredHeight: number, paused: 
 
   useEffect(() => {
     if (!vehicleId) return;
-    return () => rideAlongStop();
+    // The camera turns with the bus: the map's buses are drawn for where it faces.
+    const unsubscribe = onRideHeading(mapHeading.set);
+    return () => {
+      unsubscribe();
+      rideAlongStop();
+      // Back to the north-up map.
+      mapHeading.set(0);
+    };
   }, [vehicleId]);
 
   useEffect(() => {

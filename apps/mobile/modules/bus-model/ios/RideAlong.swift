@@ -27,6 +27,13 @@ enum RideAlong {
   /// Riding (paused or not), so a resume carries on where it was.
   private static var active = false
   private static let proxy = Proxy()
+  /// Told where the camera faces when it has turned `headingStep` since it
+  /// was last told: often enough for the map's buses to pick their sprites
+  /// (15° apart), never per frame. Set once, as the module is created, and
+  /// only called on the main thread.
+  nonisolated(unsafe) static var onHeading: ((CLLocationDirection) -> Void)?
+  private static var toldHeading: CLLocationDirection?
+  private static let headingStep: CLLocationDirection = 3
 
   /// The camera's distance from the bus and its tilt: close enough to read the street.
   private static let distance: CLLocationDistance = 520
@@ -48,6 +55,7 @@ enum RideAlong {
       lead = 0
       map = nil
       bus = nil
+      toldHeading = nil
     }
     active = true
     if link == nil {
@@ -116,6 +124,12 @@ enum RideAlong {
     // Not the JS map's own move: no region events per frame.
     map.setValue(true, forKey: "ignoreRegionChanges")
     map.setCamera(camera, animated: false)
+
+    let turned = toldHeading.map { abs((heading - $0 + 540).truncatingRemainder(dividingBy: 360) - 180) }
+    if turned ?? .infinity >= headingStep {
+      toldHeading = heading
+      onHeading?(heading)
+    }
   }
 
   /// The map and the bus's annotation, found once and kept while they live.

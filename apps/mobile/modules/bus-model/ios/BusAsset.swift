@@ -14,6 +14,9 @@ enum BusKind: String, CaseIterable, Sendable {
   var icon: String { self == .feeder ? "pill-bus" : "pill-rapid" }
   /// The same, lit for the night (headlamps, a glowing sign, beams on the road).
   var nightSprite: String { "\(sprite)-night" }
+  /// Ride along's: seen from low behind, larger (`scripts/render-ride-buses.py`).
+  var rideSprite: String { "\(sprite)-ride" }
+  var rideNightSprite: String { "\(sprite)-ride-night" }
   var nightIcon: String { "\(icon)-night" }
 }
 
@@ -78,10 +81,14 @@ enum BusAsset {
   }
 
   /// The map's tiny buses rendered from the model, one per 15° of heading
-  /// (frame k heads k × 15° clockwise from north); empty unless all are there.
-  nonisolated static func mapSpriteURLs(_ kind: BusKind = .feeder, night: Bool = false) -> [URL] {
+  /// (frame k heads k × 15° clockwise from screen up); empty unless all are
+  /// there. `ride`: the tilted map's, seen from low behind.
+  nonisolated static func mapSpriteURLs(
+    _ kind: BusKind = .feeder, night: Bool = false, ride: Bool = false
+  ) -> [URL] {
     guard let assets = assets() else { return [] }
-    let prefix = night ? kind.nightSprite : kind.sprite
+    let prefix =
+      ride ? (night ? kind.rideNightSprite : kind.rideSprite) : (night ? kind.nightSprite : kind.sprite)
     let urls = (0..<24).compactMap {
       assets.url(forResource: String(format: "\(prefix)-%02d", $0), withExtension: "png")
     }

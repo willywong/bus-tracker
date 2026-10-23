@@ -4,7 +4,8 @@ import { Image, StyleSheet, View } from 'react-native';
 import { MapMarker, Marker } from 'react-native-maps';
 
 import type { Glider } from '@/components/map/glide';
-import { type BusKind, spriteForBearing } from '@/modules/bus-model';
+import { mapHeading } from '@/components/map/mapHeading';
+import { type BusKind, hasRideSprites, spriteForBearing } from '@/modules/bus-model';
 
 // Marker views are hosted natively by MapKit; DynamicColorIOS / PlatformColor
 // don't survive that bridge, so colours arrive as resolved hex strings.
@@ -22,6 +23,13 @@ const HALO = 50;
 /** The model's sprites: your (or the open) bus, then the rest. */
 const SPRITE_SOLID = 44;
 const SPRITE = 36;
+/**
+ * Riding along, the map tilts and zooms in on the ridden bus, so the sprites
+ * are seen from low behind and drawn larger: the ridden bus big enough to
+ * read as the sheet's 3D bus, the rest a little larger than on the flat map.
+ */
+const RIDE_SOLID = 120;
+const RIDE = 64;
 /** Facing east, a side view, when a bus reports no heading. */
 const SIDE_ON = 90;
 
@@ -45,6 +53,8 @@ interface BusMarkerProps {
   kind: BusKind;
   /** A dark map: the sprite has its lights on. */
   night?: boolean;
+  /** Riding along: the map is tilted, so the sprite is seen from low behind, larger. */
+  tilted?: boolean;
   /** Stable across renders, so an unchanged marker skips re-rendering. */
   onSelect?: (vehicleId: string) => void;
 }
@@ -70,6 +80,7 @@ export const BusMarker = memo(function BusMarker({
   vehicleId,
   kind,
   night = false,
+  tilted = false,
   onSelect,
 }: BusMarkerProps) {
   const onPress = useCallback(() => onSelect?.(vehicleId), [onSelect, vehicleId]);
@@ -87,9 +98,17 @@ export const BusMarker = memo(function BusMarker({
   const fill = solid ? ink : paper;
   const glyph = solid ? paper : ink;
   const hasHeading = typeof bearing === 'number' && Number.isFinite(bearing);
-  const inset = (FRAME - size) / 2;
-  // The bus model seen from above at its heading, when the model is bundled.
-  const sprite = spriteForBearing(hasHeading ? bearing : SIDE_ON, kind, night);
+  // The bus model at its heading on the screen (its bearing less the map's),
+  // when the model is bundled. Only a change of sprite redraws the marker.
+  const ride = tilted && hasRideSprites;
+  const spriteNow = useCallback(
+    () => spriteForBearing(hasHeading ? bearing - mapHeading.get() : SIDE_ON, kind, night, ride),
+    [hasHeading, bearing, kind, night, ride],
+  );
+  const sprite = useSyncExternalStore(mapHeading.subscribe, spriteNow);
+  const spriteSize = ride ? (solid ? RIDE_SOLID : RIDE) : solid ? SPRITE_SOLID : SPRITE;
+  const frame = Math.max(FRAME, spriteSize);
+  const inset = (frame - size) / 2;
 
   return (
     <Marker
@@ -103,26 +122,38 @@ export const BusMarker = memo(function BusMarker({
       accessibilityLabel={accessibilityLabel}
     >
       <View
-        style={[styles.frame, { opacity: solid ? 1 : passed ? 0.45 : 0.85 }]}
+        style={{ width: frame, height: frame, opacity: solid ? 1 : passed ? 0.45 : 0.85 }}
         collapsable={false}
       >
-        {selected ? <View style={[styles.halo, { backgroundColor: ink }]} /> : null}
+        {selected ? (
+          <View
+            style={[
+              styles.halo,
+              { backgroundColor: ink, left: (frame - HALO) / 2, top: (frame - HALO) / 2 },
+            ]}
+          />
+        ) : null}
         {sprite ? (
           <Image
             source={{ uri: sprite }}
             style={[
               styles.sprite,
               {
-                left: (FRAME - (solid ? SPRITE_SOLID : SPRITE)) / 2,
-                top: (FRAME - (solid ? SPRITE_SOLID : SPRITE)) / 2,
-                width: solid ? SPRITE_SOLID : SPRITE,
-                height: solid ? SPRITE_SOLID : SPRITE,
+                left: (frame - spriteSize) / 2,
+                top: (frame - spriteSize) / 2,
+                width: spriteSize,
+                height: spriteSize,
               },
             ]}
           />
         ) : null}
         {!sprite && hasHeading ? (
-          <View style={[styles.frameFill, { transform: [{ rotate: `${bearing}deg` }] }]}>
+          <View
+            style={[
+              styles.frameFill,
+              { width: frame, height: frame, transform: [{ rotate: `${bearing}deg` }] },
+            ]}
+          >
             <View
               style={[styles.wedge, { top: inset - WEDGE_GAP - WEDGE_H, borderBottomColor: ink }]}
             />
@@ -157,8 +188,10 @@ export const BusMarker = memo(function BusMarker({
             style={[
               styles.liveDot,
               {
-                left: sprite ? FRAME - 15 : inset + size - 10,
-                top: sprite ? 4 : inset - 2,
+                // Over the bus's roof: on the tilted map the ridden bus is
+                // mostly seen from behind, narrow and tall.
+                left: sprite ? (ride && solid ? frame * 0.62 : frame - 15) : inset + size - 10,
+                top: sprite ? (ride && solid ? frame * 0.12 : 4) : inset - 2,
                 backgroundColor: live,
                 borderColor: paper,
               },

@@ -47,6 +47,8 @@ const native =
         pillIcons: Partial<Record<BusKind, string>>;
         nightSprites?: Partial<Record<BusKind, string[]>>;
         nightPillIcons?: Partial<Record<BusKind, string>>;
+        rideSprites?: Partial<Record<BusKind, string[]>>;
+        rideNightSprites?: Partial<Record<BusKind, string[]>>;
         landmarks?: Partial<Record<Landmark, string>>;
         launch(x: number, y: number, width: number, height: number, kind: BusKind): Promise<void>;
         home?(x: number, y: number, width: number, height: number, kind: BusKind): Promise<void>;
@@ -55,6 +57,10 @@ const native =
         rideAlongInset?(bottomInset: number): Promise<void>;
         rideAlongPause?(): Promise<void>;
         rideAlongStop?(): Promise<void>;
+        addListener?(
+          event: 'onRideHeading',
+          listener: (event: { heading: number }) => void,
+        ): { remove(): void };
       }>('BusModel')
     : null;
 
@@ -72,6 +78,14 @@ export const BusModelView: ComponentType<BusModelViewProps> | null = native?.has
 const mapSprites: Partial<Record<BusKind, readonly string[]>> = native?.mapSprites ?? {};
 /** The same at night: headlamps on, the sign lit. Empty in a build without them. */
 const nightSprites: Partial<Record<BusKind, readonly string[]>> = native?.nightSprites ?? {};
+/**
+ * Ride along's (`scripts/render-ride-buses.py`): seen from low behind, as the
+ * tilted map sees the bus, and larger; frame k heads k × 15° clockwise from
+ * the top of the screen. Empty in a build without them.
+ */
+const rideSprites: Partial<Record<BusKind, readonly string[]>> = native?.rideSprites ?? {};
+const rideNightSprites: Partial<Record<BusKind, readonly string[]>> =
+  native?.rideNightSprites ?? {};
 
 /** The bus pill's icon, the bus three-quarters on (44 × 36 pt), lit at night; or null. */
 export function pillIconFor(kind: BusKind, night = false): string | null {
@@ -139,10 +153,21 @@ export function flyBusHome(
   return true;
 }
 
-/** The sprite of this bus facing closest to a compass bearing (degrees). */
-export function spriteForBearing(bearing: number, kind: BusKind, night = false): string | null {
-  const lit = night ? (nightSprites[kind] ?? []) : [];
-  const sprites = lit.length > 0 ? lit : (mapSprites[kind] ?? []);
+/**
+ * The sprite of this bus facing closest to `bearing` (degrees clockwise from
+ * the top of the screen: its compass bearing less the map's heading). `ride`:
+ * the tilted map's, where the build has them.
+ */
+export function spriteForBearing(
+  bearing: number,
+  kind: BusKind,
+  night = false,
+  ride = false,
+): string | null {
+  const tilted = ride ? (rideSprites[kind] ?? []) : [];
+  const day = tilted.length > 0 ? tilted : (mapSprites[kind] ?? []);
+  const lit = night ? ((tilted.length > 0 ? rideNightSprites : nightSprites)[kind] ?? []) : [];
+  const sprites = lit.length > 0 ? lit : day;
   if (sprites.length === 0) return null;
   const n = sprites.length;
   const k = Math.round((((bearing % 360) + 360) % 360) / (360 / n)) % n;
@@ -170,6 +195,15 @@ export function rideAlongTurn(heading: number) {
 /** The covered bottom of the map changed while riding along. */
 export function rideAlongInset(bottomInset: number) {
   void native?.rideAlongInset?.(bottomInset);
+}
+
+/** Whether this build draws ride along's own sprites (else the flat map's). */
+export const hasRideSprites = (rideSprites.feeder?.length ?? 0) > 0;
+
+/** Called with where ride along's camera faces (degrees from north) as it turns. */
+export function onRideHeading(listener: (heading: number) => void): () => void {
+  const subscription = native?.addListener?.('onRideHeading', (event) => listener(event.heading));
+  return () => subscription?.remove();
 }
 
 /** Stops following while the map is out of sight; `rideAlong` carries on from there. */

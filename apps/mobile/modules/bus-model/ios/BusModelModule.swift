@@ -37,6 +37,19 @@ public class BusModelModule: Module {
       })
     }
 
+    // Ride along's, seen from low behind as the tilted map sees the bus.
+    Constant("rideSprites") {
+      Dictionary(uniqueKeysWithValues: BusKind.allCases.map {
+        ($0.rawValue, BusAsset.mapSpriteURLs($0, ride: true).map(\.absoluteString))
+      })
+    }
+
+    Constant("rideNightSprites") {
+      Dictionary(uniqueKeysWithValues: BusKind.allCases.map {
+        ($0.rawValue, BusAsset.mapSpriteURLs($0, night: true, ride: true).map(\.absoluteString))
+      })
+    }
+
     // Stop shelters, rail stations and the MRT landmark, by name.
     Constant("landmarks") {
       BusAsset.landmarkURLs().mapValues(\.absoluteString)
@@ -58,6 +71,16 @@ public class BusModelModule: Module {
           to: CGRect(x: x, y: y, width: width, height: height), kind: BusKind(rawValue: kind) ?? .feeder)
       }
     }.runOnQueue(.main)
+
+    // Where ride along's camera faces as it turns (degrees from north), so
+    // the map's buses are drawn facing the right way on the turned map.
+    Events("onRideHeading")
+
+    OnCreate {
+      RideAlong.onHeading = { [weak self] heading in
+        self?.sendEvent("onRideHeading", ["heading": heading])
+      }
+    }
 
     // Ride along: the map camera follows the bus marker with this identifier.
     AsyncFunction("rideAlong") { (identifier: String, heading: Double, bottomInset: Double) in
