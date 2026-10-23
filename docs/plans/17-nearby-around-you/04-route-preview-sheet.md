@@ -69,3 +69,17 @@ export function trackPlan(label: string, networkStopId: string, favorites: reado
 ## Handoff to next step
 - `RouteView` is complete; `trackPlan` is tested.
 - **05** draws the same `routePreview(...).path` on the map and fills `previewPositions`.
+
+## Implementation notes (2026-10-23)
+
+Built by a subagent alongside 03 and 05, then validated on the Simulator. JS-only.
+
+- **`trackPlan` saves the network stop id** (`kl:1001247`), not a stripped GTFS id; see 01's correction. `'already'` carries `stopId` too, so tracking a favourite at another stop moves its stop.
+- **Verified:**
+  - From Sin Chew Daily, T790 → Track this route switches the route menu to T790 and opens the trip view at "PJ274 Sin Chew Daily", with a scheduled countdown and today's times.
+  - Walk there opens Maps.
+  - The stops onward collapse to "Show all 10 stops".
+  - T787 showed "Live · 15 stops away" when the feed had its bus.
+- **The two buttons** use `textStyle: 'body'`, so they scale. From the first accessibility size they stack full width; side by side at AX3 they broke mid-word.
+- **After midnight** the "first 6:05 tomorrow" line says tomorrow only when the time really is tomorrow.
+- **Caveat:** "Live" comes from `upstreamStopsAway` over the route's positions, which aren't filtered by direction. An opposite-direction bus that happens to sit upstream could read as live. It wasn't seen in testing.

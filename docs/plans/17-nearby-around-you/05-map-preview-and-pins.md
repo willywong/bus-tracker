@@ -71,3 +71,18 @@ The map shows what Nearby is talking about: pins for the places in the list, and
 ## Handoff to next step
 - The map side of Nearby is complete: pins, preview path, live buses, chip and camera.
 - **06** runs motion, accessibility and QA across 02–05.
+
+## Implementation notes (2026-10-23)
+
+Built by a subagent alongside 03 and 04, then validated on the Simulator. JS-only.
+
+- **Pins are `displayPriority="required"`.** At "high", MapKit hid every pin at the trip camera's zoom, colliding with your stop's label and the route's markers; they appeared only when zoomed in. There are at most 8 pins, so required is safe.
+- **No `tracksViewChanges={false}`** on the pins, matching `RouteLayer`. The custom views otherwise snapshot empty.
+- **Dev-only:** Fast Refresh of `app/index.tsx` remounts the map at its initial region (the whole Klang Valley), and hot reload doesn't redraw native markers. Relaunch to check either. A fresh launch frames the trip as before.
+- **Verified:**
+  - Pins for the listed places.
+  - A stop's dotted walk line and solid square.
+  - T790 and T787 previews: path, ring on your stop, T816 hidden, framed, "Previewing T787 ✕" chip.
+  - ✕ restores the T816 map.
+  - Metro logs `[preview] polling T787 (rapid-bus-kl)` and `[preview] dropped T787`.
+- **Known:** the first preview poll can take 30–60 s to show a live bus. Previews fall back to stop-to-stop lines where no road shape fits (T787, T790).

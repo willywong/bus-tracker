@@ -96,3 +96,7 @@ export function placeKey(p: NearbyPlace): string;            // 'station:<id>' |
   - The first place merges two stops (Rapid KL and feeder) with PJ01, PJ02, T786, T787, T790 and T816, captioned "Your stop".
   - `stopRoutes` there: T816 to MRT Phileo Damansara Pintu A at 7:32, T787 and T786 to LRT Asia Jaya at 7:36, then PJ01, T790 and PJ02.
   - `routePreview` for T816 from that stop: 21 stops, next at 7:36, first at 6:06.
+
+## Correction (2026-10-23, found validating 03–05)
+
+`gtfsStopId` is gone. It stripped `kl:`, but the static database, `trip.stopId` and `setPreferredStopForRoute` all keep the network's ids (`kl:1000944`, feeder `12000759`). Tracking T790 saved "1001247", and the trip view showed "No buses scheduled". Bus stop ids now compare and save as they are. The "a Rapid KL tracked stop is captioned" test covers it.

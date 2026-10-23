@@ -271,10 +271,10 @@ Root Stack (no tabs)
 ├─ trip       Persistent form sheet over the map (cannot be dismissed)
 │   ├─ top    "Where to?" capsule · profile circle (→ settings) · Plan | Nearby | Saved
 │   ├─ Plan   Home · Work (leave HH:MM) · up to 5 recents → plan
-│   ├─ Nearby your tracked bus, by detent:
-│   │   ├─ peek   (18% + 40pt)  route badge · stop name · compact ETA
-│   │   ├─ glance (50%)  hero countdown · status · primary action
-│   │   └─ large  (100%) + approach timeline · today's timetable · Share arrival · Lock Screen toggle · about
+│   ├─ Nearby your bus in one row, then the stops and stations around you, nearest first (pins on the map)
+│   │   ├─ your bus → the trip view: hero countdown · status · approach timeline · today's timetable · Share arrival · …
+│   │   ├─ a stop  → its routes, soonest first · walking directions (a dotted walk line on the map)
+│   │   └─ a route → its preview: path from your stop drawn on the map · countdown · Track this route · Walk there
 │   ├─ Saved  places strip (Home, Work, pins, Add) · your routes (→ Nearby) · Edit → settings
 │   └─ Go / ride / stop or bus detail replace the sections (no picker)
 ├─ plan       Form sheet: search (stations, stops, places) → up to 5 results

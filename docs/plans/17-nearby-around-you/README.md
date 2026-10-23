@@ -77,8 +77,8 @@ Design: canvas "BusBuddy Rail + Planner" → page "Nearby options" → artboard 
   - While the list is showing, the map shows small pins for the listed places. Tapping a pin pushes that place.
 - **Live data for routes you don't track.** Previewing adds the route under a new `ExtraRoutesSource` `'preview'`, which is released when the preview closes. Times stay scheduled; a live dot shows when a vehicle of that route is heading for your stop.
 - **Track this route.**
-  - The network stop id is mapped to the GTFS id with a new helper, `gtfsStopId(networkId)`, which strips the feed prefix.
-  - Then it runs `addFavorite(label, gtfsStopId)`, `setPreferredStopForRoute`, `setPreferredRouteCode`, `reset()`, then `push({ kind: 'trip' })`.
+  - ~~The network stop id is mapped to the GTFS id with a new helper, `gtfsStopId(networkId)`, which strips the feed prefix.~~ **As built:** the network stop id is saved as is. The static database and tracking keep the `kl:` prefix, so stripping it broke tracking (see 01's correction).
+  - Then it runs `addFavorite(label, stopId)`, `setPreferredStopForRoute`, `setPreferredRouteCode`, `reset()`, then `push({ kind: 'trip' })`.
   - When favourites are full (10), it says so and offers Settings.
 - **Motion.** Push and pop crossfade the body (as 16/06) with no travel. The map draw-on reuses `ItineraryLayer`'s schedule. Under Reduce Motion everything appears at once.
 
@@ -129,3 +129,17 @@ Design: canvas "BusBuddy Rail + Planner" → page "Nearby options" → artboard 
   - road shapes for every bus route (open question 2);
   - the "Buses nearby" map layer, still "Soon" in Layers, which could reuse the place pins;
   - pinned stops in Saved.
+
+## Follow-ups (recorded 2026-10-23, after 06)
+
+- **From the plan:**
+  - road shapes for every bus route (T787 and T790 previews draw stop to stop);
+  - the "Buses nearby" map layer, which could reuse the place pins;
+  - pinned stops in Saved.
+- **From QA:**
+  - **Settings swipe-to-delete removes the wrong route** (`FavoritesSection` `onDelete` indices with `recycling={false}`). This predates phase 17.
+  - `DetailHeader` clips long titles at AX3 (stop and route views, and the shared header).
+  - At AX3, peek shows only the your-bus row.
+  - Aging data still counts as live for the place rows' dot and spoken ", live" (`NearbyContext`). Only the your-bus row now says it's out of date.
+  - The preview's live dot doesn't filter positions by direction.
+  - A Release-build pass of criteria 1, 4 and 5.

@@ -51,3 +51,14 @@ A stop lists every route and direction boarding there, soonest first, with the n
 
 ## Handoff to next step
 - `StopView` is complete. Route rows push `route` views that **04** renders in the sheet and **05** draws on the map.
+
+## Implementation notes (2026-10-23)
+
+Built by a subagent alongside 04 and 05, then validated on the Simulator. JS-only.
+
+- **`whenSpoken`.** `StopRouteRow` carries the spoken "when" (`next at 8:16 AM, scheduled`, `no more today`). The row builds its VoiceOver sentence from it, rather than parsing `spoken`.
+- **Your stop** compares `net.stops.id[s]` with `trip.stopId` directly (see 01's correction).
+- **Row keys** are `route|pattern|stopIndex`. Two directions with the same display name can't collide.
+- **Heading row** ("Routes · Soonest first") wraps at large type.
+- **Verified:** Sin Chew Daily lists T787 and T790, soonest first, with "then …" times and walking directions (1 min). The selected stop shows as a solid square at the end of a dotted walk line. Back returns to the list, scrolled to the top. Checked in light, dark and AX3.
+- **Known:** at AX3 the shared `DetailHeader` clips a long stop name to one line ("Sin Chew D"). It's shared with the trip and station sheets; recorded as a follow-up.
