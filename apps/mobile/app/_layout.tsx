@@ -221,8 +221,8 @@ function AppStack() {
             sheetGrabberVisible: true,
             // The line on the map stays visible and usable at 0.6.
             sheetLargestUndimmedDetentIndex: 0,
-            headerShown: true,
-            headerTransparent: true,
+            // No native header: the sheet draws its name in line with its own close button.
+            headerShown: false,
             contentStyle: { backgroundColor: SHEET_BACKGROUND },
           }}
         />

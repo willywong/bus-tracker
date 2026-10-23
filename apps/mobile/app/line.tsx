@@ -1,13 +1,22 @@
 import type { LatLng } from '@bus-tracker/shared';
-import { ContentUnavailableView, Host, Picker, Text as SwiftText } from '@expo/ui/swift-ui';
-import { pickerStyle, tag } from '@expo/ui/swift-ui/modifiers';
+import { Button, ContentUnavailableView, Host, Image, Picker, Text as SwiftText } from '@expo/ui/swift-ui';
+import {
+  accessibilityLabel,
+  buttonBorderShape,
+  buttonStyle,
+  controlSize,
+  pickerStyle,
+  tag,
+  tint,
+} from '@expo/ui/swift-ui/modifiers';
 import * as Location from 'expo-location';
-import { Stack, useIsFocused, useLocalSearchParams, useRouter } from 'expo-router';
+import { useIsFocused, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ScrollView,
   StyleSheet,
   Text,
+  useColorScheme,
   useWindowDimensions,
   View,
   type LayoutChangeEvent,
@@ -34,7 +43,7 @@ import { formatClockHHMM } from '@/components/tracker/logic';
 import { useRailFocus } from '@/hooks/useRailFocus';
 import { useTransitNetwork } from '@/hooks/useTransitNetwork';
 import { useTrip } from '@/state/TripContext';
-import { color, MARGIN, space, type } from '@/theme/design';
+import { color, hex, MARGIN, pick, space, type } from '@/theme/design';
 import { devNow } from '@/utils/devClock';
 import { haptics } from '@/utils/haptics';
 
@@ -58,6 +67,7 @@ export default function LineScreen() {
   const routeId = firstParam(params.line) ?? '';
   const dirParam: 0 | 1 = firstParam(params.dir) === '1' ? 1 : 0;
   const { height: windowHeight } = useWindowDimensions();
+  const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
 
   const routeIndex = network ? routeIndexById(network, routeId) : -1;
   const model = useMemo(() => {
@@ -189,13 +199,23 @@ export default function LineScreen() {
     [router],
   );
 
-  const toolbar = (
-    <>
-      <Stack.Screen options={{ title: '' }} />
-      <Stack.Toolbar placement="right">
-        <Stack.Toolbar.Button icon="xmark" accessibilityLabel="Close" onPress={() => router.back()} />
-      </Stack.Toolbar>
-    </>
+  // Our own close button (the native header is off in the layout), so the
+  // line's name sits in line with it rather than a header's height below it.
+  const closeButton = (
+    <Host matchContents>
+      <Button
+        onPress={() => router.back()}
+        modifiers={[
+          buttonStyle('glass'),
+          buttonBorderShape('circle'),
+          controlSize('large'),
+          tint(pick(hex.ink, scheme)),
+          accessibilityLabel('Close'),
+        ]}
+      >
+        <Image systemName="xmark" size={15} />
+      </Button>
+    </Host>
   );
 
   if (!model || !header) {
@@ -203,8 +223,8 @@ export default function LineScreen() {
     const feed = routeId.startsWith('ktm:') ? 'ktm' : 'rail';
     const expired = health?.[feed]?.state === 'expired';
     return (
-      <>
-        {toolbar}
+      <ScrollView contentInsetAdjustmentBehavior="never" contentContainerStyle={styles.content}>
+        <View style={[styles.titleRow, styles.closeOnly]}>{closeButton}</View>
         {loading ? null : (
           <Host style={styles.empty}>
             <ContentUnavailableView
@@ -213,28 +233,38 @@ export default function LineScreen() {
             />
           </Host>
         )}
-      </>
+      </ScrollView>
     );
   }
 
   return (
     <>
-      {toolbar}
       <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
+        contentInsetAdjustmentBehavior="never"
         contentContainerStyle={styles.content}
         onLayout={onScrollLayout}
         onScrollEndDrag={onScrollEnd}
         onMomentumScrollEnd={onScrollEnd}
       >
-        <View style={styles.header} accessible accessibilityRole="header" accessibilityLabel={header.spoken}>
+        <View style={styles.header}>
           <View style={styles.titleRow}>
-            <LineBadge line={model.line} />
-            <Text style={styles.name}>{model.name}</Text>
+            <View style={styles.title} accessible accessibilityRole="header" accessibilityLabel={header.spoken}>
+              <LineBadge line={model.line} />
+              <Text style={styles.name}>{model.name}</Text>
+            </View>
+            {closeButton}
           </View>
-          <Text style={styles.status}>{header.status}</Text>
-          {header.footer ? <Text style={styles.footnote}>{header.footer}</Text> : null}
-          <Text style={styles.caption}>{header.caption}</Text>
+          <Text style={styles.status} importantForAccessibility="no" accessibilityElementsHidden>
+            {header.status}
+          </Text>
+          {header.footer ? (
+            <Text style={styles.footnote} importantForAccessibility="no" accessibilityElementsHidden>
+              {header.footer}
+            </Text>
+          ) : null}
+          <Text style={styles.caption} importantForAccessibility="no" accessibilityElementsHidden>
+            {header.caption}
+          </Text>
         </View>
 
         {model.directions.length > 1 ? (
@@ -277,13 +307,23 @@ const styles = StyleSheet.create({
   },
   header: {
     gap: space.xxs,
-    paddingTop: space.xxs,
   },
+  // Clear of the grabber; the name centres on the close button.
   titleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: space.xs,
+    gap: space.sm,
+    paddingTop: space.md,
     marginBottom: space.xxs,
+  },
+  closeOnly: {
+    justifyContent: 'flex-end',
+  },
+  title: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
   },
   name: {
     ...type.title,
