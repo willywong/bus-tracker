@@ -120,3 +120,20 @@ A hand-authored, octilinear schematic of KL rail (8 lines + KTM Komuter), pinch-
     - `zoomAbout`'s default parameter `hi = MAX_SCALE` isn't captured; the default moved into the body.
   - A pinch that started on a station also opened it, so the single tap now has `requireToFail: [doubleTap, pinch]`.
   - Verified on the Simulator: opens at 1× on the core, Fit, a pinch anchored at the fingers, a tap on Pasar Seni opening its sheet, and interchange-only labels below 0.9×.
+
+## Line filter redesign (2026-10-23)
+
+**Build impact:** JS-only (Metro reload).
+
+- **Chips.** A solid bar along the bottom (`LineChips.tsx`) holds "All" and one chip per line. You can pick several lines at once. Picking every line goes back to All. It is solid, not glass, because glass draws nothing in a sheet at its largest detent.
+- **Focus.**
+  - Picked lines keep their colour and are drawn on top. Other lines and their stations fade 80% toward the paper, and their names are hidden.
+  - The camera eases to fit the picked lines with their names (`fitWithLabels` in `labels.ts`). A fit may go below the whole-network floor, down to 0.1×, so a long line fits across a phone. Pinch-out then floors at the current scale, so the map doesn't jump.
+  - Clearing the filter returns to the core at 1×. Fit follows the selection.
+- **All stops.** With exactly one line picked, a button above the bar opens `/line` for that line (`routeIdOfLine`). It is hidden until the network has loaded.
+- **Names that stay legible.**
+  - At 0.9× and up, every name is drawn where it was placed by hand, at 11 pt.
+  - Further out, names grow against the zoom so they stay about 10 pt on screen. A greedy collision pass keeps interchanges first, then line ends, then every other stop. This replaces the old "interchanges only below 0.9×" rule.
+  - Names re-place only when the zoom crosses a ×1.25 step (`labelStep`), a few times per pinch.
+- **Legibility.** `BUNDLE_GAP` is now 8 pt (was 6), so Ampang and Sri Petaling show paper between them. KTM Komuter lines carry a dashed paper centre, so Port Klang (`#DC2420`) no longer reads as Kelana Jaya (`#D50032`).
+- **Worklet order bit again.** `fitRectTransform` called `clampTransform`, which was declared after it. The TypeError escaped a chip's `onPress`, and React Native then deadlocked in `RuntimeScheduler::handleTaskError`: Expo's `JavaScriptPromise.deinit` re-enters the scheduler lock. A frozen app with no logged error points at this. A test in `lineFilter.test.ts` now checks worklet order in `viewport.ts` and `labels.ts`.

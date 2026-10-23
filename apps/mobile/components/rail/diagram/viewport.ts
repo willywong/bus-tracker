@@ -17,6 +17,12 @@ export interface Size {
   height: number;
 }
 
+/** A box in diagram points. */
+export interface Rect extends Size {
+  x: number;
+  y: number;
+}
+
 /** The viewport, and how much of its top and bottom the header and home indicator cover. */
 export interface Viewport extends Size {
   top: number;
@@ -26,8 +32,6 @@ export interface Viewport extends Size {
 /** Zoom range. Below MIN_SCALE only as far as the whole network needs (`fitTransform`). */
 export const MIN_SCALE = 0.6;
 export const MAX_SCALE = 4;
-/** Below this, only interchanges keep their names. */
-export const LABEL_MIN_SCALE = 0.9;
 /** Paper round the whole network when it's fitted. */
 const FIT_PAD = 12;
 
@@ -96,6 +100,25 @@ export function zoomAbout(
   const scale = clamp(t.scale * factor, lo, hi ?? MAX_SCALE);
   const k = scale / t.scale;
   return clampTransform({ scale, x: fx - (fx - t.x) * k, y: fy - (fy - t.y) * k }, content, view);
+}
+
+/** Most a fitted selection zooms in, so a short line doesn't fill the screen with one stop. */
+export const FIT_MAX_SCALE = 1.6;
+
+/**
+ * Box `r` (diagram points) centred in the uncovered part of the view, as big
+ * as fits up to `FIT_MAX_SCALE` and no smaller than `floor` (by default the
+ * whole diagram fitted). Clamped like a pan.
+ */
+export function fitRectTransform(r: Rect, content: Size, view: Viewport, floor?: number): Transform {
+  'worklet';
+  const w = Math.max(1, view.width - FIT_PAD * 2);
+  const h = Math.max(1, view.height - view.top - view.bottom - FIT_PAD * 2);
+  const lo = floor ?? Math.min(MAX_SCALE, w / content.width, h / content.height);
+  const scale = Math.max(lo, Math.min(FIT_MAX_SCALE, w / Math.max(1, r.width), h / Math.max(1, r.height)));
+  const cy = view.top + (view.height - view.top - view.bottom) / 2;
+  const t = { scale, x: view.width / 2 - (r.x + r.width / 2) * scale, y: cy - (r.y + r.height / 2) * scale };
+  return clampTransform(t, content, view);
 }
 
 /** Diagram point (`px`, `py`) centred in the uncovered part of the view at `scale`. */

@@ -38,7 +38,7 @@ export interface StationMarker {
 }
 
 /** A shared run's lines sit this far apart, centre to centre. */
-export const BUNDLE_GAP = 6;
+export const BUNDLE_GAP = 8;
 /** Side of a single-line station square. */
 export const STOP_SIZE = 8;
 /** Paper around the lines inside a multi-line station's pill. */

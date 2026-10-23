@@ -28,18 +28,23 @@ export function useScreenReaderEnabled(): boolean | null {
  * The rail map sheet's body (plan 13/06): the schematic, or with VoiceOver on
  * the same network as a list, switching live when VoiceOver toggles. The
  * screen supplies the toolbar and navigation: `onOpenStation` with a station
- * id, and `fitSignal`, a counter its Fit button bumps (the diagram eases to
- * the whole network on each new value).
+ * id, `onOpenLine` with a diagram line code (null when there's no network
+ * to open it from), and `fitSignal`, a counter its Fit button bumps (the
+ * diagram eases to the picked lines or the whole network on each new value).
  */
 export function NetworkSheetBody({
   onOpenStation,
+  onOpenLine,
   fitSignal,
 }: {
   onOpenStation: (id: string) => void;
+  onOpenLine: ((code: string) => void) | null;
   fitSignal: number;
 }) {
   const screenReader = useScreenReaderEnabled();
   if (screenReader === null) return null;
   if (screenReader) return <NetworkList onOpenStation={onOpenStation} />;
-  return <NetworkDiagram onOpenStation={onOpenStation} fitSignal={fitSignal} />;
+  return (
+    <NetworkDiagram onOpenStation={onOpenStation} onOpenLine={onOpenLine} fitSignal={fitSignal} />
+  );
 }
